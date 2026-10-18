@@ -16,7 +16,7 @@
     const key = 'gh:' + path;
     try {
       const c = JSON.parse(sessionStorage.getItem(key) || 'null');
-      if (c && Date.now() - c.t < 5 * 60e3) return c.d;
+      if (c && Date.now() - c.t < 60e3) return c.d;
     } catch (_) {}
     const res = await fetch('https://api.github.com/repos/' + path, { headers: { Accept: 'application/vnd.github+json' } });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -31,7 +31,8 @@
     const edits = nj.edits || {};
     const box = document.getElementById('news-list');
     box.textContent = '';
-    const items = list.filter((r) => !r.draft && !r.prerelease && /^pack-\d+$/.test(r.tag_name) && !hide.has(+r.tag_name.slice(5))).slice(0, 8);
+    // новости показываем по списку «Новости» в лаунчере (news.json), а не по тому, скрыта ли версия из выбора
+    const items = list.filter((r) => !r.draft && /^pack-\d+$/.test(r.tag_name) && !hide.has(+r.tag_name.slice(5))).slice(0, 8);
     const newest = list.find((r) => !r.draft && !r.prerelease && /^pack-\d+$/.test(r.tag_name));
     const pv0 = document.getElementById('pack-version');
     if (pv0 && newest) pv0.textContent = 'сборка ' + newest.tag_name.replace('pack-', '#');
