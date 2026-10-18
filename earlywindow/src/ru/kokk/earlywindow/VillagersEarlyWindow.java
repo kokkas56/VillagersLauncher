@@ -77,6 +77,11 @@ public class VillagersEarlyWindow extends DisplayWindow {
         }
     }
 
+    /** NeoForge adds the Mojang Studios logo near the end of loading; MineVillagers shows its own instead. */
+    @Override
+    public void addMojangTexture(int textureId) {
+    }
+
     /** Runs on the early window's own (single) render thread, so it never races the painter. */
     private void scheduleCustomise(ScheduledExecutorService exec, int attempt) {
         exec.schedule(() -> {
@@ -101,6 +106,10 @@ public class VillagersEarlyWindow extends DisplayWindow {
 
     private void customise(List<Object> elements) throws Exception {
         Object logo = logoElement(); // build first: if this fails nothing has been changed yet
+        // stock order is [fox, log messages, version, performance, progress (+ squirrel)]
+        boolean stock = elements.size() == 5;
+        Object progress = stock ? elements.get(4) : null;
+        Object smallProgress = progress instanceof RenderElement pe ? scaledElement(pe) : null;
         // dark colour scheme (background clear + the context used by text and bars)
         Field cs = DisplayWindow.class.getDeclaredField("colourScheme");
         cs.setAccessible(true);
@@ -111,9 +120,10 @@ public class VillagersEarlyWindow extends DisplayWindow {
         if (old != null) {
             cf.set(this, new RenderElement.DisplayContext(old.width(), old.height(), old.scale(), old.elementShader(), ColourScheme.BLACK, old.performance()));
         }
-        // stock order is [fox, log messages, version, performance, progress (+ squirrel)]: drop the fox only when
-        // the list looks exactly like that
-        if (elements.size() == 5) elements.remove(0);
+        if (stock) {
+            if (smallProgress != null) elements.set(4, smallProgress);
+            elements.remove(0); // the fox
+        }
         elements.add(0, logo);
     }
 
@@ -121,7 +131,33 @@ public class VillagersEarlyWindow extends DisplayWindow {
     private int logoTex = -1, logoW, logoH;
     private static Field globalAlpha;
 
+    private interface Draw {
+        void draw(SimpleBufferBuilder bb, RenderElement.DisplayContext ctx, int frame) throws Throwable;
+    }
+
+    /** The progress bars, drawn smaller and lower: same element, rendered into a shrunken, shifted viewport. */
+    private Object scaledElement(RenderElement inner) throws Exception {
+        final float s = 0.7f;
+        return element((bb, ctx, frame) -> {
+            int[] vp = new int[4];
+            GL32C.glGetIntegerv(GL32C.GL_VIEWPORT, vp);
+            int w = Math.round(vp[2] * s), h = Math.round(vp[3] * s);
+            int x = vp[0] + (vp[2] - w) / 2;
+            int y = vp[1] - Math.round(vp[3] * 0.03f);
+            GL32C.glViewport(x, y, w, h);
+            try {
+                inner.render(ctx, frame);
+            } finally {
+                GL32C.glViewport(vp[0], vp[1], vp[2], vp[3]);
+            }
+        }, "progress");
+    }
+
     private Object logoElement() throws Exception {
+        return element((bb, ctx, frame) -> drawLogo(bb, ctx), "logo");
+    }
+
+    private Object element(Draw draw, String what) throws Exception {
         ClassLoader cl = RenderElement.class.getClassLoader();
         Class<?> initializer = Class.forName("net.neoforged.fml.earlydisplay.RenderElement$Initializer", false, cl);
         Class<?> renderer = Class.forName("net.neoforged.fml.earlydisplay.RenderElement$Renderer", false, cl);
@@ -131,12 +167,14 @@ public class VillagersEarlyWindow extends DisplayWindow {
         } catch (Throwable ignored) {
             globalAlpha = null;
         }
+        boolean[] broken = {false};
         Object rendererProxy = Proxy.newProxyInstance(renderer.getClassLoader(), new Class<?>[]{renderer}, handler(args -> {
+            if (broken[0]) return null;
             try {
-                drawLogo((SimpleBufferBuilder) args[0], (RenderElement.DisplayContext) args[1]);
+                draw.draw((SimpleBufferBuilder) args[0], (RenderElement.DisplayContext) args[1], args.length > 2 ? (Integer) args[2] : 0);
             } catch (Throwable t) {
-                if (logoTex != -2) log("logo draw failed: " + t);
-                logoTex = -2;
+                broken[0] = true;
+                log(what + " draw failed: " + t);
             }
             return null;
         }));
@@ -172,10 +210,10 @@ public class VillagersEarlyWindow extends DisplayWindow {
             try { alpha = Math.max(0, Math.min(255, globalAlpha.getInt(null))); } catch (Throwable ignored) {}
         }
         int sw = ctx.scaledWidth(), sh = ctx.scaledHeight();
-        float w = Math.min(sw * 0.62f, logoW * Math.max(1, ctx.scale()) * 0.75f);
+        float w = Math.min(sw * 0.34f, logoW * Math.max(1, ctx.scale()) * 0.6f);
         float h = w * logoH / (float) logoW;
         float x0 = (sw - w) / 2f;
-        float y0 = sh * 0.36f - h / 2f;
+        float y0 = sh * 0.38f - h / 2f;
 
         ElementShader shader = ctx.elementShader();
         GL32C.glActiveTexture(GL32C.GL_TEXTURE0 + TEXTURE_UNIT);
