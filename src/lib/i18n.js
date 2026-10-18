@@ -1,5 +1,16 @@
 // Переводы. Ключ — русский текст, для английского берём EN[key].
 const EN = {
+  'Сделать у всех': 'Make default for all',
+  'скрыт': 'hidden',
+  'Точно удалить?': 'Delete for sure?',
+  'Удалить выпуск для всех': 'Delete the release for everyone',
+  'Переименовать': 'Rename',
+  'Выпуск удалён': 'Release deleted',
+  'Выпуск скрыт у игроков': 'Release hidden from players',
+  'Выпуск снова виден игрокам': 'Release visible to players again',
+  'Не трогать мои моды': 'Keep my own mods',
+  'Играть на': 'Play on',
+  'Переименовано': 'Renamed',
   'Обновляю лаунчер до': 'Updating the launcher to',
   'сейчас перезапустится сам': 'it will restart by itself',
   'поставится само, когда закроешь игру': 'installs by itself once the game is closed',

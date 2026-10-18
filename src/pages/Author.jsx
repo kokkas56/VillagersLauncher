@@ -18,6 +18,36 @@ function FileRow({ f, kind, optional, onOptional }) {
   );
 }
 
+// один выпуск: сделать у всех, скрыть у игроков, переименовать, удалить
+function ReleaseRow({ r, t, lang, toast, reload }) {
+  const [sure, setSure] = useState(false);
+  const [edit, setEdit] = useState(false);
+  const [name, setName] = useState(r.name.replace(/^#\d+\s*/, ''));
+  const act = async (fn, ok) => { try { await fn(); if (ok) toast(ok, 'ok'); reload(); } catch (e) { toast(e.message, 'error', 8000); } };
+  return (
+    <div className={'rel' + (r.latest ? ' on' : '') + (r.hidden ? ' hidden-rel' : '')}>
+      <b>#{r.version}</b>
+      {edit ? (
+        <form className="row grow" onSubmit={(e) => { e.preventDefault(); setEdit(false); act(() => call('pack:renameRelease', { id: r.id, name: `#${r.version} ${name}`.trim() }), t('Переименовано')); }}>
+          <input className="input sm grow" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+          <button className="btn sm primary">{t('Сохранить')}</button>
+        </form>
+      ) : <span className="grow">{r.name.replace(/^#\d+\s*/, '')}</span>}
+      <span className="muted small">{fmtDate(r.date, lang)}</span>
+      {r.latest && <span className="pill green sm">{t('у всех')}</span>}
+      {r.hidden && <span className="pill sm">{t('скрыт')}</span>}
+      <div className="rel-actions">
+        {!r.latest && !r.hidden && <button className="btn sm" title={t('Эта версия станет у всех основной')} onClick={() => act(() => call('pack:makeLatest', r.id), t('Теперь у всех сборка') + ' #' + r.version)}>{t('Сделать у всех')}</button>}
+        {!r.latest && <button className="btn sm ghost" title={r.hidden ? t('Снова показать игрокам в выборе версий') : t('Убрать из выбора версий у игроков, не удаляя')} onClick={() => act(() => call('pack:hideRelease', { id: r.id, hidden: !r.hidden }), r.hidden ? t('Выпуск снова виден игрокам') : t('Выпуск скрыт у игроков'))}><Icon name={r.hidden ? 'eye' : 'eyeOff'} size={12} /></button>}
+        <button className="btn sm ghost" title={t('Переименовать')} onClick={() => setEdit(!edit)}><Icon name="pencil" size={12} /></button>
+        {!r.latest && (sure
+          ? <button className="btn sm danger" onClick={() => { setSure(false); act(() => call('pack:deleteRelease', r.id), t('Выпуск удалён') + ' #' + r.version); }}>{t('Точно удалить?')}</button>
+          : <button className="btn sm danger" title={t('Удалить выпуск для всех')} onClick={() => { setSure(true); setTimeout(() => setSure(false), 4000); }}><Icon name="trash" size={12} /></button>)}
+      </div>
+    </div>
+  );
+}
+
 export default function Author() {
   const { t, lang, settings, saveSettings, progress, toast, refreshPack } = useApp();
   const [hasToken, setHasToken] = useState(false);
@@ -145,16 +175,7 @@ export default function Author() {
           <Section title={t('Выпуски')} icon="news">
             {releases.length === 0 && <span className="muted">{t('Ещё ничего не залито.')}</span>}
             <div className="rel-list">
-              {releases.map((r) => (
-                <div key={r.id} className={'rel' + (r.latest ? ' on' : '')}>
-                  <b>#{r.version}</b>
-                  <span className="grow">{r.name.replace(/^#\d+\s*/, '')}</span>
-                  <span className="muted small">{fmtDate(r.date, lang)}</span>
-                  {r.latest ? <span className="pill green sm">{t('у всех')}</span> : (
-                    <button className="btn sm" onClick={async () => { await call('pack:makeLatest', r.id); toast(t('Теперь у всех сборка') + ' #' + r.version, 'ok'); loadReleases(); refreshPack(); }}>{t('Откатить всех сюда')}</button>
-                  )}
-                </div>
-              ))}
+              {releases.map((r) => <ReleaseRow key={r.id} r={r} t={t} lang={lang} toast={toast} reload={() => { loadReleases(); refreshPack(); }} />)}
             </div>
           </Section>
         </div>

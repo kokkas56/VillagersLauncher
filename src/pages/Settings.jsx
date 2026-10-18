@@ -111,12 +111,13 @@ export default function Settings() {
       </Section>
 
       <Section title={t('Сборка')} icon="emerald">
-        <Toggle checked={s.autoUpdatePack} onChange={(v) => set({ autoUpdatePack: v })} label={t('Обновлять сборку при запуске')} hint={t('Если выключить, обновление скачается только по кнопке «Проверить папку».')} />
+        <Toggle checked={s.autoUpdatePack} onChange={(v) => set({ autoUpdatePack: v })} label={t('Обновлять сборку при запуске')} hint={t('Если выключить, новая сборка не скачается сама: на главной будет выбор «Обновить и играть» или «Играть на своей версии».')} />
+        <Toggle checked={!!s.keepOwnMods} onChange={(v) => set({ keepOwnMods: v })} label={t('Не трогать мои моды')} hint={t('Моды, которые ты сам положил в mods, лаунчер не будет убирать. Если игра начнёт вылетать — выключи.')} />
         <div className="field">
           <span>{t('Версия сборки')}</span>
           <select className="input" value={s.pinnedPackVersion || ''} onChange={(e) => set({ pinnedPackVersion: e.target.value || null })}>
             <option value="">{t('Всегда последняя')}{pack && pack.latest ? ` (#${pack.latest.version})` : ''}</option>
-            {(releases || []).map((r) => <option key={r.tag} value={r.tag}>#{r.version} — {r.name.replace(/^#\d+\s*/, '')} ({fmtDate(r.date, lang)})</option>)}
+            {(releases || []).filter((r) => !r.hidden).map((r) => <option key={r.tag} value={r.tag}>#{r.version} — {r.name.replace(/^#\d+\s*/, '')} ({fmtDate(r.date, lang)})</option>)}
           </select>
           <small className="muted">{t('Можно откатиться на прошлую версию, если в новой что-то сломалось.')}</small>
         </div>

@@ -20,10 +20,10 @@ export default function Home({ go, openAccounts, openDonate, skin }) {
     Promise.all(list.map(async (s) => ({ ...s, status: await call('servers:ping', s.address).catch(() => ({ online: false })) }))).then(setServers);
   }, [settings.servers, pack]);
 
-  const play = async (quickPlay) => {
+  const play = async (quickPlay, how) => {
     if (!account) { openAccounts(); return; }
     try {
-      await call('game:play', quickPlay ? { quickPlay } : {});
+      await call('game:play', { ...(quickPlay ? { quickPlay } : {}), ...(how || {}) });
     } catch (e) {
       toast(e.message, 'error', 8000);
       if (e.relogin) { await refreshAccounts(); openAccounts(); }
@@ -32,7 +32,7 @@ export default function Home({ go, openAccounts, openDonate, skin }) {
 
   const latest = pack && pack.latest;
   const state = pack && pack.state;
-  const needUpdate = latest && state && state.version !== latest.version && !pack.authorHome;
+  const needUpdate = latest && state && state.version && state.version !== latest.version && !pack.authorHome && !settings.pinnedPackVersion;
   const news = (latest && latest.changelog) || [];
 
   let playLabel = t('Играть');
@@ -54,12 +54,13 @@ export default function Home({ go, openAccounts, openDonate, skin }) {
           <p className="hero-sub">{t('Авторская сборка Кокка: живые деревни, сезоны, ночи и свои моды. Один клик — и ты в игре.')}</p>
 
           <div className="play-row">
-            <button className={'play-btn' + (running ? ' running' : '') + (preparing ? ' busy' : '')} disabled={preparing || running} title={otherWork && busyState.what === 'publish' ? t('Играть можно будет, когда сборка зальётся') : undefined} onClick={() => play()}>
+            <button className={'play-btn' + (running ? ' running' : '') + (preparing ? ' busy' : '')} disabled={preparing || running} title={otherWork && busyState.what === 'publish' ? t('Играть можно будет, когда сборка зальётся') : undefined} onClick={() => play(undefined, needUpdate ? { update: true } : undefined)}>
               <span className="play-glow" />
               <Icon name={running ? 'check' : 'play'} size={22} />
               <span>{playLabel}</span>
             </button>
             {running && <button className="btn danger" onClick={() => call('game:kill')}>{t('Закрыть игру')}</button>}
+            {!running && !preparing && needUpdate && <button className="btn ghost" title={t('Не скачивать новую сборку — играть на той, что стоит')} onClick={() => play(undefined, { noUpdate: true })}>{t('Играть на')} #{state.version}</button>}
             {!running && <button className="btn ghost" disabled={checking} onClick={checkUpdates} title={t('Проверить обновления лаунчера и сборки')}><Icon name="refresh" size={14} /> {checking ? t('Проверяю…') : t('Обновления')}</button>}
           </div>
           <div className="play-progress">

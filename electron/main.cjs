@@ -166,6 +166,9 @@ handle('pack:publish', async (data) => {
   try { return await pack.publish(data, progress); } finally { setBusy(null); progress(null); }
 });
 handle('pack:makeLatest', (id) => pack.makeLatest(id));
+handle('pack:deleteRelease', (id) => pack.deleteRelease(id));
+handle('pack:hideRelease', ({ id, hidden }) => pack.hideRelease(id, hidden));
+handle('pack:renameRelease', ({ id, name, body }) => pack.renameRelease(id, name, body));
 handle('pack:setToken', async (token) => {
   if (!token) { store.setSecret('githubToken', null); return { ok: true }; }
   const r = await pack.checkToken(token);
@@ -364,7 +367,7 @@ app.on('before-quit', (e) => {
 // ---------------- запуск игры ----------------
 handle('game:status', () => ({ running: !!game, busy, what: busyWhat }));
 
-async function prepareGame({ verify = false } = {}) {
+async function prepareGame({ verify = false, update = false, noUpdate = false } = {}) {
   const s = store.get();
   const gameDir = s.gameDir;
   fs.mkdirSync(gameDir, { recursive: true });
@@ -384,7 +387,9 @@ async function prepareGame({ verify = false } = {}) {
     neoVersion: (manifest && manifest.loader && manifest.loader.version) || s.neoforgeVersion
   };
   const installed = await mc.installAll(versions, progress, { verify });
-  if (manifest && (s.autoUpdatePack || verify || !pack.readState(gameDir).version)) {
+  const have = pack.readState(gameDir).version;
+  // «Играть без обновления» — остаёмся на своей версии; «Обновить и играть» — обновляем, даже если автообновление выключено
+  if (manifest && (verify || !have || (!noUpdate && (update || s.autoUpdatePack)))) {
     await pack.sync(manifest, gameDir, progress, { verify });
   }
   return { installed, gameDir };
@@ -408,7 +413,7 @@ handle('game:play', async (opts = {}) => {
   try {
     const s = store.get();
     const account = await auth.prepare(s.selectedAccount);
-    const { installed, gameDir } = await prepareGame();
+    const { installed, gameDir } = await prepareGame({ update: !!opts.update, noUpdate: !!opts.noUpdate });
     if (account.type === 'ely') {
       progress({ stage: 'auth', text: 'Подключаю Ely.by', indeterminate: true });
       await mc.ensureAuthlibInjector();

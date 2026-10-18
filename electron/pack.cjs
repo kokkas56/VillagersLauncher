@@ -130,7 +130,7 @@ async function listReleases() {
   let latestId = null;
   try { latestId = (await gh('GET', `/repos/${repo()}/releases/latest`, token)).id; } catch (_) {}
   return list.filter((r) => r.tag_name.startsWith('pack-') && !r.draft).map((r) => ({
-    id: r.id, tag: r.tag_name, name: r.name, body: r.body, date: r.published_at, latest: r.id === latestId,
+    id: r.id, tag: r.tag_name, name: r.name, body: r.body, date: r.published_at, latest: r.id === latestId, hidden: !!r.prerelease,
     version: parseInt(r.tag_name.slice(5), 10)
   }));
 }
@@ -194,9 +194,9 @@ async function sync(manifest, gameDir, progress, { verify = false } = {}) {
       if (cur === sha) fs.rmSync(abs, { force: true }); else backup(abs, rel);
     }
   }
-  // лишние моды, которых нет в сборке, убираем (чтобы не конфликтовали)
+  // лишние моды, которых нет в сборке, убираем (чтобы не конфликтовали) — если игрок не попросил оставлять свои
   const removed = [];
-  for (const d of strict) {
+  for (const d of s.keepOwnMods ? [] : strict) {
     const dir = path.join(gameDir, d);
     if (!fs.existsSync(dir)) continue;
     for (const name of fs.readdirSync(dir)) {
@@ -380,10 +380,39 @@ async function makeLatest(releaseId) {
   await gh('PATCH', `/repos/${repo()}/releases/${releaseId}`, token, { make_latest: 'true' });
 }
 
+// ---------- автор: выпуски для всех ----------
+function needToken() {
+  const token = store.getSecret('githubToken');
+  if (!token) throw new Error('Нужен токен GitHub (раздел «Автор»)');
+  return token;
+}
+// удалить выпуск совсем (и его метку); у игроков он пропадёт из списка версий
+async function deleteRelease(releaseId) {
+  const token = needToken();
+  const r = await gh('GET', `/repos/${repo()}/releases/${releaseId}`, token);
+  await gh('DELETE', `/repos/${repo()}/releases/${releaseId}`, token);
+  await gh('DELETE', `/repos/${repo()}/git/refs/tags/${encodeURIComponent(r.tag_name)}`, token).catch(() => {});
+  return true;
+}
+// скрыть у игроков (не удаляя): выпуск становится «предварительным» — его нет в выборе версий и он не бывает «у всех»
+async function hideRelease(releaseId, hidden) {
+  const token = needToken();
+  await gh('PATCH', `/repos/${repo()}/releases/${releaseId}`, token, hidden ? { prerelease: true, make_latest: 'false' } : { prerelease: false });
+  return true;
+}
+async function renameRelease(releaseId, name, body) {
+  const token = needToken();
+  const patch = {};
+  if (name != null) patch.name = name;
+  if (body != null) patch.body = body;
+  await gh('PATCH', `/repos/${repo()}/releases/${releaseId}`, token, patch);
+  return true;
+}
+
 async function checkToken(token) {
   const r = await gh('GET', `/repos/${repo()}`, token);
   if (!r.permissions || !r.permissions.push) throw new Error('У токена нет права записи в ' + repo());
   return { ok: true, repo: r.full_name };
 }
 
-module.exports = { latestManifest, manifestByTag, listReleases, sync, localChanges, publish, makeLatest, checkToken, readState, isAuthorHome, scanSource };
+module.exports = { latestManifest, manifestByTag, listReleases, sync, localChanges, publish, makeLatest, deleteRelease, hideRelease, renameRelease, checkToken, readState, isAuthorHome, scanSource };

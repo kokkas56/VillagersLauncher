@@ -28,6 +28,7 @@ const DEFAULTS = {
   afterLaunch: 'minimize', // minimize | hide | keep | close
   showConsole: false,
   autoUpdatePack: true,
+  keepOwnMods: false, // не убирать из mods моды, которых нет в сборке (свои)
   pinnedPackVersion: null, // null = всегда последняя
   disabledOptional: [],
   downloadThreads: 8,
