@@ -15,6 +15,7 @@ const auth = require('./auth.cjs');
 const pack = require('./pack.cjs');
 const java = require('./java.cjs');
 const extras = require('./extras.cjs');
+const zt = require('./zerotier.cjs');
 
 let win = null;
 let game = null; // { proc, started }
@@ -226,6 +227,28 @@ handle('dialog:savePng', async ({ dataUrl, name }) => {
   fs.writeFileSync(r.filePath, Buffer.from(dataUrl.split(',')[1], 'base64'));
   return r.filePath;
 });
+
+// ---------------- сети ZeroTier ----------------
+const withProgress = async (fn) => { try { return await fn(); } finally { progress(null); } };
+handle('net:status', async () => ({ ...(await zt.status()), joined: zt.joinedList(), owned: store.get().ztOwned || [], hasApiToken: !!store.getSecret('ztApiToken') }));
+handle('net:setup', (opts) => withProgress(() => zt.setup(opts || {}, progress)));
+handle('net:join', (data) => withProgress(async () => {
+  const acc = auth.publicAccounts().find((a) => a.id === store.get().selectedAccount);
+  return zt.join({ ...data, nick: acc ? acc.name : undefined }, progress);
+}));
+handle('net:leave', (id) => zt.leave(id));
+handle('net:members', (id) => zt.members(id));
+handle('net:setApiToken', (t) => zt.setApiToken(t));
+handle('net:create', (data) => withProgress(async () => {
+  const r = await zt.createNetwork(data);
+  const acc = auth.publicAccounts().find((a) => a.id === store.get().selectedAccount);
+  await zt.join({ name: data.name, password: data.password, nick: acc ? acc.name : 'Kokk' }, progress);
+  const st = await zt.status();
+  if (st.address) await zt.authorize(r.networkId, st.address, true);
+  return r;
+}));
+handle('net:delete', (id) => zt.deleteNetwork(id));
+handle('net:authorize', ({ networkId, nodeId, allow }) => zt.authorize(networkId, nodeId, allow));
 
 // ---------------- запуск игры ----------------
 handle('game:status', () => ({ running: !!game, busy }));

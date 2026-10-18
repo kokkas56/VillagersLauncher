@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const ALLOWED_EVENTS = ['progress', 'game-state', 'game-log', 'update-state', 'win-state', 'scan-progress'];
-const ALLOWED_PREFIX = /^(sys|settings|accounts|skin|wardrobe|editor|ely|pack|java|mods|worlds|shots|servers|shell|dialog|game|app):/;
+const ALLOWED_PREFIX = /^(sys|settings|accounts|skin|wardrobe|editor|ely|pack|java|mods|worlds|shots|servers|shell|dialog|game|app|net):/;
 
 contextBridge.exposeInMainWorld('vl', {
   async call(channel, ...args) {

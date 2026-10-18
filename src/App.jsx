@@ -15,6 +15,7 @@ import Settings from './pages/Settings.jsx';
 import Author from './pages/Author.jsx';
 import Accounts from './pages/Accounts.jsx';
 import Donate from './pages/Donate.jsx';
+import Network from './pages/Network.jsx';
 import SkinEditor from './editor/SkinEditor.jsx';
 
 const NAV = [
@@ -24,6 +25,7 @@ const NAV = [
   { id: 'mods', icon: 'mods', label: 'Моды' },
   { id: 'gallery', icon: 'image', label: 'Миры и скрины' },
   { id: 'servers', icon: 'globe', label: 'Сервера' },
+  { id: 'network', icon: 'link', label: 'Сети' },
   { id: 'settings', icon: 'gear', label: 'Настройки' }
 ];
 
@@ -57,7 +59,7 @@ export default function App() {
 
   if (!settings) return <div className="boot"><div className="boot-logo">VillagersLauncher</div></div>;
 
-  const nav = settings.authorMode ? [...NAV.slice(0, 6), { id: 'author', icon: 'crown', label: 'Автор' }, NAV[6]] : NAV;
+  const nav = settings.authorMode ? [...NAV.slice(0, 7), { id: 'author', icon: 'crown', label: 'Автор' }, NAV[7]] : NAV;
   const go = (p) => { setPage(p); };
   const openEditor = (initial) => setEditor(initial || {});
 
@@ -88,6 +90,10 @@ export default function App() {
               ))}
             </nav>
             <div className="grow" />
+            <button className="site-link" onClick={() => call('shell:open', 'https://kokkas56.github.io/VillagersLauncher/')}>
+              <Icon name="globe" size={14} />
+              <span>{t('Сайт сборки')}</span>
+            </button>
             <button className="donate-mini" onClick={() => setDonateOpen(true)}>
               <Icon name="heart" size={16} />
               <span>{t('Поддержать')}</span>
@@ -107,6 +113,7 @@ export default function App() {
             {page === 'mods' && <Mods {...pageProps} />}
             {page === 'gallery' && <Gallery {...pageProps} />}
             {page === 'servers' && <Servers {...pageProps} />}
+            {page === 'network' && <Network {...pageProps} />}
             {page === 'settings' && <Settings {...pageProps} />}
             {page === 'author' && <Author {...pageProps} />}
           </main>
