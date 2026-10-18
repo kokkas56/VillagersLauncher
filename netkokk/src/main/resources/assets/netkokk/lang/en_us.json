@@ -1,0 +1,12 @@
+{
+  "netkokk.chat.addresses": "Addresses for friends (click to copy):",
+  "netkokk.chat.copy": "Copy address",
+  "netkokk.configuration.title": "NetKokk settings",
+  "config.netkokk.announce": "Announce on every network",
+  "config.netkokk.listen": "Search every network",
+  "config.netkokk.interval": "Announce interval (ms)",
+  "config.netkokk.offlineLan": "Let everyone join (Ely.by and offline)",
+  "config.netkokk.showAddresses": "Show addresses in chat",
+  "config.netkokk.extraTargets": "Extra announce targets",
+  "config.netkokk.ignore": "Ignored adapters"
+}

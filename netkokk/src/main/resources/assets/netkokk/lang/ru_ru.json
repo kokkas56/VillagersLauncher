@@ -1,0 +1,12 @@
+{
+  "netkokk.chat.addresses": "Адреса для друзей (нажми, чтобы скопировать):",
+  "netkokk.chat.copy": "Скопировать адрес",
+  "netkokk.configuration.title": "Настройки NetKokk",
+  "config.netkokk.announce": "Объявлять мир на всех сетях",
+  "config.netkokk.listen": "Искать миры на всех сетях",
+  "config.netkokk.interval": "Интервал объявления (мс)",
+  "config.netkokk.offlineLan": "Пускать всех (Ely.by и ники)",
+  "config.netkokk.showAddresses": "Адреса для друзей в чате",
+  "config.netkokk.extraTargets": "Доп. адреса для объявления",
+  "config.netkokk.ignore": "Игнорировать адаптеры"
+}
