@@ -1,5 +1,8 @@
 // Переводы. Ключ — русский текст, для английского берём EN[key].
 const EN = {
+  'Обновляю лаунчер до': 'Updating the launcher to',
+  'сейчас перезапустится сам': 'it will restart by itself',
+  'поставится само, когда закроешь игру': 'installs by itself once the game is closed',
   'Показать пароль': 'Show password',
   'Скрыть пароль': 'Hide password',
   'Скопировать для друга': 'Copy for a friend',

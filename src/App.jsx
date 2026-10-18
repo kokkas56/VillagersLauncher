@@ -126,10 +126,16 @@ export default function App() {
           <button className="btn sm primary" onClick={() => call('shell:open', update.url)}>{t('Скачать')}</button>
         </div>
       )}
+      {update && update.state === 'installing' && (
+        <div className="update-banner">
+          <Icon name="rocket" />
+          <span>{t('Обновляю лаунчер до')} {update.version} — {t('сейчас перезапустится сам')}</span>
+        </div>
+      )}
       {update && update.state === 'ready' && (
         <div className="update-banner">
           <Icon name="rocket" />
-          <span>{t('Готово обновление лаунчера')} {update.version}</span>
+          <span>{t('Готово обновление лаунчера')} {update.version} — {t('поставится само, когда закроешь игру')}</span>
           <button className="btn sm primary" onClick={() => call('app:installUpdate')}>{t('Перезапустить')}</button>
         </div>
       )}

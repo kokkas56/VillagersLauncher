@@ -466,22 +466,72 @@ function newer(a, b) { const x = a.split('.').map(Number), y = b.split('.').map(
 let checkLauncher = async () => ({ state: 'dev', version: app.getVersion() });
 handle('app:checkUpdates', () => checkLauncher());
 
+// Обновление само: скачалось — как только лаунчер свободен (нет игры, заливки, сервера), тихо ставится и перезапускается.
+let installNow = null;
+function whenIdleInstall(version) {
+  send('update-state', { state: 'ready', version });
+  const tryIt = () => {
+    if (game || busy || server.running()) { setTimeout(tryIt, 30000); return; }
+    send('update-state', { state: 'installing', version });
+    setTimeout(() => installNow && installNow(), 3000);
+  };
+  setTimeout(tryIt, 1500);
+}
+
+// Mac: лаунчер без подписи Apple — меняет себя сам: качает новую версию (zip), подменяет .app и запускается заново
 function macUpdateCheck() {
+  const netu = require('./net.cjs');
+  let pending = null;
+  const appPath = path.resolve(app.getPath('exe'), '..', '..', '..');
+  const canSelf = () => {
+    if (!appPath.endsWith('.app') || appPath.startsWith('/Volumes/')) return false;
+    try { fs.accessSync(path.dirname(appPath), fs.constants.W_OK); return true; } catch (_) { return false; }
+  };
   const check = async () => {
-    const rel = await require('./net.cjs').getJson('https://api.github.com/repos/kokkas56/VillagersLauncher/releases/latest');
+    if (pending) return { state: pending.ready ? 'ready' : 'downloading', version: pending.v };
+    const rel = await netu.getJson('https://api.github.com/repos/kokkas56/VillagersLauncher/releases/latest');
     const v = String(rel.tag_name || '').replace(/^v/, '');
-    if (v && newer(v, app.getVersion())) {
-      const asset = (rel.assets || []).find((a) => a.name === `VillagersLauncher-mac-${process.arch === 'arm64' ? 'arm64' : 'x64'}.dmg`);
-      const st = { state: 'manual', version: v, url: asset ? asset.browser_download_url : rel.html_url };
+    if (!v || !newer(v, app.getVersion())) return { state: 'latest', version: app.getVersion() };
+    const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+    const zip = (rel.assets || []).find((x) => x.name === `VillagersLauncher-mac-${arch}.zip`);
+    const dmg = (rel.assets || []).find((x) => x.name === `VillagersLauncher-mac-${arch}.dmg`);
+    if (!zip || !canSelf()) {
+      const st = { state: 'manual', version: v, url: dmg ? dmg.browser_download_url : rel.html_url };
       send('update-state', st);
       return st;
     }
-    return { state: 'latest', version: app.getVersion() };
+    pending = { v, ready: false };
+    send('update-state', { state: 'downloading', version: v });
+    (async () => {
+      const dir = path.join(app.getPath('temp'), 'villagerslauncher-update-' + v);
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, 'update.zip');
+      await netu.downloadFile(zip.browser_download_url, file, { size: zip.size, onBytes: () => {} });
+      require('child_process').execFileSync('ditto', ['-x', '-k', file, dir]);
+      const fresh = fs.readdirSync(dir).find((n) => n.endsWith('.app'));
+      if (!fresh) throw new Error('в архиве нет приложения');
+      const newApp = path.join(dir, fresh);
+      installNow = () => {
+        const q = (x) => "'" + String(x).replace(/'/g, "'\\''") + "'";
+        const script = `while kill -0 ${process.pid} 2>/dev/null; do sleep 0.5; done; rm -rf ${q(appPath)} && mv ${q(newApp)} ${q(appPath)}; xattr -dr com.apple.quarantine ${q(appPath)} 2>/dev/null; open ${q(appPath)}`;
+        spawn('/bin/sh', ['-c', script], { detached: true, stdio: 'ignore' }).unref();
+        app.quit();
+      };
+      pending.ready = true;
+      whenIdleInstall(v);
+    })().catch((e) => {
+      pending = null;
+      send('update-state', { state: 'manual', version: v, url: dmg ? dmg.browser_download_url : rel.html_url, error: e.message });
+    });
+    return { state: 'downloading', version: v };
   };
   checkLauncher = check;
+  handle('app:installUpdate', () => { if (installNow) installNow(); });
   setTimeout(() => check().catch(() => {}), 5000);
   setInterval(() => check().catch(() => {}), 3 * 3600e3);
 }
+
 function setupUpdater() {
   if (DEV || !app.isPackaged) return;
   if (process.platform === 'darwin') { macUpdateCheck(); return; }
@@ -489,13 +539,14 @@ function setupUpdater() {
   try { autoUpdater = require('electron-updater').autoUpdater; } catch (_) { return; }
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  let ready = null;
   autoUpdater.on('update-available', (i) => send('update-state', { state: 'downloading', version: i.version }));
   autoUpdater.on('download-progress', (p) => send('update-state', { state: 'downloading', percent: p.percent }));
-  autoUpdater.on('update-downloaded', (i) => send('update-state', { state: 'ready', version: i.version }));
+  // тихая установка (без окна установщика) и сразу запуск новой версии
+  installNow = () => autoUpdater.quitAndInstall(true, true);
+  autoUpdater.on('update-downloaded', (i) => { ready = i.version; whenIdleInstall(i.version); });
   autoUpdater.on('error', () => {});
-  handle('app:installUpdate', () => { autoUpdater.quitAndInstall(); });
-  let ready = null;
-  autoUpdater.on('update-downloaded', (i) => { ready = i.version; });
+  handle('app:installUpdate', () => installNow());
   checkLauncher = async () => {
     if (ready && newer(ready, app.getVersion())) return { state: 'ready', version: ready };
     const r = await autoUpdater.checkForUpdates();
