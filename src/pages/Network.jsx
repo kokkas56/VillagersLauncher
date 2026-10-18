@@ -14,9 +14,10 @@ const STATUS = {
 const ROUTE = { direct: 'напрямую', lan: 'по локальной сети', relay: 'через ретранслятор' };
 const fmt = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + ' МБ' : Math.round(n / 1024) + ' КБ');
 
-function RoomCard({ st, t, toast, account, openAccounts }) {
+function RoomCard({ st, t, toast, account, openAccounts, roomId, reload }) {
   const host = st.role === 'host';
-  const leave = () => call('net:leave');
+  const leave = async () => { await call('net:leave'); reload(); };
+  const remove = async () => { if (roomId) await call('net:removeRoom', roomId); else await call('net:leave'); reload(); };
   const play = async () => {
     if (!account) { openAccounts && openAccounts(); return; }
     try { await call('game:play', { quickPlay: '127.0.0.1:' + st.port }); } catch (e) { toast(e.message, 'error', 8000); }
@@ -28,7 +29,8 @@ function RoomCard({ st, t, toast, account, openAccounts }) {
         <h3>{st.name}</h3>
         <span className={'pill sm ' + (st.status === 'connected' || st.status === 'open' ? 'green' : st.status === 'error' ? 'warn' : '')}>{t(STATUS[st.status] || st.status)}</span>
         <div className="grow" />
-        <button className="btn sm ghost" onClick={leave}>{host ? t('Закрыть комнату') : t('Выйти')}</button>
+        <button className="btn sm ghost" onClick={leave} title={t('Сеть выключится, комната останется в списке')}>{t('Выключить')}</button>
+        <button className="btn sm danger" onClick={remove} title={t('Выключить и убрать из списка')}><Icon name="trash" size={12} /></button>
       </div>
       {st.error && <p className="warn-text small">{t(st.error)}</p>}
       {host ? (
@@ -146,17 +148,23 @@ export default function Network({ openAccounts }) {
   const [password, setPassword] = useState('');
   const [mode, setMode] = useState('world');
   const [busy, setBusy] = useState(false);
+  const [rooms, setRooms] = useState({ rooms: [], active: null });
+  const reload = () => call('net:rooms').then((r) => r && setRooms(r)).catch(() => {});
 
   useEffect(() => {
     call('net:state').then((s) => s && setSt(s)).catch(() => {});
-    return on('tunnel-state', (s) => setSt(s || { active: false }));
+    reload();
+    return on('tunnel-state', (s) => { setSt(s || { active: false }); reload(); });
   }, []);
 
   const go = async (e) => {
     e && e.preventDefault();
     setBusy(true);
-    try { await call(tab === 'host' ? 'net:host' : 'net:join', { name, password, mode }); } catch (err) { toast(err.message, 'error', 8000); } finally { setBusy(false); }
+    try { await call(tab === 'host' ? 'net:host' : 'net:join', { name, password, mode }); setPassword(''); reload(); } catch (err) { toast(err.message, 'error', 8000); } finally { setBusy(false); }
   };
+  const startRoom = async (id) => { setBusy(true); try { await call('net:start', id); reload(); } catch (err) { toast(err.message, 'error', 8000); } finally { setBusy(false); } };
+  const removeRoom = async (r) => { await call('net:removeRoom', r.id); reload(); toast(t('Комната удалена'), 'ok'); };
+  const savedRooms = (rooms.rooms || []).filter((r) => !(st.active && rooms.active === r.id));
 
   const turnText = (settings.turnServers || []).map((x) => [x.urls, x.username, x.credential].filter(Boolean).join(' ')).join('\n');
 
@@ -170,7 +178,25 @@ export default function Network({ openAccounts }) {
 
       <div className="net-grid">
         <div>
-          {st.active ? <RoomCard st={st} t={t} toast={toast} account={account} openAccounts={openAccounts} /> : (
+          {st.active && <RoomCard st={st} t={t} toast={toast} account={account} openAccounts={openAccounts} roomId={rooms.active} reload={reload} />}
+          {savedRooms.length > 0 && (
+            <Section title={t('Мои комнаты')} icon="star">
+              <div className="net-members">
+                {savedRooms.map((r) => (
+                  <div key={r.id} className="net-member">
+                    <span className="dot off" />
+                    <b>{r.name}</b>
+                    <span className="muted small">{r.role === 'host' ? (r.mode === 'server' ? t('моя · сервер сборки') : t('моя · мой мир')) : t('у друга')}</span>
+                    <div className="grow" />
+                    <button className="btn sm primary" disabled={busy} onClick={() => startRoom(r.id)}>{r.role === 'host' ? t('Включить') : t('Подключиться')}</button>
+                    <button className="btn sm danger" title={t('Удалить')} onClick={() => removeRoom(r)}><Icon name="trash" size={12} /></button>
+                  </div>
+                ))}
+              </div>
+              {st.active && <small className="muted">{t('Включить другую комнату — текущая выключится.')}</small>}
+            </Section>
+          )}
+          {!st.active && (
             <Section title={t('Комната')} icon="lock">
               <div className="seg full">
                 <button className={tab === 'join' ? 'on' : ''} onClick={() => setTab('join')}>{t('Войти к другу')}</button>
@@ -190,6 +216,7 @@ export default function Network({ openAccounts }) {
                 )}
                 {tab === 'host' && <small className="muted">{mode === 'world' ? t('Ты играешь в своём мире и открываешь его для сети — друзья заходят к тебе.') : t('Друзья заходят на сервер сборки, запущенный ниже. Мир живёт без тебя.')}</small>}
                 <button className="btn primary" disabled={busy || !name.trim() || !password}>{tab === 'host' ? t('Открыть комнату') : t('Войти')}</button>
+                <small className="muted">{t('Комната запомнится — потом включается одной кнопкой.')}</small>
               </form>
             </Section>
           )}

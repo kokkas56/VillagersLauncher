@@ -61,6 +61,8 @@ const DEFAULTS = {
   sounds: true,
   // Игра с друзьями: свой туннель (комната = имя + пароль)
   roomName: '',
+  rooms: [], // сохранённые комнаты {id, role: host|guest, name, mode}
+  activeRoom: null,
   tunnelBrokers: ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt'],
   stunServers: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478', 'stun:stun1.l.google.com:19302'],
   turnServers: [], // {urls, username, credential} — если напрямую не соединяется

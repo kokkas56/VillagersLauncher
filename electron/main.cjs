@@ -267,20 +267,45 @@ function tunnelOpts(data) {
 }
 async function tunnelCmd(cmd, opts) { const w = await tunnel(); w.webContents.send('tunnel-cmd', { cmd, opts }); return true; }
 handle('net:state', () => tunnelState);
+// сохранённые комнаты: выключить — комната остаётся в списке; удалить — пропадает (пароль хранится зашифрованным)
+function roomKey(role, name) { return role + ':' + String(name).trim().toLowerCase(); }
+function saveRoom(role, o) {
+  const id = roomKey(role, o.name);
+  store.setSecret('room:' + id, o.password);
+  const rooms = (store.get().rooms || []).filter((r) => r.id !== id);
+  rooms.unshift({ id, role, name: o.name, mode: o.mode, lastUsed: Date.now() });
+  store.set({ rooms, roomName: o.name, activeRoom: id });
+}
 handle('net:host', (data) => {
   const o = tunnelOpts(data);
   if (o.name.length < 3) throw new Error('Имя комнаты — хотя бы 3 символа');
   if (o.password.length < 4) throw new Error('Пароль — хотя бы 4 символа');
-  store.set({ roomName: o.name });
+  saveRoom('host', o);
   return tunnelCmd('host', o);
 });
 handle('net:join', (data) => {
   const o = tunnelOpts(data);
   if (!o.name || !o.password) throw new Error('Введи имя комнаты и пароль');
-  store.set({ roomName: o.name });
+  saveRoom('guest', o);
   return tunnelCmd('join', o);
 });
-handle('net:leave', () => (tunnelWin ? tunnelCmd('leave') : true));
+handle('net:rooms', () => ({ rooms: store.get().rooms || [], active: tunnelState.active ? store.get().activeRoom : null }));
+handle('net:start', (id) => {
+  const r = (store.get().rooms || []).find((x) => x.id === id);
+  if (!r) throw new Error('Комната не найдена');
+  const password = store.getSecret('room:' + id);
+  if (!password) throw new Error('Пароль комнаты потерялся — удали её и создай заново');
+  const o = tunnelOpts({ name: r.name, password, mode: r.mode });
+  saveRoom(r.role, o);
+  return tunnelCmd(r.role === 'host' ? 'host' : 'join', o);
+});
+handle('net:removeRoom', async (id) => {
+  if (store.get().activeRoom === id && tunnelState.active && tunnelWin) await tunnelCmd('leave');
+  store.setSecret('room:' + id, null);
+  store.set({ rooms: (store.get().rooms || []).filter((r) => r.id !== id), activeRoom: store.get().activeRoom === id ? null : store.get().activeRoom });
+  return true;
+});
+handle('net:leave', () => { store.set({ activeRoom: null }); return tunnelWin ? tunnelCmd('leave') : true; });
 
 // ---------------- сервер сборки ----------------
 const server = require('./server.cjs');
