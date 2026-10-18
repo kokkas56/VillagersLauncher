@@ -401,7 +401,7 @@ function normNews(n) {
 async function readNews() {
   const token = store.getSecret('githubToken');
   try {
-    const d = await gh('GET', `/repos/${repo()}/contents/news.json`, token, null, { Accept: 'application/vnd.github.raw+json' });
+    const d = await gh('GET', `/repos/${repo()}/contents/news.json?raw=1&_=${Date.now()}`, token, null, { Accept: 'application/vnd.github.raw+json', 'Cache-Control': 'no-cache' });
     return normNews(typeof d === 'string' ? JSON.parse(d) : d);
   } catch (e) {
     if (e.status === 404) return normNews(null);
@@ -418,10 +418,23 @@ async function writeNews(mutate, message) {
   const token = needToken();
   let sha;
   let cur = null;
+  // свежий ответ без кэша (иначе Electron может отдать закэшированный «сырой» файл без sha)
+  const nc = () => `_=${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
   try {
-    const d = await gh('GET', `/repos/${repo()}/contents/news.json`, token);
-    sha = d.sha;
-    cur = JSON.parse(Buffer.from(d.content || '', 'base64').toString('utf8') || '{}');
+    const d = await gh('GET', `/repos/${repo()}/contents/news.json?${nc()}`, token, null, { 'Cache-Control': 'no-cache', Accept: 'application/vnd.github+json' });
+    if (d && d.sha) {
+      sha = d.sha;
+      cur = JSON.parse(Buffer.from(d.content || '', 'base64').toString('utf8') || '{}');
+    } else {
+      // запасной путь: sha из списка файлов, содержимое из blob
+      const list = await gh('GET', `/repos/${repo()}/contents/?${nc()}`, token, null, { 'Cache-Control': 'no-cache' });
+      const f = Array.isArray(list) && list.find((x) => x.name === 'news.json');
+      if (f) {
+        sha = f.sha;
+        const b = await gh('GET', `/repos/${repo()}/git/blobs/${f.sha}`, token);
+        cur = JSON.parse(Buffer.from(b.content || '', 'base64').toString('utf8') || '{}');
+      }
+    }
   } catch (e) { if (e.status !== 404) throw e; }
   const n = normNews(cur);
   mutate(n);
