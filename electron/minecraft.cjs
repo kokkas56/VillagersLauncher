@@ -197,7 +197,7 @@ function collectArgs(list, vars, features) {
   return out.map((s) => s.replace(/\$\{([^}]+)\}/g, (m, k) => (vars[k] !== undefined ? String(vars[k]) : m)));
 }
 
-function buildLaunch({ vanilla, neo, javaPath, account, gameDir, quickPlay }) {
+function buildLaunch({ vanilla, neo, javaPath, account, gameDir, quickPlay, extraClasspath = [] }) {
   const s = store.get();
   const id = neo.id;
   const nativesDir = path.join(VER_DIR, id, 'natives');
@@ -217,7 +217,7 @@ function buildLaunch({ vanilla, neo, javaPath, account, gameDir, quickPlay }) {
       libs.set(libKey(lib.name), path.join(LIB_DIR, rel));
     }
   }
-  const classpath = [...libs.values(), verJar].join(CP_SEP);
+  const classpath = [...libs.values(), ...extraClasspath, verJar].join(CP_SEP);
   const features = { has_custom_resolution: !s.fullscreen, is_demo_user: false };
   const vars = {
     auth_player_name: account.name,

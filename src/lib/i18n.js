@@ -224,6 +224,8 @@ const EN = {
   'Память и окно': 'Memory & window',
   'Папка': 'Folder',
   'Папка игры': 'Game folder',
+  'Свой экран загрузки': 'Custom loading screen',
+  'Тёмный экран загрузки с логотипом MineVillagers вместо красного экрана NeoForge.': 'A dark loading screen with the MineVillagers logo instead of the red NeoForge one.',
   'Папка лаунчера': 'Launcher folder',
   'Папка логов': 'Logs folder',
   'Папка проверена: всё на месте': 'Folder verified: everything is in place',

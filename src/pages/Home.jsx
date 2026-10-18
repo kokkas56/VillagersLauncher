@@ -62,6 +62,7 @@ export default function Home({ go, openAccounts, openDonate, skin }) {
             </button>
             {running && <button className="btn danger" onClick={() => call('game:kill')}>{t('Закрыть игру')}</button>}
             {!running && !preparing && needUpdate && <button className="btn ghost" title={t('Не скачивать новую сборку — играть на той, что стоит')} onClick={() => play(undefined, { noUpdate: true })}>{t('Играть на')} #{state.version}</button>}
+            <button className="btn ghost" title={t('Папка игры')} onClick={() => call('shell:openPath', '').catch((e) => toast(e.message, 'error'))}><Icon name="folder" size={14} /> {t('Папка')}</button>
             {!running && <button className="btn ghost" disabled={checking} onClick={checkUpdates} title={t('Проверить обновления лаунчера и сборки')}><Icon name="refresh" size={14} /> {checking ? t('Проверяю…') : t('Обновления')}</button>}
           </div>
           <div className="play-progress">

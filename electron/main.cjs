@@ -11,6 +11,7 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'vlimg', privileges: { standard:
 
 const store = require('./store.cjs');
 const mc = require('./minecraft.cjs');
+const splash = require('./splash.cjs');
 const auth = require('./auth.cjs');
 const pack = require('./pack.cjs');
 const java = require('./java.cjs');
@@ -517,7 +518,8 @@ handle('game:play', async (opts = {}) => {
       await mc.ensureAuthlibInjector();
     }
     fs.mkdirSync(path.join(gameDir, 'skinkokk'), { recursive: true });
-    const launch = mc.buildLaunch({ ...installed, account, gameDir, quickPlay: opts.quickPlay });
+    const splashJar = splash.prepare({ enabled: s.customSplash !== false, gameDir, libDir: mc.LIB_DIR, log: (l) => send('game-log', [l]) });
+    const launch = mc.buildLaunch({ ...installed, account, gameDir, quickPlay: opts.quickPlay, extraClasspath: splashJar ? [splashJar] : [] });
     progress({ stage: 'launch', text: 'Запускаю Minecraft…', indeterminate: true });
     const proc = spawn(launch.javaPath, launch.args, { cwd: launch.cwd, windowsHide: false, detached: false });
     game = { proc, started: Date.now() };

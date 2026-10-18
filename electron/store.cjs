@@ -28,6 +28,7 @@ const DEFAULTS = {
   afterLaunch: 'minimize', // minimize | hide | keep | close
   showConsole: false,
   autoUpdatePack: true,
+  customSplash: true, // свой тёмный экран загрузки MineVillagers
   lastPackDir: null, // куда сборка скачана в последний раз (чтобы заметить переименованную папку)
   keepOwnMods: false, // не убирать из mods моды, которых нет в сборке (свои)
   pinnedPackVersion: null, // null = всегда последняя
