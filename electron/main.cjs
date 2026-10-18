@@ -20,6 +20,8 @@ const zt = require('./zerotier.cjs');
 let win = null;
 let game = null; // { proc, started }
 let busy = false;
+let busyWhat = null; // publish | play | verify
+function setBusy(what) { busy = !!what; busyWhat = what || null; send('busy-state', { busy, what: busyWhat }); }
 const DEV = !!process.env.VITE_DEV;
 
 function send(ch, data) { if (win && !win.isDestroyed()) win.webContents.send(ch, data); }
@@ -105,6 +107,13 @@ handle('settings:set', (patch) => store.set(patch || {}));
 // аккаунты
 handle('accounts:list', () => ({ accounts: auth.publicAccounts(), selected: store.get().selectedAccount }));
 handle('accounts:loginEly', ({ login, password, totp }) => auth.loginEly(login, password, totp));
+handle('accounts:loginElyBrowser', async () => {
+  const acc = await auth.loginElyBrowser((url) => shell.openExternal(url));
+  if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+  return acc;
+});
+handle('accounts:cancelBrowser', () => auth.cancelBrowserLogin());
+handle('accounts:browserReady', () => auth.browserLoginReady());
 handle('accounts:addOffline', (name) => auth.addOffline(name));
 handle('accounts:remove', (id) => auth.remove(id));
 handle('accounts:select', (id) => auth.select(id));
@@ -150,9 +159,10 @@ handle('pack:changes', async () => {
   try { return await pack.localChanges((p) => send('scan-progress', p)); } finally { send('scan-progress', null); }
 });
 handle('pack:publish', async (data) => {
-  if (busy) throw new Error('Лаунчер уже чем-то занят');
-  busy = true;
-  try { return await pack.publish(data, progress); } finally { busy = false; progress(null); }
+  if (busy) throw new Error(busyWhat === 'play' ? 'Игра запускается — подожди' : 'Лаунчер уже чем-то занят');
+  if (game) throw new Error('Сначала закрой игру: пока она открыта, файлы сборки заняты');
+  setBusy('publish');
+  try { return await pack.publish(data, progress); } finally { setBusy(null); progress(null); }
 });
 handle('pack:makeLatest', (id) => pack.makeLatest(id));
 handle('pack:setToken', async (token) => {
@@ -251,7 +261,7 @@ handle('net:delete', (id) => zt.deleteNetwork(id));
 handle('net:authorize', ({ networkId, nodeId, allow }) => zt.authorize(networkId, nodeId, allow));
 
 // ---------------- запуск игры ----------------
-handle('game:status', () => ({ running: !!game, busy }));
+handle('game:status', () => ({ running: !!game, busy, what: busyWhat }));
 
 async function prepareGame({ verify = false } = {}) {
   const s = store.get();
@@ -280,18 +290,19 @@ async function prepareGame({ verify = false } = {}) {
 }
 
 handle('game:verify', async () => {
-  if (busy || game) throw new Error('Сначала закрой игру');
-  busy = true;
+  if (game) throw new Error('Сначала закрой игру');
+  if (busy) throw new Error(busyWhat === 'publish' ? 'Идёт заливка сборки — подожди, пока она закончится' : 'Лаунчер ещё занят');
+  setBusy('verify');
   try {
     await prepareGame({ verify: true });
     return true;
-  } finally { busy = false; progress(null); }
+  } finally { setBusy(null); progress(null); }
 });
 
 handle('game:play', async (opts = {}) => {
   if (game) throw new Error('Игра уже запущена');
-  if (busy) throw new Error('Лаунчер ещё занят');
-  busy = true;
+  if (busy) throw new Error(busyWhat === 'publish' ? 'Идёт заливка сборки — играть можно будет, когда она закончится' : 'Лаунчер ещё занят');
+  setBusy('play');
   send('game-state', { state: 'preparing' });
   try {
     const s = store.get();
@@ -340,7 +351,7 @@ handle('game:play', async (opts = {}) => {
     send('game-state', { state: 'idle' });
     throw e;
   } finally {
-    busy = false;
+    setBusy(null);
     progress(null);
   }
 });

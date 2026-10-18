@@ -2,6 +2,8 @@
 const crypto = require('crypto');
 const store = require('./store.cjs');
 const netu = require('./net.cjs');
+const http = require('http');
+const ELY_APP = require('./ely-app.cjs');
 
 const ELY_AUTH = 'https://authserver.ely.by/auth';
 
@@ -67,6 +69,103 @@ async function loginEly(login, password, totp) {
   return upsert({ id, type: 'ely', name: data.selectedProfile.name, uuid: dashed(data.selectedProfile.id), login, addedAt: Date.now() });
 }
 
+// ---------------- вход через браузер (Ely.by OAuth2) ----------------
+const ELY_OAUTH = 'https://account.ely.by/oauth2/v1';
+const ELY_TOKEN = 'https://account.ely.by/api/oauth2/v1/token';
+const ELY_INFO = 'https://account.ely.by/api/account/v1/info';
+const SCOPES = 'account_info minecraft_server_session offline_access';
+
+function elyApp() {
+  const s = store.get();
+  return {
+    clientId: s.elyClientId || ELY_APP.clientId,
+    clientSecret: s.elyClientSecret || ELY_APP.clientSecret,
+    port: Number(s.elyRedirectPort || ELY_APP.port) || 38627
+  };
+}
+
+function browserLoginReady() { return !!elyApp().clientId; }
+
+async function tokenCall(form) {
+  const res = await netu.fetchRaw(ELY_TOKEN, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(form).toString()
+  });
+  const text = await res.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch (_) {}
+  if (!res.ok || !data.access_token) throw new Error(data.message || data.error_description || data.error || `Ely.by ответил ${res.status}`);
+  return data;
+}
+
+function page(title, text, ok) {
+  return `<!doctype html><html lang="ru"><meta charset="utf-8"><title>${title}</title>
+<body style="margin:0;height:100vh;display:grid;place-items:center;background:#120d0a;color:#f3e6d3;font:16px system-ui,sans-serif">
+<div style="text-align:center;padding:32px 40px;border-radius:16px;background:#1f1712;border:1px solid ${ok ? '#3ecf6e' : '#e0564b'}">
+<div style="font-size:42px">${ok ? '✔' : '✖'}</div><h2 style="margin:8px 0">${title}</h2><p style="opacity:.8">${text}</p></div></body></html>`;
+}
+
+let pendingBrowser = null; // { cancel }
+
+function cancelBrowserLogin() {
+  if (pendingBrowser) pendingBrowser.cancel();
+  return true;
+}
+
+async function loginElyBrowser(openExternal) {
+  const appCfg = elyApp();
+  if (!appCfg.clientId || !appCfg.clientSecret) throw new Error('Вход через браузер ещё не настроен (нет приложения Ely.by). Пока войди по паролю.');
+  if (pendingBrowser) pendingBrowser.cancel();
+  const state = crypto.randomBytes(16).toString('hex');
+  const redirect = `http://localhost:${appCfg.port}/ely/callback`;
+  const url = `${ELY_OAUTH}?` + new URLSearchParams({
+    client_id: appCfg.clientId, redirect_uri: redirect, response_type: 'code', scope: SCOPES, state, prompt: 'select_account'
+  }).toString();
+  const code = await new Promise((resolve, reject) => {
+    let done = false;
+    const srv = http.createServer((req, res) => {
+      const u = new URL(req.url, redirect);
+      if (u.pathname !== '/ely/callback') { res.writeHead(404); res.end(); return; }
+      const c = u.searchParams.get('code');
+      const ok = c && u.searchParams.get('state') === state;
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(ok ? page('Вход выполнен', 'Можно закрыть вкладку и вернуться в лаунчер.', true)
+        : page('Вход не удался', u.searchParams.get('error_message') || 'Вход отменён. Попробуй ещё раз из лаунчера.', false));
+      finish(ok ? null : new Error(u.searchParams.get('error_message') || 'Вход отменён'), c);
+    });
+    const finish = (err, c) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      pendingBrowser = null;
+      setTimeout(() => srv.close(), 300);
+      err ? reject(err) : resolve(c);
+    };
+    const timer = setTimeout(() => finish(new Error('Время входа вышло (5 минут)')), 5 * 60e3);
+    pendingBrowser = { cancel: () => finish(new Error('Вход отменён')) };
+    srv.on('error', (e) => finish(new Error(`Порт ${appCfg.port} занят: ${e.message}`)));
+    srv.listen(appCfg.port, '127.0.0.1', () => openExternal(url));
+  });
+  const tok = await tokenCall({ client_id: appCfg.clientId, client_secret: appCfg.clientSecret, redirect_uri: redirect, grant_type: 'authorization_code', code });
+  const res = await netu.fetchRaw(ELY_INFO, { headers: { Authorization: `Bearer ${tok.access_token}` } });
+  if (!res.ok) throw new Error(`Не удалось узнать аккаунт Ely.by (${res.status})`);
+  const me = await res.json();
+  if (!me.uuid || !me.username) throw new Error('У этого аккаунта Ely.by нет игрового профиля');
+  const id = 'ely:' + me.uuid.replace(/-/g, '');
+  store.setSecret(id, { accessToken: tok.access_token, refreshToken: tok.refresh_token || null, expiresAt: Date.now() + (Number(tok.expires_in) || 86400) * 1000, oauth: true });
+  return upsert({ id, type: 'ely', via: 'browser', name: me.username, uuid: dashed(me.uuid), login: me.username, addedAt: Date.now() });
+}
+
+async function refreshOauth(acc, sec) {
+  const appCfg = elyApp();
+  if (!sec.refreshToken || !appCfg.clientId) throw new Error('no refresh');
+  const tok = await tokenCall({ client_id: appCfg.clientId, client_secret: appCfg.clientSecret, scope: SCOPES, refresh_token: sec.refreshToken, grant_type: 'refresh_token' });
+  const next = { ...sec, accessToken: tok.access_token, expiresAt: Date.now() + (Number(tok.expires_in) || 86400) * 1000 };
+  store.setSecret(acc.id, next);
+  return next;
+}
+
 function addOffline(name) {
   if (!/^[A-Za-z0-9_]{3,16}$/.test(name)) throw new Error('Ник: 3–16 символов, латиница, цифры и _');
   const uuid = offlineUuid(name);
@@ -92,6 +191,18 @@ async function prepare(id) {
     const e = new Error('Войди в Ely.by заново');
     e.relogin = true;
     throw e;
+  }
+  if (sec.oauth) {
+    // вход через браузер: токен живёт сутки, обновляется по refresh-токену
+    let cur = sec;
+    if (!cur.expiresAt || cur.expiresAt - Date.now() < 30 * 60e3) {
+      try { cur = await refreshOauth(acc, sec); } catch (_) {
+        const e = new Error('Сессия Ely.by истекла, войди заново');
+        e.relogin = true;
+        throw e;
+      }
+    }
+    return { ...acc, accessToken: cur.accessToken, clientToken: clientToken() };
   }
   let token = sec.accessToken;
   try {
@@ -139,4 +250,4 @@ async function elyCape(name) {
   }
 }
 
-module.exports = { loginEly, addOffline, remove, select, prepare, publicAccounts, elySkin, elyCape, offlineUuid };
+module.exports = { loginEly, loginElyBrowser, cancelBrowserLogin, browserLoginReady, addOffline, remove, select, prepare, publicAccounts, elySkin, elyCape, offlineUuid };

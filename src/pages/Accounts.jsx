@@ -15,6 +15,24 @@ export default function Accounts({ onClose }) {
   const [nick, setNick] = useState('');
   const [busy, setBusy] = useState(false);
   const [heads, setHeads] = useState({});
+  const [browserReady, setBrowserReady] = useState(false);
+  const [waiting, setWaiting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => { call('accounts:browserReady').then((r) => { setBrowserReady(!!r); if (!r) setShowPassword(true); }).catch(() => setShowPassword(true)); }, []);
+  useEffect(() => () => { call('accounts:cancelBrowser').catch(() => {}); }, []);
+
+  const doBrowser = async () => {
+    setWaiting(true);
+    try {
+      await call('accounts:loginElyBrowser');
+      await refreshAccounts();
+      toast(t('Вход в Ely.by выполнен'), 'ok');
+      setTab('list');
+    } catch (err) {
+      if (!/отмен/i.test(err.message)) toast(err.message, 'error', 7000);
+    } finally { setWaiting(false); }
+  };
 
   useEffect(() => {
     accounts.forEach(async (a) => {
@@ -65,7 +83,7 @@ export default function Accounts({ onClose }) {
               <Head skin={heads[a.id]} size={38} />
               <div className="grow">
                 <b>{a.name}</b>
-                <small className="muted">{a.type === 'ely' ? 'Ely.by · ' + t('скины и вход на сервера') : t('Офлайн-ник')}</small>
+                <small className="muted">{a.type === 'ely' ? 'Ely.by · ' + (a.via === 'browser' ? t('вход через браузер') : t('скины и вход на сервера')) : t('Офлайн-ник')}</small>
               </div>
               {account && account.id === a.id && <span className="pill green"><Icon name="check" size={12} /> {t('выбран')}</span>}
               <button className="btn icon-btn sm danger" title={t('Удалить')} onClick={async (e) => { e.stopPropagation(); await call('accounts:remove', a.id); await refreshAccounts(); }}><Icon name="trash" size={12} /></button>
@@ -77,6 +95,19 @@ export default function Accounts({ onClose }) {
       {tab === 'ely' && (
         <form className="form" onSubmit={doEly}>
           <p className="muted">{t('Ely.by — бесплатная система скинов. Твой скин с Ely.by будут видеть все игроки, а в нашей сборке ещё и скин из редактора лаунчера.')}</p>
+          {browserReady && (waiting ? (
+            <div className="row">
+              <span className="pill">{t('Жду вход в браузере…')}</span>
+              <button type="button" className="btn ghost" onClick={() => call('accounts:cancelBrowser')}>{t('Отменить')}</button>
+            </div>
+          ) : (
+            <div className="row">
+              <button type="button" className="btn primary" onClick={doBrowser}><Icon name="user" /> {t('Войти через браузер')}</button>
+              {!showPassword && <button type="button" className="btn ghost" onClick={() => setShowPassword(true)}>{t('По паролю')}</button>}
+            </div>
+          ))}
+          {browserReady && <small className="muted">{t('Откроется сайт Ely.by: войди там как обычно (и с 2FA, и через Google) — лаунчер получит только токен входа.')}</small>}
+          {showPassword && <>
           <label>{t('Ник или e-mail')}<input className="input" value={login} onChange={(e) => setLogin(e.target.value)} autoFocus /></label>
           <label>{t('Пароль')}<input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
           {needTotp && <label>{t('Код 2FA')}<input className="input mono" value={totp} onChange={(e) => setTotp(e.target.value)} autoFocus /></label>}
@@ -85,6 +116,7 @@ export default function Accounts({ onClose }) {
             <button type="button" className="btn ghost" onClick={() => call('shell:open', 'https://account.ely.by/register')}>{t('Регистрация на Ely.by')}</button>
           </div>
           <small className="muted">{t('Пароль не сохраняется: лаунчер хранит только зашифрованный токен входа.')}</small>
+          </>}
         </form>
       )}
 

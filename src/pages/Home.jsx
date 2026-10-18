@@ -7,12 +7,13 @@ import SkinPreview from '../components/SkinPreview.jsx';
 import { defaultSkinDataUrl } from '../editor/templates.js';
 
 export default function Home({ go, openAccounts, openDonate, skin }) {
-  const { t, lang, settings, account, pack, progress, gameState, toast, refreshAccounts } = useApp();
+  const { t, lang, settings, account, pack, progress, gameState, busyState, toast, refreshAccounts } = useApp();
   const [servers, setServers] = useState([]);
   const [fallbackSkin] = useState(() => defaultSkinDataUrl());
 
   const running = gameState.state === 'running' || gameState.state === 'starting';
-  const preparing = gameState.state === 'preparing';
+  const otherWork = busyState && busyState.busy && busyState.what !== 'play'; // заливка сборки, проверка файлов
+  const preparing = gameState.state === 'preparing' || otherWork;
 
   useEffect(() => {
     const list = [...(settings.servers || []), ...((pack && pack.latest && pack.latest.servers) || [])].slice(0, 3);
@@ -36,6 +37,7 @@ export default function Home({ go, openAccounts, openDonate, skin }) {
 
   let playLabel = t('Играть');
   if (running) playLabel = gameState.state === 'starting' ? t('Запускается…') : t('В игре');
+  else if (otherWork) playLabel = busyState.what === 'publish' ? t('Идёт заливка…') : t('Проверяю файлы…');
   else if (preparing) playLabel = t('Подготовка…');
   else if (!state || !state.version) playLabel = pack && pack.authorHome ? t('Играть') : t('Установить и играть');
   else if (needUpdate) playLabel = t('Обновить и играть');
@@ -52,7 +54,7 @@ export default function Home({ go, openAccounts, openDonate, skin }) {
           <p className="hero-sub">{t('Авторская сборка Кокка: живые деревни, сезоны, ночи и свои моды. Один клик — и ты в игре.')}</p>
 
           <div className="play-row">
-            <button className={'play-btn' + (running ? ' running' : '') + (preparing ? ' busy' : '')} disabled={preparing || running} onClick={() => play()}>
+            <button className={'play-btn' + (running ? ' running' : '') + (preparing ? ' busy' : '')} disabled={preparing || running} title={otherWork && busyState.what === 'publish' ? t('Играть можно будет, когда сборка зальётся') : undefined} onClick={() => play()}>
               <span className="play-glow" />
               <Icon name={running ? 'check' : 'play'} size={22} />
               <span>{playLabel}</span>

@@ -1,5 +1,13 @@
 // Переводы. Ключ — русский текст, для английского берём EN[key].
 const EN = {
+  'Идёт заливка…': 'Uploading pack…',
+  'Проверяю файлы…': 'Checking files…',
+  'Играть можно будет, когда сборка зальётся': 'You can play once the pack upload finishes',
+  'Жду вход в браузере…': 'Waiting for browser sign-in…',
+  'Войти через браузер': 'Sign in with browser',
+  'По паролю': 'With password',
+  'Откроется сайт Ely.by: войди там как обычно (и с 2FA, и через Google) — лаунчер получит только токен входа.': 'The Ely.by site will open: sign in there as usual (2FA and Google work too) — the launcher only gets a sign-in token.',
+  'вход через браузер': 'browser sign-in',
   'Ely.by — бесплатная система скинов. Твой скин с Ely.by будут видеть все игроки, а в нашей сборке ещё и скин из редактора лаунчера.': 'Ely.by is a free skin system. Everyone sees your Ely.by skin, and in our pack also the skin from the launcher editor.',
   'Java 21 установлена': 'Java 21 installed',
   'Java не найдена — лаунчер скачает её сам.': 'No Java found — the launcher will download it.',

@@ -11,6 +11,7 @@ export function AppProvider({ children }) {
   const [accounts, setAccounts] = useState({ accounts: [], selected: null });
   const [pack, setPack] = useState(null);
   const [progress, setProgress] = useState(null);
+  const [busyState, setBusyState] = useState({ busy: false, what: null });
   const [gameState, setGameState] = useState({ state: 'idle' });
   const [logs, setLogs] = useState([]);
   const [toasts, setToasts] = useState([]);
@@ -44,12 +45,14 @@ export function AppProvider({ children }) {
         await refreshSettings();
         await refreshAccounts();
         refreshPack();
+        try { const st = await call('game:status'); setBusyState({ busy: !!st.busy, what: st.what || null }); } catch (_) {}
       } catch (e) {
         setSettings({ language: 'ru', gameDir: '' });
       }
     })();
     const offs = [
       on('progress', setProgress),
+      on('busy-state', setBusyState),
       on('game-state', (s) => {
         setGameState(s);
         if (s.state === 'preparing') setLogs([]);
@@ -68,7 +71,7 @@ export function AppProvider({ children }) {
     settings, saveSettings, refreshSettings, info,
     accounts: accounts.accounts, account, refreshAccounts,
     pack, refreshPack,
-    progress, gameState, logs,
+    progress, gameState, logs, busyState,
     toasts, toast,
     update,
     lang, t
