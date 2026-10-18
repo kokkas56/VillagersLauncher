@@ -11,7 +11,7 @@ const STATUS = {
   searching: 'Ищу комнату…', found: 'Комната найдена, соединяюсь…', connecting: 'Соединяюсь…',
   connected: 'Подключено', reconnecting: 'Переподключаюсь…', error: 'Не получилось'
 };
-const ROUTE = { direct: 'напрямую', lan: 'по локальной сети', relay: 'через ретранслятор' };
+const ROUTE = { direct: 'напрямую', lan: 'по локальной сети', relay: 'через ретранслятор', tcp: 'через проброс порта' };
 const fmt = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + ' МБ' : Math.round(n / 1024) + ' КБ');
 
 function RoomCard({ st, t, toast, account, openAccounts, roomId, reload }) {
@@ -37,6 +37,8 @@ function RoomCard({ st, t, toast, account, openAccounts, roomId, reload }) {
       {host ? (
         <>
           <p className="muted small">{t('Что открыто')}: <b>{st.target}</b></p>
+          {st.direct ? <p className="muted small">{t('Запасной путь')}: <b>{t('порт на роутере открыт')}</b></p>
+            : st.directWhy ? <p className="muted small">{t('Запасной путь (проброс порта)')}: {t(st.directWhy)}</p> : null}
           {st.mode === 'world' && <ol className="net-steps">
             <li>{t('Запусти игру и зайди в свой мир.')}</li>
             <li>{t('Esc → «Открыть для сети» → «Открыть мир».')}</li>

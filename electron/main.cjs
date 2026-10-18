@@ -258,7 +258,8 @@ ipcMain.on('tunnel-state', (e, st) => { if (tunnelWin && e.sender === tunnelWin.
 function tunnelOpts(data) {
   const s = store.get();
   const acc = auth.publicAccounts().find((a) => a.id === s.selectedAccount);
-  const ice = [{ urls: s.stunServers || [] }, ...((s.turnServers || []).filter((t) => t && t.urls))];
+  const stun = [...new Set([...(s.stunServers || []), ...store.DEFAULTS.stunServers])]; // новые серверы из обновлений лаунчера тоже
+  const ice = [{ urls: stun }, ...((s.turnServers || []).filter((t) => t && t.urls))];
   return {
     name: String(data.name || '').trim(), password: String(data.password || ''), mode: data.mode === 'server' ? 'server' : 'world',
     nick: acc ? acc.name : 'Игрок', brokers: s.tunnelBrokers, iceServers: ice, gameDir: s.gameDir,

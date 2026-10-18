@@ -64,7 +64,8 @@ const DEFAULTS = {
   rooms: [], // сохранённые комнаты {id, role: host|guest, name, mode}
   activeRoom: null,
   tunnelBrokers: ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt'],
-  stunServers: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478', 'stun:stun1.l.google.com:19302'],
+  stunServers: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478', 'stun:stun1.l.google.com:19302',
+    'stun:stun.sipnet.ru:3478', 'stun:stun.nextcloud.com:443', 'stun:stun.voipgate.com:3478', 'stun:stun.ekiga.net:3478', 'stun:stun.stunprotocol.org:3478'],
   turnServers: [], // {urls, username, credential} — если напрямую не соединяется
   tunnelLocalPort: 25565,
   // Сервер сборки в лаунчере

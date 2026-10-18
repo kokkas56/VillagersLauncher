@@ -13,6 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { Mqtt } = require('./mqtt.js');
+const upnp = require('./upnp.js');
 
 const CHUNK = 16 * 1024;
 const HIGH = 4 * 1024 * 1024;
@@ -104,6 +105,108 @@ async function routeOf(pc) {
   } catch (_) { return null; }
 }
 
+// ---------------- запасной путь: прямой TCP через проброс порта (UPnP) ----------------
+// гость шлёт «VLT1» + nonce(12) + HMAC(16) + длина ника(1, 255 = только проверка) + ник; хозяин проверяет пароль комнаты
+function preamble(key, nick) {
+  const nonce = crypto.randomBytes(12);
+  const nb = nick == null ? Buffer.alloc(0) : Buffer.from(String(nick).slice(0, 32), 'utf8');
+  const len = Buffer.from([nick == null ? 255 : nb.length]);
+  const mac = crypto.createHmac('sha256', key).update(Buffer.concat([Buffer.from('vlt'), nonce, len, nb])).digest().subarray(0, 16);
+  return Buffer.concat([Buffer.from('VLT1'), nonce, mac, len, nb]);
+}
+
+function startDirect(r) {
+  const srv = net.createServer((sock) => {
+    let buf = Buffer.alloc(0);
+    const t = setTimeout(() => sock.destroy(), 10000);
+    const onData = (d) => {
+      buf = Buffer.concat([buf, d]);
+      if (buf.length < 33) return;
+      const len = buf[32] === 255 ? 0 : buf[32];
+      if (buf.length < 33 + len) return;
+      sock.removeListener('data', onData);
+      clearTimeout(t);
+      const head = buf.subarray(0, 33 + len), rest = buf.subarray(33 + len);
+      const want = crypto.createHmac('sha256', r.key).update(Buffer.concat([Buffer.from('vlt'), head.subarray(4, 16), head.subarray(32)])).digest().subarray(0, 16);
+      if (head.subarray(0, 4).toString() !== 'VLT1' || !crypto.timingSafeEqual(want, head.subarray(16, 32))) { sock.destroy(); return; }
+      if (buf[32] === 255) { sock.end('OK'); return; } // проверка связи
+      const nick = head.subarray(33).toString('utf8') || 'гость';
+      const target = hostTarget(r);
+      if (!target) { log(`${nick} (через проброс порта) пытается зайти, но ${r.mode === 'server' ? 'сервер не запущен' : 'мир ещё не открыт для сети'}`); sock.destroy(); return; }
+      const up = net.connect({ host: '127.0.0.1', port: target });
+      r.directConns = (r.directConns || 0) + 1;
+      if (!r.directSeen) r.directSeen = new Set();
+      if (!r.directSeen.has(nick)) { r.directSeen.add(nick); log(`${nick} зашёл через проброс порта`); }
+      if (rest.length) up.write(rest);
+      sock.on('data', (x) => { r.stats.down += x.length; });
+      up.on('data', (x) => { r.stats.up += x.length; });
+      sock.pipe(up); up.pipe(sock);
+      const end = () => { sock.destroy(); up.destroy(); };
+      sock.on('error', end); up.on('error', end); sock.on('close', end); up.on('close', () => { r.directConns = Math.max(0, r.directConns - 1); end(); push(); });
+      push();
+    };
+    sock.on('data', onData);
+    sock.on('error', () => {});
+  });
+  srv.on('error', (e) => log('Проброс: ' + e.message));
+  srv.listen(0, '0.0.0.0', async () => {
+    r.directServer = srv;
+    const port = srv.address().port;
+    const res = await upnp.map(port).catch((e) => ({ ok: false, why: e.message }));
+    if (room !== r) { if (res.cleanup) res.cleanup(); return; }
+    r.upnpCleanup = res.cleanup;
+    if (res.ok) { r.direct = { ip: res.ip, port: res.port }; log(`Порт на роутере открыт (${res.ip}:${res.port}) — если напрямую не пробьётся, друзья зайдут через него`); }
+    else { r.directWhy = res.why; log('Проброс порта не вышел: ' + res.why); }
+    if (r.announce) r.announce();
+    push();
+  });
+}
+
+function probeDirect(r, d) {
+  return new Promise((resolve) => {
+    const s = net.connect({ host: d.ip, port: d.port });
+    let ok = false;
+    const t = setTimeout(() => { s.destroy(); resolve(false); }, 6000);
+    s.on('connect', () => s.write(preamble(r.key, null)));
+    s.on('data', (x) => { if (x.toString().startsWith('OK')) ok = true; });
+    s.on('close', () => { clearTimeout(t); resolve(ok); });
+    s.on('error', () => {});
+  });
+}
+
+async function tryDirect(r, why) {
+  if (room !== r || r.route && r.route.kind === 'tcp' || r.tryingDirect) return false;
+  const d = r.hostInfo && r.hostInfo.direct;
+  if (!d) return false;
+  r.tryingDirect = true;
+  log(why + ' Пробую через проброс порта хозяина…');
+  const ok = await probeDirect(r, d);
+  r.tryingDirect = false;
+  if (room !== r) return false;
+  if (!ok) { log('Через проброс порта тоже не вышло (порт закрыт брандмауэром хозяина или провайдером)'); return false; }
+  r.status = 'connected';
+  r.error = null;
+  clearTimeout(r.giveUp);
+  r.route = { kind: 'tcp', rtt: null };
+  await openLocal(r);
+  log(`Соединение есть (через проброс порта). В игре: «Сетевая игра» → мир «${r.name}», или 127.0.0.1:${r.port}`);
+  push();
+  return true;
+}
+
+// что видно о соединении (для подсказки, почему не пробилось)
+function candKinds(set, cand) {
+  const m = /typ (\w+)/.exec(typeof cand === 'string' ? cand : (cand && cand.candidate) || '');
+  if (m) set.add(m[1]);
+}
+function iceWhy(mine, theirs) {
+  const a = mine.has('srflx') || mine.has('relay'), b = theirs.has('srflx') || theirs.has('relay');
+  if (!a && !b) return 'Ни у кого не нашёлся внешний адрес — похоже, провайдеры не пускают к STUN-серверам.';
+  if (!a) return 'У тебя не нашёлся внешний адрес (STUN недоступен) — у друга есть.';
+  if (!b) return 'У друга не нашёлся внешний адрес (STUN недоступен) — у тебя есть.';
+  return 'Внешние адреса есть у обоих, но роутеры/провайдеры не пропускают напрямую (строгий NAT).';
+}
+
 // ---------------- общее ----------------
 function base(id) { return `villagerslauncher/v1/${id}`; }
 function rnd() { return crypto.randomBytes(6).toString('hex'); }
@@ -114,6 +217,7 @@ function snapshot() {
     active: true, role: room.role, name: room.name, mode: room.mode, status: room.status, error: room.error || null,
     brokers: room.sig ? room.sig.online() : 0, brokersTotal: room.brokers.length,
     port: room.port || null, target: room.role === 'host' ? room.targetDesc : null,
+    direct: room.role === 'host' ? room.direct || null : null, directWhy: room.role === 'host' ? room.directWhy || null : null,
     host: room.hostInfo || null, route: room.route || null, notice: room.notice || null,
     peers: room.role === 'host' ? [...room.peers.values()].map((p) => ({ id: p.id, nick: p.nick, state: p.state, route: p.route, conns: p.conns })) : [],
     stats: room.stats, log: room.log.slice(-60)
@@ -191,15 +295,18 @@ function startHost(opts) {
     brokers: opts.brokers, peers: new Map(), status: 'starting', log: [], stats: { up: 0, down: 0 }, nick: opts.nick, opts
   };
   const B = base(id);
-  r.sig = new Signal(opts.brokers, keyOf(id, opts.password), (topic, m) => onHostMsg(r, m), (n) => { if (room === r) { r.status = n ? 'open' : 'offline'; push(); } });
+  r.key = keyOf(id, opts.password);
+  r.sig = new Signal(opts.brokers, r.key, (topic, m) => onHostMsg(r, m), (n) => { if (room === r) { r.status = n ? 'open' : 'offline'; push(); } });
   r.sig.sub(`${B}/host`);
   if (r.mode === 'world') startLanSniffer(r);
+  if (opts.upnp !== false) startDirect(r);
   const announce = () => {
     const t = hostTarget(r);
     r.targetDesc = r.mode === 'server' ? `сервер сборки, порт ${r.serverPort}` : t ? `мой мир, порт ${t}` : 'мир ещё не открыт для сети';
-    r.sig.pub(`${B}/presence`, { presence: true, host: r.nick, mode: r.mode, ready: !!t, players: [...r.peers.values()].filter((p) => p.state === 'connected').length, ver: VERSION }, true);
+    r.sig.pub(`${B}/presence`, { presence: true, host: r.nick, mode: r.mode, ready: !!t, players: [...r.peers.values()].filter((p) => p.state === 'connected').length + (r.directConns ? 1 : 0), direct: r.direct || null, ver: VERSION }, true);
     push();
   };
+  r.announce = announce;
   r.presenceT = setInterval(announce, 15000);
   setTimeout(announce, 1500);
   log(`Комната «${r.name}» открыта. Друзья входят по имени и паролю.`);
@@ -212,18 +319,21 @@ function onHostMsg(r, m) {
     let p = r.peers.get(m.from);
     if (p && p.state === 'connected' && p.session === m.session) return; // повтор
     if (p) closePeer(p);
-    p = { id: m.from, session: m.session, nick: String(m.nick || 'гость').slice(0, 32), state: 'connecting', conns: 0, pc: newPc(r.opts) };
+    p = { id: m.from, session: m.session, nick: String(m.nick || 'гость').slice(0, 32), state: 'connecting', conns: 0, pc: newPc(r.opts), mine: new Set(), theirs: new Set() };
     r.peers.set(m.from, p);
     log(`${p.nick} стучится в комнату…`);
     const to = `${B}/p/${m.from}`;
-    p.pc.onicecandidate = (e) => { if (e.candidate) r.sig.pub(to, { t: 'ice', from: 'host', session: m.session, c: e.candidate.toJSON() }); };
+    p.pc.onicecandidate = (e) => { if (e.candidate) { candKinds(p.mine, e.candidate); r.sig.pub(to, { t: 'ice', from: 'host', session: m.session, c: e.candidate.toJSON() }); } };
     p.pc.onconnectionstatechange = async () => {
       const st = p.pc.connectionState;
       if (st === 'connected') {
         p.state = 'connected';
         p.route = await routeOf(p.pc);
         log(`${p.nick} подключён (${p.route && p.route.kind === 'relay' ? 'через ретранслятор' : p.route && p.route.kind === 'lan' ? 'по локальной сети' : 'напрямую'})`);
-      } else if (st === 'failed') { p.state = 'failed'; log(`${p.nick}: не удалось соединиться напрямую (строгий NAT). Нужен TURN-сервер в настройках сети.`); }
+      } else if (st === 'failed') {
+        p.state = 'failed';
+        log(`${p.nick}: напрямую не пробилось. ${iceWhy(p.mine, p.theirs)}${r.direct ? ' Он попробует через проброс порта.' : r.directWhy ? ' Проброс порта у тебя тоже не вышел: ' + r.directWhy : ''}`);
+      }
       else if (st === 'disconnected' || st === 'closed') { if (p.state === 'connected') log(`${p.nick} отключился`); p.state = st; }
       push();
     };
@@ -260,7 +370,7 @@ function onHostMsg(r, m) {
     if (p && p.session === m.session) p.pc.setRemoteDescription(m.sdp).catch((e) => log('answer: ' + e.message));
   } else if (m.t === 'ice') {
     const p = r.peers.get(m.from);
-    if (p && p.session === m.session) p.pc.addIceCandidate(m.c).catch(() => {});
+    if (p && p.session === m.session) { candKinds(p.theirs, m.c); p.pc.addIceCandidate(m.c).catch(() => {}); }
   } else if (m.t === 'bye') {
     const p = r.peers.get(m.from);
     if (p) { log(`${p.nick} вышел из комнаты`); closePeer(p); r.peers.delete(m.from); push(); }
@@ -288,7 +398,9 @@ function startJoin(opts) {
     role: 'guest', name: opts.name, id, me, session: rnd(), brokers: opts.brokers, status: 'searching', log: [], stats: { up: 0, down: 0 }, opts, conns: 0
   };
   const B = base(id);
-  r.sig = new Signal(opts.brokers, keyOf(id, opts.password), (topic, m) => onGuestMsg(r, m), () => push());
+  r.key = keyOf(id, opts.password);
+  r.mine = new Set(); r.theirs = new Set();
+  r.sig = new Signal(opts.brokers, r.key, (topic, m) => onGuestMsg(r, m), () => push());
   r.sig.sub(`${B}/p/${me}`);
   r.sig.sub(`${B}/presence`);
   const hello = () => {
@@ -311,8 +423,13 @@ function onGuestMsg(r, m) {
   if (room !== r) return;
   const B = base(r.id);
   if (m.presence) {
-    r.hostInfo = { nick: m.host, mode: m.mode, ready: m.ready, players: m.players };
-    if (r.status === 'searching') { r.status = 'found'; log(`Комната найдена: хозяин ${m.host}`); }
+    r.hostInfo = { nick: m.host, mode: m.mode, ready: m.ready, players: m.players, direct: m.direct || null };
+    if (r.status === 'searching') {
+      r.status = 'found';
+      log(`Комната найдена: хозяин ${m.host}`);
+      // если за 20 секунд напрямую не соединилось — пробуем проброс порта хозяина
+      setTimeout(() => { if (room === r && r.status !== 'connected') tryDirect(r, 'Напрямую долго не соединяется.'); }, 20000);
+    }
     push();
     return;
   }
@@ -321,7 +438,7 @@ function onGuestMsg(r, m) {
     if (r.pc) try { r.pc.close(); } catch (_) {}
     const pc = r.pc = newPc(r.opts);
     r.hostInfo = { ...(r.hostInfo || {}), nick: m.host, mode: m.mode };
-    pc.onicecandidate = (e) => { if (e.candidate) r.sig.pub(`${B}/host`, { t: 'ice', from: r.me, session: r.session, c: e.candidate.toJSON() }); };
+    pc.onicecandidate = (e) => { if (e.candidate) { candKinds(r.mine, e.candidate); r.sig.pub(`${B}/host`, { t: 'ice', from: r.me, session: r.session, c: e.candidate.toJSON() }); } };
     pc.onconnectionstatechange = async () => {
       const st = pc.connectionState;
       if (st === 'connected') {
@@ -331,9 +448,15 @@ function onGuestMsg(r, m) {
         await openLocal(r);
         log(`Соединение с ${m.host} есть (${r.route && r.route.kind === 'relay' ? 'через ретранслятор' : r.route && r.route.kind === 'lan' ? 'по локальной сети' : 'напрямую'}${r.route && r.route.rtt != null ? ', пинг ' + r.route.rtt + ' мс' : ''}). В игре: «Сетевая игра» → мир «${r.name}», или адрес 127.0.0.1:${r.port}`);
       } else if (st === 'failed') {
-        r.status = 'error';
-        r.error = 'Не удалось соединиться напрямую (у кого-то строгий NAT). Добавь TURN-сервер в настройках сети или попробуйте, чтобы хостом был другой.';
-        log(r.error);
+        if (r.route && r.route.kind === 'tcp') return;
+        const why = iceWhy(r.mine, r.theirs);
+        tryDirect(r, 'Напрямую не пробилось. ' + why).then((ok) => {
+          if (ok || room !== r) return;
+          r.status = 'error';
+          r.error = 'Не удалось соединиться. ' + why + (r.hostInfo && r.hostInfo.direct ? '' : ' Проброс порта у хозяина не включился (роутер без UPnP или «серый» IP).') + ' Попробуйте, чтобы хостом был другой, или включите VPN.';
+          log(r.error);
+          push();
+        });
       } else if (st === 'disconnected') {
         if (r.status === 'connected') { r.status = 'reconnecting'; log('Связь пропала, переподключаюсь…'); r.session = rnd(); }
       }
@@ -351,6 +474,7 @@ function onGuestMsg(r, m) {
     if (r.status !== 'connected') r.status = 'connecting';
     push();
   } else if (m.t === 'ice' && r.pc) {
+    candKinds(r.theirs, m.c);
     r.pc.addIceCandidate(m.c).catch(() => {});
   }
 }
@@ -360,6 +484,20 @@ async function openLocal(r) {
   r.port = await freePort(r.opts.localPort || 25565);
   let n = 0;
   r.server = net.createServer((sock) => {
+    if (r.route && r.route.kind === 'tcp' && r.hostInfo && r.hostInfo.direct) {
+      const d = r.hostInfo.direct;
+      const up = net.connect({ host: d.ip, port: d.port });
+      up.write(preamble(r.key, r.opts.nick));
+      r.conns++;
+      sock.on('data', (x) => { r.stats.up += x.length; });
+      up.on('data', (x) => { r.stats.down += x.length; });
+      sock.pipe(up); up.pipe(sock);
+      const end = () => { sock.destroy(); up.destroy(); };
+      sock.on('error', end); up.on('error', end); up.on('close', end);
+      sock.on('close', () => { r.conns = Math.max(0, r.conns - 1); end(); push(); });
+      push();
+      return;
+    }
     if (!r.pc || r.pc.connectionState !== 'connected') { sock.destroy(); return; }
     const dc = r.pc.createDataChannel('c' + (++n), { ordered: true });
     r.notice = null;
@@ -395,6 +533,8 @@ function leave() {
       for (const p of r.peers.values()) closePeer(p);
       clearInterval(r.presenceT);
       if (r.sniffer) r.sniffer.close();
+      if (r.directServer) r.directServer.close();
+      if (r.upnpCleanup) r.upnpCleanup();
     } else {
       r.sig.pub(`${B}/host`, { t: 'bye', from: r.me, session: r.session });
       clearInterval(r.helloT); clearTimeout(r.giveUp); clearInterval(r.annT);
