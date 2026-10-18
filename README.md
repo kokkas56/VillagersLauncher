@@ -1,0 +1,3 @@
+# VillagersLauncher
+
+Лаунчер сборки MineVillagers.
