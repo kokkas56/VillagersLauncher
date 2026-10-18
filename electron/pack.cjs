@@ -326,17 +326,43 @@ async function publish({ title, text }, progress) {
 
   progress({ stage: 'publish', text: 'Создаю выпуск на GitHub…', indeterminate: true });
   const body = `${text || ''}\n\n—\nДобавлено: ${ch.added.length}, изменено: ${ch.changed.length}, удалено: ${ch.removed.length}`;
+  // убираем брошенные черновики (если прошлая заливка была прервана)
+  try {
+    const all = await gh('GET', `/repos/${repo()}/releases?per_page=50`, token);
+    for (const r of all) if (r.draft) await gh('DELETE', `/repos/${repo()}/releases/${r.id}`, token).catch(() => {});
+  } catch (_) {}
   const rel = await gh('POST', `/repos/${repo()}/releases`, token, { tag_name: tag, name: `#${version} ${title}`, body, draft: true });
   try {
     const total = uploads.reduce((a, u) => a + u.size, 0) || 1;
     let done = 0;
-    for (const u of uploads) {
-      progress({ stage: 'publish', text: `Загружаю ${u.name}`, bytes: done, total });
-      const buf = fs.readFileSync(u.abs);
-      await gh('POST', `https://uploads.github.com/repos/${repo()}/releases/${rel.id}/assets?name=${encodeURIComponent(u.name)}`, token, buf,
-        { 'Content-Type': 'application/octet-stream' });
-      done += u.size;
-    }
+    let filesDone = 0;
+    let idx = 0;
+    // параллельная загрузка: мелких конфигов много, по одному это очень долго
+    const queue = [...uploads].sort((a, b) => b.size - a.size);
+    const worker = async () => {
+      while (idx < queue.length) {
+        const u = queue[idx++];
+        const buf = fs.readFileSync(u.abs);
+        let lastErr;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            await gh('POST', `https://uploads.github.com/repos/${repo()}/releases/${rel.id}/assets?name=${encodeURIComponent(u.name)}`, token, buf,
+              { 'Content-Type': 'application/octet-stream' });
+            lastErr = null;
+            break;
+          } catch (e) {
+            lastErr = e;
+            if (e.status === 422) { lastErr = null; break; } // уже загружен
+            await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+          }
+        }
+        if (lastErr) throw lastErr;
+        done += u.size;
+        filesDone++;
+        progress({ stage: 'publish', text: `Загружаю файлы: ${filesDone}/${queue.length}`, bytes: done, total });
+      }
+    };
+    await Promise.all(Array.from({ length: 8 }, worker));
     const mbuf = Buffer.from(JSON.stringify(manifest));
     await gh('POST', `https://uploads.github.com/repos/${repo()}/releases/${rel.id}/assets?name=manifest.json`, token, mbuf,
       { 'Content-Type': 'application/json' });
