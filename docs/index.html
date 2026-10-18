@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src https://api.github.com; base-uri 'none'; form-action 'none'" />
+  <meta name="referrer" content="no-referrer" />
+  <title>MineVillagers — сборка Кокка</title>
+  <meta name="description" content="MineVillagers — авторская сборка Minecraft 1.21.1 с живыми деревнями, сезонами и модами Кокка. Скачай VillagersLauncher и играй в один клик." />
+  <meta property="og:title" content="MineVillagers — сборка Кокка" />
+  <meta property="og:description" content="Живые деревни, сезоны, ночи и свои моды. Скачай лаунчер и играй в один клик." />
+  <meta property="og:image" content="img/icon.png" />
+  <link rel="icon" href="img/icon.png" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="scene" aria-hidden="true"></canvas>
+
+  <header class="top">
+    <a class="brand" href="#top"><img src="img/icon.png" alt="" /><span>MineVillagers</span></a>
+    <nav>
+      <a href="#news">Новости</a>
+      <a href="#mods">Моды</a>
+      <a href="#start">Как играть</a>
+      <a href="#faq">FAQ</a>
+      <a href="#donate" class="nav-donate">Поддержать</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-inner">
+        <div class="kicker"><span class="gem"></span> Minecraft 1.21.1 · NeoForge · <span id="pack-version">сборка</span></div>
+        <h1><span>Mine</span><span class="gold">Villagers</span></h1>
+        <p class="sub">Авторская сборка Кокка: жители строят поселения, торгуют и помнят тебя, зима приходит по-настоящему, а ночи можно проспать с киношной камерой.</p>
+        <div class="cta">
+          <a class="btn-play" id="download" href="https://github.com/kokkas56/VillagersLauncher/releases/latest/download/VillagersLauncher-Setup.exe" rel="noopener">
+            <span class="shine"></span>
+            <svg viewBox="0 0 9 9" aria-hidden="true"><path d="M1 0h1v1h1v1h1v1h1v1h1v1h-1v1h-1v1h-1v1h-1v1h-1z" /></svg>
+            Скачать лаунчер
+          </a>
+          <div class="cta-meta">
+            <span id="launcher-version">Windows 10/11 · ~80 МБ</span>
+            <a href="https://github.com/kokkas56/VillagersLauncher/releases" rel="noopener">все версии</a>
+          </div>
+        </div>
+        <ul class="perks">
+          <li>Ставит Minecraft, NeoForge и Java сам</li>
+          <li>Обновляет сборку в один клик</li>
+          <li>Редактор скинов со слоями и 3D</li>
+          <li>Вход через Ely.by или просто ник</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="news" class="block">
+      <h2>Новости сборки</h2>
+      <p class="lead">То, что Кокк пишет при каждом обновлении. Подтягивается автоматически.</p>
+      <div id="news-list" class="news">
+        <div class="news-item skeleton"></div>
+        <div class="news-item skeleton"></div>
+      </div>
+    </section>
+
+    <section id="mods" class="block">
+      <h2>Моды Кокка</h2>
+      <p class="lead">Всё это написано с нуля для MineVillagers и работает вместе.</p>
+      <div class="mods">
+        <article class="mod main">
+          <div class="mod-tag">Главный мод</div>
+          <h3>Villagers, Kokk</h3>
+          <p>Жители с планирующим ИИ: основывают поселения, сами строят дома, огороды и рыбачат, торгуют, разговаривают, помнят твои поступки. У каждой деревни — репутация и отношения с соседями.</p>
+        </article>
+        <article class="mod"><h3>SeasonsKokk</h3><p>Смена времён года: снег на крышах, листопад, зима, к которой жители готовятся заранее.</p></article>
+        <article class="mod"><h3>NightNight, Kokk</h3><p>Настраиваемая длина дня и ночи и ускоренный сон с кинематографичной камерой.</p></article>
+        <article class="mod"><h3>StrongMobsFromKokk</h3><p>Более сильные и умные мобы — ночь снова становится опасной.</p></article>
+        <article class="mod"><h3>Quality, Kokk</h3><p>Уровни качества снаряжения: от поношенного до шедевра.</p></article>
+        <article class="mod"><h3>StorageKokk</h3><p>Сундуки, бочки и сундуки-короба разных уровней, рюкзаки и модули улучшений. Жители тоже ими пользуются.</p></article>
+        <article class="mod"><h3>KokkHUD</h3><p>Аккуратный интерфейс с черепом-термометром: видно, когда пора греться.</p></article>
+        <article class="mod"><h3>SkinKokk</h3><p>Скины и плащи из редактора лаунчера видны всем игрокам. Меняются без перезапуска, гардероб — на клавишу K.</p></article>
+      </div>
+    </section>
+
+    <section id="start" class="block">
+      <h2>Как начать играть</h2>
+      <ol class="steps">
+        <li><b>Скачай VillagersLauncher</b><span>Кнопка вверху страницы. Установщик спросит папку — можно оставить как есть.</span></li>
+        <li><b>Войди</b><span>Через Ely.by (бесплатно, со скинами) или просто придумай ник латиницей.</span></li>
+        <li><b>Нажми «Играть»</b><span>Первый запуск скачает Minecraft, NeoForge, Java и сборку — около 1 ГБ. Дальше только обновления.</span></li>
+        <li><b>Позови друзей</b><span>Хост открывает мир для сети (e4mc или Radmin VPN), остальные добавляют адрес во вкладке «Сервера».</span></li>
+      </ol>
+    </section>
+
+    <section id="faq" class="block">
+      <h2>Частые вопросы</h2>
+      <div class="faq">
+        <details><summary>Нужна лицензия Minecraft?</summary><p>Нет. Можно войти через Ely.by или играть с офлайн-ником. Лицензионный аккаунт Microsoft лаунчер пока не поддерживает.</p></details>
+        <details><summary>Сколько нужно памяти?</summary><p>Рекомендуем 16 ГБ оперативной памяти в компьютере; игре лаунчер по умолчанию отдаёт половину (до 8 ГБ). Это меняется в «Настройки → Память».</p></details>
+        <details><summary>Windows ругается на установщик</summary><p>Лаунчер не подписан платным сертификатом, поэтому SmartScreen может показать предупреждение. Нажми «Подробнее» → «Выполнить в любом случае». Скачивай только по кнопке на этом сайте или со страницы GitHub.</p></details>
+        <details><summary>Пропали мои моды из папки mods</summary><p>Лаунчер держит папку mods точно как в сборке, чтобы ничего не конфликтовало. Убранные моды лежат в папке игры: <code>.villagers/removed-mods</code>.</p></details>
+        <details><summary>Я поменял конфиг, а он вернулся</summary><p>Твои правки конфигов сохраняются, пока автор не изменит тот же файл. Если изменил — твоя версия уходит в <code>.villagers/backup</code>, ничего не теряется.</p></details>
+        <details><summary>Игра вылетает</summary><p>В лаунчере откроется окно с последними строками лога и кнопками «Отчёты о вылетах» и «Логи». Скинь их Кокку. Ещё помогает «Настройки → Проверить папку».</p></details>
+        <details><summary>Друг не может зайти ко мне в мир</summary><p>Если хост вошёл через Ely.by, а друг играет с офлайн-ником (или наоборот), в мир по сети не пустит. Играйте все через Ely.by или все с никами.</p></details>
+        <details><summary>Можно скачать сборку без лаунчера?</summary><p>Нет — сборка ставится и обновляется только через VillagersLauncher, так у всех одинаковые версии модов.</p></details>
+      </div>
+    </section>
+
+    <section id="donate" class="block donate">
+      <div class="donate-card">
+        <div class="donate-gem" aria-hidden="true"></div>
+        <div>
+          <h2>Поддержать автора</h2>
+          <p>Сборка, моды и лаунчер делаются вручную. Любая поддержка на Boosty помогает выпускать обновления чаще и делать жителей ещё умнее.</p>
+          <a class="btn-donate" href="https://boosty.to/ivan_kokk" rel="noopener" target="_blank">Открыть Boosty</a>
+          <small>Оплата проходит на стороне Boosty — этот сайт не видит и не хранит платёжные данные.</small>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>MineVillagers · Kokk</span>
+    <a href="https://github.com/kokkas56/VillagersLauncher" rel="noopener">Исходный код лаунчера</a>
+    <span class="muted">Не связано с Mojang или Microsoft.</span>
+  </footer>
+
+  <script src="scene.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
