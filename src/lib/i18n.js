@@ -343,6 +343,8 @@ const EN = {
   'у всех': 'live',
   'файлов': 'files',
   'шт.': 'pcs',
+  'Без плаща': 'No cape',
+  'Изумрудный плащ': 'Emerald cape',
   // сообщения главного процесса
   'Проверяю обновления сборки…': 'Checking pack updates…',
   'Подключаю Ely.by': 'Connecting Ely.by',

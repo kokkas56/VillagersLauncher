@@ -111,8 +111,11 @@ export default function SkinEditor({ initial, onClose }) {
         const data = await loadImageData(initial.cape, 64, 32);
         docs.current.cape = makeDoc('cape', [{ name: 'Плащ', data }]);
       } else {
-        docs.current.cape = makeDoc('cape', [{ name: 'Плащ', data: defaultCape() }]);
+        docs.current.cape = makeDoc('cape', [{ name: 'Плащ', data: null }]);
       }
+      // масштаб развёртки под размер окна
+      const h = window.innerHeight - 240;
+      setZoom(Math.max(4, Math.min(12, Math.floor(h / 64))));
       rerender();
     })();
     call('editor:list', 'templates').then(setUserTemplates).catch(() => {});
@@ -662,6 +665,13 @@ export default function SkinEditor({ initial, onClose }) {
     toast(t('Добавлено в гардероб'), 'ok');
   };
 
+  const capePreview = useMemo(() => {
+    const c = document.createElement('canvas');
+    c.width = 64; c.height = 32;
+    c.getContext('2d').putImageData(new ImageData(defaultCape(), 64, 32), 0, 0);
+    return c.toDataURL();
+  }, []);
+
   const palette = useMemo(() => {
     const d = docs.current[mode];
     if (!d) return [];
@@ -874,7 +884,12 @@ export default function SkinEditor({ initial, onClose }) {
           </div>
           {panel === 'templates' && (
             <div className="tpl-grid">
-              {BUILTIN_TEMPLATES.map((tp) => <TemplateCard key={tp.id} name={t(tp.name)} make={() => tp.make(doc.slim)} onClick={() => loadTemplate({ ...tp, builtin: true })} />)}
+              {mode === 'cape' ? (
+                <>
+                  <div className="tpl" onClick={() => loadTemplate({ id: 'empty', name: t('Без плаща'), builtin: true })}><MiniPreview src={null} /><span>{t('Без плаща')}</span></div>
+                  <div className="tpl" onClick={() => loadTemplate({ id: 'emerald', name: t('Изумрудный плащ'), builtin: true })}><MiniPreview src={capePreview} /><span>{t('Изумрудный плащ')}</span></div>
+                </>
+              ) : BUILTIN_TEMPLATES.map((tp) => <TemplateCard key={tp.id} name={t(tp.name)} make={() => tp.make(doc.slim)} onClick={() => loadTemplate({ ...tp, builtin: true })} />)}
               {userTemplates.map((tp) => (
                 <div key={tp.id} className="tpl" onClick={() => loadTemplate(tp)}>
                   <MiniPreview src={tp.preview} />

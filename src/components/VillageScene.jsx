@@ -172,12 +172,17 @@ export default function VillageScene({ paused, hourOverride, animations = true }
       if (dayT > -0.05 && dayT < 1.05) {
         const sx = W * (0.1 + 0.8 * dayT) + px(2);
         const sy = 110 - Math.sin(Math.PI * Math.max(0, Math.min(1, dayT))) * 90;
-        ctx.fillStyle = 'rgba(255,230,150,0.25)';
-        ctx.fillRect(sx - 9, sy - 9, 18, 18);
-        ctx.fillStyle = '#fff1b8';
-        ctx.fillRect(sx - 6, sy - 6, 12, 12);
-        ctx.fillStyle = '#ffd86b';
-        ctx.fillRect(sx - 4, sy - 4, 8, 8);
+        const disc = (cx, cy, r, color) => {
+          ctx.fillStyle = color;
+          for (let y = -r; y <= r; y++) {
+            const w = Math.round(Math.sqrt(r * r - y * y));
+            ctx.fillRect(Math.round(cx - w), Math.round(cy + y), w * 2, 1);
+          }
+        };
+        disc(sx, sy, 11, 'rgba(255,225,140,0.12)');
+        disc(sx, sy, 8, 'rgba(255,225,140,0.2)');
+        disc(sx, sy, 6, '#fff1b8');
+        disc(sx, sy, 4, '#ffd86b');
       }
       const nightT = ((hour + 24 - 19) % 24) / 11;
       if (nightT >= 0 && nightT <= 1 && dark > 0.1) {
