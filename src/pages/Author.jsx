@@ -48,6 +48,40 @@ function ReleaseRow({ r, t, lang, toast, reload }) {
   );
 }
 
+// одна новость: скрыть у всех, исправить, удалить
+function NewsRow({ n, t, lang, toast, reload }) {
+  const [sure, setSure] = useState(false);
+  const [edit, setEdit] = useState(false);
+  const [title, setTitle] = useState(n.title || '');
+  const [text, setText] = useState(n.text || '');
+  const act = async (d, ok) => { try { await call('pack:setNews', { version: n.version, ...d }); if (ok) toast(ok, 'ok'); reload(); } catch (e) { toast(e.message, 'error', 8000); } };
+  return (
+    <div className={'rel news-row' + (n.hidden ? ' hidden-rel' : '')}>
+      <b>#{n.version}</b>
+      {edit ? (
+        <form className="form grow" onSubmit={(e) => { e.preventDefault(); setEdit(false); act({ title: title.trim(), text: text.trim() }, t('Новость исправлена')); }}>
+          <input className="input sm" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
+          <textarea className="input sm" rows={3} value={text} onChange={(e) => setText(e.target.value)} />
+          <div className="row"><button className="btn sm primary">{t('Сохранить')}</button><button type="button" className="btn sm ghost" onClick={() => setEdit(false)}>{t('Отмена')}</button></div>
+        </form>
+      ) : (
+        <span className="grow" title={n.text || ''}>{n.title || t('Обновление')}{n.text ? <span className="muted small"> — {n.text.length > 60 ? n.text.slice(0, 60) + '…' : n.text}</span> : null}</span>
+      )}
+      {!edit && <span className="muted small">{fmtDate(n.date, lang)}</span>}
+      {n.hidden && <span className="pill sm">{t('скрыта')}</span>}
+      {!edit && (
+        <div className="rel-actions">
+          <button className="btn sm ghost" title={n.hidden ? t('Показать новость всем') : t('Скрыть новость (можно вернуть)')} onClick={() => act({ hidden: !n.hidden }, n.hidden ? t('Новость снова видна') : t('Новость скрыта'))}><Icon name={n.hidden ? 'eye' : 'eyeOff'} size={12} /></button>
+          <button className="btn sm ghost" title={t('Исправить текст')} onClick={() => setEdit(true)}><Icon name="pencil" size={12} /></button>
+          {sure
+            ? <button className="btn sm danger" onClick={() => { setSure(false); act({ deleted: true }, t('Новость удалена') + ' #' + n.version); }}>{t('Точно удалить?')}</button>
+            : <button className="btn sm danger" title={t('Удалить новость (сборка останется)')} onClick={() => { setSure(true); setTimeout(() => setSure(false), 4000); }}><Icon name="trash" size={12} /></button>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Author() {
   const { t, lang, settings, saveSettings, progress, toast, refreshPack } = useApp();
   const [hasToken, setHasToken] = useState(false);
@@ -57,6 +91,8 @@ export default function Author() {
   const [title, setTitle] = useState('');
   const [text, setText] = useState('');
   const [publishing, setPublishing] = useState(false);
+  const [noNews, setNoNews] = useState(false);
+  const [news, setNews] = useState([]);
   const [releases, setReleases] = useState([]);
   const [showAll, setShowAll] = useState(false);
   const [scanP, setScanP] = useState(null);
@@ -64,6 +100,7 @@ export default function Author() {
   const optional = new Set(settings.authorOptional || []);
 
   const loadReleases = () => call('pack:releases').then(setReleases).catch(() => {});
+  const loadNews = () => call('pack:news').then(setNews).catch(() => {});
   const scan = async () => {
     setLoading(true);
     try { setChanges(await call('pack:changes')); } catch (e) { toast(e.message, 'error'); } finally { setLoading(false); }
@@ -72,6 +109,7 @@ export default function Author() {
     call('pack:hasToken').then(setHasToken);
     scan();
     loadReleases();
+    loadNews();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -91,14 +129,17 @@ export default function Author() {
   };
 
   const publish = async () => {
-    if (!title.trim()) { toast(t('Напиши заголовок обновления'), 'warn'); return; }
+    if (!noNews && !title.trim()) { toast(t('Напиши заголовок обновления'), 'warn'); return; }
+    if (noNews && !n && !optChanged) { toast(t('Нечего заливать: изменений нет, а новость выключена'), 'warn'); return; }
     setPublishing(true);
     try {
-      const r = await call('pack:publish', { title: title.trim(), text: text.trim() });
+      const r = await call('pack:publish', { title: title.trim(), text: text.trim(), noNews });
+      if (r.newsWarn) toast(r.newsWarn, 'warn', 10000);
       toast(`${t('Сборка')} #${r.version} ${t('залита!')} ${t('Загружено файлов')}: ${r.uploaded}, ${t('с Modrinth')}: ${r.fromModrinth}`, 'ok', 9000);
       setTitle(''); setText('');
       await scan();
       loadReleases();
+      loadNews();
       refreshPack();
     } catch (e) { toast(e.message, 'error', 10000); } finally { setPublishing(false); }
   };
@@ -141,10 +182,12 @@ export default function Author() {
               </div>
             ) : (
               <div className="form">
-                <label>{t('Заголовок')}<input className="input" placeholder={t('Например: Жители строят теплицы')} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
-                <label>{t('Что нового (увидят все в новостях)')}<textarea className="input" rows={6} value={text} onChange={(e) => setText(e.target.value)} placeholder={t('Коротко опиши изменения…')} /></label>
+                <label className="check"><input type="checkbox" checked={noNews} onChange={(e) => setNoNews(e.target.checked)} /> {t('Без новости (тихое обновление)')}</label>
+                <label>{t('Заголовок')}<input className="input" placeholder={noNews ? t('Необязательно — увидишь только ты') : t('Например: Жители строят теплицы')} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
+                {!noNews && <label>{t('Что нового (увидят все в новостях)')}<textarea className="input" rows={6} value={text} onChange={(e) => setText(e.target.value)} placeholder={t('Коротко опиши изменения…')} /></label>}
+                {noNews && <small className="muted">{t('Сборка обновится у всех, но в новостях записи не будет. Потом её можно показать в списке «Новости» ниже.')}</small>}
                 <button className={'btn primary big' + (publishing ? ' busy' : '')} disabled={publishing || !changes} onClick={publish}>
-                  <Icon name="rocket" /> {publishing ? t('Заливаю…') : n || optChanged ? `${t('Залить сборку')} (${n})` : t('Опубликовать только новость')}
+                  <Icon name="rocket" /> {publishing ? t('Заливаю…') : n || optChanged ? `${t('Залить сборку')} (${n})${noNews ? ' ' + t('без новости') : ''}` : t('Опубликовать только новость')}
                 </button>
                 <small className="muted">{t('Моды, найденные на Modrinth, игроки скачают оттуда; остальное загрузится в GitHub Releases.')}</small>
                 <button className="link-btn small" onClick={async () => { await call('pack:setToken', null); setHasToken(false); }}>{t('Сменить токен')}</button>
@@ -177,6 +220,19 @@ export default function Author() {
             <div className="rel-list">
               {releases.map((r) => <ReleaseRow key={r.id} r={r} t={t} lang={lang} toast={toast} reload={() => { loadReleases(); refreshPack(); }} />)}
             </div>
+          </Section>
+
+          <Section title={t('Новости')} icon="news" right={<button className="btn sm ghost" onClick={loadNews}><Icon name="refresh" size={12} /></button>}>
+            <p className="muted small">{t('Скрыть, исправить или удалить запись в новостях. Сама сборка при этом не меняется.')}</p>
+            {news.filter((x) => !x.deleted).length === 0 && <span className="muted">{t('Новостей нет.')}</span>}
+            <div className="rel-list">
+              {news.filter((x) => !x.deleted).map((x) => <NewsRow key={x.version} n={x} t={t} lang={lang} toast={toast} reload={() => { loadNews(); refreshPack(); }} />)}
+            </div>
+            {news.some((x) => x.deleted) && (
+              <button className="link-btn small" onClick={async () => { try { await call('pack:setNews', { restoreAll: true }); toast(t('Удалённые новости возвращены'), 'ok'); loadNews(); refreshPack(); } catch (e) { toast(e.message, 'error'); } }}>
+                {t('Вернуть удалённые')} ({news.filter((x) => x.deleted).length})
+              </button>
+            )}
           </Section>
         </div>
       </div>

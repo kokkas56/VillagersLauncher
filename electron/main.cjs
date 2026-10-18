@@ -148,6 +148,7 @@ handle('pack:info', async () => {
   let latest = null;
   let error = null;
   try { latest = await pack.latestManifest(); } catch (e) { error = e.message; }
+  if (latest) { try { latest.changelog = pack.applyNews(latest.changelog, await pack.readNews()); } catch (_) {} }
   return {
     state,
     latest: latest ? { version: latest.version, tag: latest.tag, date: latest.date, changelog: latest.changelog, minecraft: latest.minecraft, loader: latest.loader, files: latest.files.length, size: latest.files.reduce((a, f) => a + f.size, 0), servers: latest.servers || [], optional: latest.files.filter((f) => f.optional).map((f) => f.path) } : null,
@@ -165,6 +166,8 @@ handle('pack:publish', async (data) => {
   setBusy('publish');
   try { return await pack.publish(data, progress); } finally { setBusy(null); progress(null); }
 });
+handle('pack:news', () => pack.authorNews());
+handle('pack:setNews', (d) => pack.setNews(d));
 handle('pack:makeLatest', (id) => pack.makeLatest(id));
 handle('pack:deleteRelease', (id) => pack.deleteRelease(id));
 handle('pack:hideRelease', ({ id, hidden }) => pack.hideRelease(id, hidden));

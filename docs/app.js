@@ -25,10 +25,16 @@
     return d;
   }
 
-  function renderNews(list) {
+  function renderNews(list, nj) {
+    nj = nj || {};
+    const hide = new Set([...(nj.hidden || []), ...(nj.deleted || [])].map(Number));
+    const edits = nj.edits || {};
     const box = document.getElementById('news-list');
     box.textContent = '';
-    const items = list.filter((r) => !r.draft && /^pack-\d+$/.test(r.tag_name)).slice(0, 8);
+    const items = list.filter((r) => !r.draft && !r.prerelease && /^pack-\d+$/.test(r.tag_name) && !hide.has(+r.tag_name.slice(5))).slice(0, 8);
+    const newest = list.find((r) => !r.draft && !r.prerelease && /^pack-\d+$/.test(r.tag_name));
+    const pv0 = document.getElementById('pack-version');
+    if (pv0 && newest) pv0.textContent = 'сборка ' + newest.tag_name.replace('pack-', '#');
     if (!items.length) {
       box.appendChild(el('p', 'empty', 'Новостей пока нет — они появятся с первым обновлением сборки.'));
       return;
@@ -38,10 +44,11 @@
       const head = el('div', 'news-head');
       const num = r.tag_name.replace('pack-', '#');
       head.appendChild(el('span', 'news-ver', num));
-      head.appendChild(el('h3', null, (r.name || '').replace(/^#\d+\s*/, '') || 'Обновление'));
+      const ed = edits[r.tag_name.slice(5)] || {};
+      head.appendChild(el('h3', null, ed.title || (r.name || '').replace(/^#\d+\s*/, '') || 'Обновление'));
       head.appendChild(el('time', null, fmtDate(r.published_at || r.created_at)));
       art.appendChild(head);
-      const body = (r.body || '').split('\n—\n')[0].trim();
+      const body = ed.text != null ? ed.text : (r.body || '').split('\n—\n')[0].trim();
       if (body) art.appendChild(el('p', null, body));
       const stats = /Добавлено: (\d+), изменено: (\d+), удалено: (\d+)/.exec(r.body || '');
       if (stats) {
@@ -53,14 +60,13 @@
       }
       box.appendChild(art);
     });
-    const latest = items[0];
-    const pv = document.getElementById('pack-version');
-    if (pv) pv.textContent = 'сборка ' + latest.tag_name.replace('pack-', '#');
   }
 
   async function load() {
     try {
-      renderNews(await gh(PACK + '/releases?per_page=20'));
+      let nj = null;
+      try { nj = await gh(PACK + '/contents/news.json'); nj = JSON.parse(decodeURIComponent(escape(atob((nj.content || '').replace(/\s/g, ''))))); } catch (_) { nj = null; }
+      renderNews(await gh(PACK + '/releases?per_page=20'), nj);
     } catch (e) {
       const box = document.getElementById('news-list');
       box.textContent = '';

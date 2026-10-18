@@ -265,7 +265,8 @@ async function modrinthLookup(hashes) {
   }
 }
 
-async function publish({ title, text }, progress) {
+async function publish({ title, text, noNews }, progress) {
+  title = (title || '').trim() || 'Обновление';
   const s = store.get();
   const token = store.getSecret('githubToken');
   if (!token) throw new Error('Добавь токен GitHub в разделе «Автор»');
@@ -325,13 +326,13 @@ async function publish({ title, text }, progress) {
   };
 
   progress({ stage: 'publish', text: 'Создаю выпуск на GitHub…', indeterminate: true });
-  const body = `${text || ''}\n\n—\nДобавлено: ${ch.added.length}, изменено: ${ch.changed.length}, удалено: ${ch.removed.length}`;
+  const body = `${noNews ? '' : (text || '')}\n\n—\nДобавлено: ${ch.added.length}, изменено: ${ch.changed.length}, удалено: ${ch.removed.length}`;
   // убираем брошенные черновики (если прошлая заливка была прервана)
   try {
     const all = await gh('GET', `/repos/${repo()}/releases?per_page=50`, token);
     for (const r of all) if (r.draft) await gh('DELETE', `/repos/${repo()}/releases/${r.id}`, token).catch(() => {});
   } catch (_) {}
-  const rel = await gh('POST', `/repos/${repo()}/releases`, token, { tag_name: tag, name: `#${version} ${title}`, body, draft: true });
+  const rel = await gh('POST', `/repos/${repo()}/releases`, token, { tag_name: tag, name: noNews ? `#${version}` : `#${version} ${title}`, body, draft: true });
   try {
     const total = uploads.reduce((a, u) => a + u.size, 0) || 1;
     let done = 0;
@@ -371,7 +372,88 @@ async function publish({ title, text }, progress) {
     await gh('DELETE', `/repos/${repo()}/releases/${rel.id}`, token).catch(() => {});
     throw e;
   }
-  return { version, tag, uploaded: uploads.length, fromModrinth: Object.keys(mr).length, files: files.length };
+  // новость: без новости — прячем запись; с новостью — снимаем старые пометки с этого номера (если номер повторился)
+  let newsWarn = null;
+  try {
+    const cur = await readNews();
+    const listed = cur.hidden.includes(version) || cur.deleted.includes(version) || cur.edits[version];
+    if (noNews || listed) {
+      await writeNews((n) => {
+        n.hidden = n.hidden.filter((v) => v !== version);
+        n.deleted = n.deleted.filter((v) => v !== version);
+        delete n.edits[version];
+        if (noNews) n.hidden.push(version);
+      }, `Новость #${version}`);
+    }
+  } catch (e) { newsWarn = 'Сборка залита, но новость не удалось скрыть: ' + e.message; }
+  return { version, tag, uploaded: uploads.length, fromModrinth: Object.keys(mr).length, files: files.length, newsWarn };
+}
+
+// ---------- новости: news.json в репозитории сборки (скрыть / удалить / исправить) ----------
+function normNews(n) {
+  n = n && typeof n === 'object' ? n : {};
+  return {
+    hidden: Array.isArray(n.hidden) ? n.hidden.map(Number).filter(Boolean) : [],
+    deleted: Array.isArray(n.deleted) ? n.deleted.map(Number).filter(Boolean) : [],
+    edits: n.edits && typeof n.edits === 'object' ? n.edits : {}
+  };
+}
+async function readNews() {
+  const token = store.getSecret('githubToken');
+  try {
+    const d = await gh('GET', `/repos/${repo()}/contents/news.json`, token, null, { Accept: 'application/vnd.github.raw+json' });
+    return normNews(typeof d === 'string' ? JSON.parse(d) : d);
+  } catch (e) {
+    if (e.status === 404) return normNews(null);
+    // лимит API — пробуем «сырой» файл
+    try {
+      const res = await netu.fetchRaw(`https://raw.githubusercontent.com/${repo()}/HEAD/news.json`);
+      if (res.status === 404) return normNews(null);
+      if (res.ok) return normNews(await res.json());
+    } catch (_) {}
+    return normNews(null);
+  }
+}
+async function writeNews(mutate, message) {
+  const token = needToken();
+  let sha;
+  let cur = null;
+  try {
+    const d = await gh('GET', `/repos/${repo()}/contents/news.json`, token);
+    sha = d.sha;
+    cur = JSON.parse(Buffer.from(d.content || '', 'base64').toString('utf8') || '{}');
+  } catch (e) { if (e.status !== 404) throw e; }
+  const n = normNews(cur);
+  mutate(n);
+  n.hidden = [...new Set(n.hidden)].sort((a, b) => a - b);
+  n.deleted = [...new Set(n.deleted)].sort((a, b) => a - b);
+  const content = Buffer.from(JSON.stringify(n, null, 2) + '\n').toString('base64');
+  await gh('PUT', `/repos/${repo()}/contents/news.json`, token, { message: message || 'Новости', content, ...(sha ? { sha } : {}) });
+  return n;
+}
+// для игроков: убрать скрытые/удалённые, подставить исправленный текст
+function applyNews(changelog, n) {
+  return (changelog || [])
+    .filter((c) => !n.hidden.includes(c.version) && !n.deleted.includes(c.version))
+    .map((c) => (n.edits[c.version] ? { ...c, ...n.edits[c.version] } : c));
+}
+// для автора: все записи с пометками
+async function authorNews() {
+  const m = await latestManifest();
+  const n = await readNews();
+  const list = ((m && m.changelog) || []).map((c) => ({ ...c, ...(n.edits[c.version] || {}), edited: !!n.edits[c.version],
+    hidden: n.hidden.includes(c.version), deleted: n.deleted.includes(c.version) }));
+  return list;
+}
+async function setNews({ version, hidden, deleted, title, text, restoreAll }) {
+  version = Number(version);
+  await writeNews((n) => {
+    if (restoreAll) { n.deleted = []; return; }
+    if (hidden != null) { n.hidden = n.hidden.filter((v) => v !== version); if (hidden) n.hidden.push(version); }
+    if (deleted != null) { n.deleted = n.deleted.filter((v) => v !== version); if (deleted) n.deleted.push(version); }
+    if (title != null || text != null) n.edits[version] = { ...(n.edits[version] || {}), ...(title != null ? { title } : {}), ...(text != null ? { text } : {}) };
+  }, `Новости: #${version || 'все'}`);
+  return true;
 }
 
 async function makeLatest(releaseId) {
@@ -415,4 +497,4 @@ async function checkToken(token) {
   return { ok: true, repo: r.full_name };
 }
 
-module.exports = { latestManifest, manifestByTag, listReleases, sync, localChanges, publish, makeLatest, deleteRelease, hideRelease, renameRelease, checkToken, readState, isAuthorHome, scanSource };
+module.exports = { readNews, applyNews, authorNews, setNews, latestManifest, manifestByTag, listReleases, sync, localChanges, publish, makeLatest, deleteRelease, hideRelease, renameRelease, checkToken, readState, isAuthorHome, scanSource };
