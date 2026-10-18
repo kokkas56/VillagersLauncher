@@ -6,6 +6,8 @@ license="${mod_license}"
 modId="${mod_id}"
 version="${mod_version}"
 displayName="${mod_name}"
+logoFile="netkokk_icon.png"
+logoBlur=false
 authors="Kokk"
 description='''
 Миры «по сети» видны через все сетевые карты: Radmin, ZeroTier, Hamachi, любые VPN. Адреса для друзей в чате, вход и для Ely.by, и для офлайн-ников.
