@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "ru.kokk.skinkokk.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [],
+  "client": [
+    "PlayerInfoMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

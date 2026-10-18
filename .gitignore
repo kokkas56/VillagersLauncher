@@ -2,3 +2,6 @@ node_modules/
 dist/
 release/
 *.log
+skinkokk/build/
+skinkokk/.gradle/
+skinkokk/run/

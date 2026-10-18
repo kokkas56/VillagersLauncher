@@ -1,0 +1,23 @@
+{
+  "key.categories.skinkokk": "SkinKokk",
+  "key.skinkokk.wardrobe": "Гардероб скинов",
+  "skinkokk.wardrobe.title": "Гардероб",
+  "skinkokk.wardrobe.remove": "Снять скин",
+  "skinkokk.wardrobe.folder": "Папка",
+  "skinkokk.wardrobe.empty": "Гардероб пуст. Нарисуй скин в VillagersLauncher и нажми «В гардероб» — он появится здесь.",
+  "skinkokk.msg.changed": "Скин обновлён",
+  "skinkokk.msg.wearing": "Надет скин: %s",
+  "skinkokk.msg.too_big": "Скин слишком большой для отправки",
+  "skinkokk.msg.rejected": "Сервер не принял скин",
+  "skinkokk.configuration.title": "Настройки SkinKokk",
+  "config.skinkokk.enabled": "Отправлять свой скин",
+  "config.skinkokk.showOthers": "Показывать скины других",
+  "config.skinkokk.showCapes": "Показывать плащи",
+  "config.skinkokk.pollTicks": "Проверка скина (тики)",
+  "config.skinkokk.notify": "Сообщать о смене скина",
+  "config.skinkokk.folder": "Папка скинов",
+  "config.skinkokk.allowSkins": "Разрешить свои скины",
+  "config.skinkokk.allowCapes": "Разрешить свои плащи",
+  "config.skinkokk.persist": "Сохранять скины в мире",
+  "config.skinkokk.cooldown": "Пауза между сменами (сек)"
+}

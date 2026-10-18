@@ -1,0 +1,23 @@
+{
+  "key.categories.skinkokk": "SkinKokk",
+  "key.skinkokk.wardrobe": "Skin wardrobe",
+  "skinkokk.wardrobe.title": "Wardrobe",
+  "skinkokk.wardrobe.remove": "Remove skin",
+  "skinkokk.wardrobe.folder": "Folder",
+  "skinkokk.wardrobe.empty": "The wardrobe is empty. Draw a skin in VillagersLauncher and press \"To wardrobe\" — it will show up here.",
+  "skinkokk.msg.changed": "Skin updated",
+  "skinkokk.msg.wearing": "Wearing skin: %s",
+  "skinkokk.msg.too_big": "Skin is too large to send",
+  "skinkokk.msg.rejected": "The server rejected the skin",
+  "skinkokk.configuration.title": "SkinKokk settings",
+  "config.skinkokk.enabled": "Send my skin",
+  "config.skinkokk.showOthers": "Show other players' skins",
+  "config.skinkokk.showCapes": "Show capes",
+  "config.skinkokk.pollTicks": "Skin check interval (ticks)",
+  "config.skinkokk.notify": "Notify on skin change",
+  "config.skinkokk.folder": "Skin folder",
+  "config.skinkokk.allowSkins": "Allow custom skins",
+  "config.skinkokk.allowCapes": "Allow custom capes",
+  "config.skinkokk.persist": "Store skins in the world",
+  "config.skinkokk.cooldown": "Change cooldown (seconds)"
+}
