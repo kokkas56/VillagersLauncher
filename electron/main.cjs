@@ -15,7 +15,6 @@ const auth = require('./auth.cjs');
 const pack = require('./pack.cjs');
 const java = require('./java.cjs');
 const extras = require('./extras.cjs');
-const zt = require('./zerotier.cjs');
 
 let win = null;
 let game = null; // { proc, started }
@@ -48,6 +47,8 @@ function createWindow() {
   });
   Menu.setApplicationMenu(null);
   win.once('ready-to-show', () => win.show());
+  // скрытое окно туннеля не держит лаунчер открытым
+  win.on('closed', () => { if (!game && !server.running()) app.quit(); });
   if (DEV) win.loadURL('http://localhost:5173');
   else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -75,7 +76,7 @@ app.whenReady().then(() => {
   setupUpdater();
 });
 
-app.on('window-all-closed', () => { if (!game) app.quit(); });
+app.on('window-all-closed', () => { if (!game && !server.running()) app.quit(); });
 
 // ---------------- обёртка IPC ----------------
 function handle(ch, fn) {
@@ -223,7 +224,7 @@ handle('dialog:pickFolder', async (def) => {
   return r.canceled ? null : r.filePaths[0];
 });
 handle('dialog:pickJava', async () => {
-  const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'Java', extensions: ['exe'] }] });
+  const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: process.platform === 'win32' ? [{ name: 'Java', extensions: ['exe'] }] : [] });
   return r.canceled ? null : r.filePaths[0];
 });
 handle('dialog:openPng', async () => {
@@ -238,27 +239,78 @@ handle('dialog:savePng', async ({ dataUrl, name }) => {
   return r.filePath;
 });
 
-// ---------------- сети ZeroTier ----------------
-const withProgress = async (fn) => { try { return await fn(); } finally { progress(null); } };
-handle('net:status', async () => ({ ...(await zt.status()), joined: zt.joinedList(), owned: store.get().ztOwned || [], hasApiToken: !!store.getSecret('ztApiToken') }));
-handle('net:setup', (opts) => withProgress(() => zt.setup(opts || {}, progress)));
-handle('net:join', (data) => withProgress(async () => {
-  const acc = auth.publicAccounts().find((a) => a.id === store.get().selectedAccount);
-  return zt.join({ ...data, nick: acc ? acc.name : undefined }, progress);
-}));
-handle('net:leave', (id) => zt.leave(id));
-handle('net:members', (id) => zt.members(id));
-handle('net:setApiToken', (t) => zt.setApiToken(t));
-handle('net:create', (data) => withProgress(async () => {
-  const r = await zt.createNetwork(data);
-  const acc = auth.publicAccounts().find((a) => a.id === store.get().selectedAccount);
-  await zt.join({ name: data.name, password: data.password, nick: acc ? acc.name : 'Kokk' }, progress);
-  const st = await zt.status();
-  if (st.address) await zt.authorize(r.networkId, st.address, true);
-  return r;
-}));
-handle('net:delete', (id) => zt.deleteNetwork(id));
-handle('net:authorize', ({ networkId, nodeId, allow }) => zt.authorize(networkId, nodeId, allow));
+// ---------------- игра с друзьями: свой туннель ----------------
+let tunnelWin = null;
+let tunnelReady = null;
+let tunnelState = { active: false };
+function tunnel() {
+  if (tunnelWin && !tunnelWin.isDestroyed()) return tunnelReady;
+  tunnelWin = new BrowserWindow({
+    show: false, width: 400, height: 300, skipTaskbar: true,
+    webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false, backgroundThrottling: false }
+  });
+  tunnelReady = new Promise((resolve) => ipcMain.once('tunnel-ready', () => resolve(tunnelWin)));
+  tunnelWin.loadFile(path.join(__dirname, 'tunnel', 'worker.html'));
+  tunnelWin.on('closed', () => { tunnelWin = null; tunnelState = { active: false }; send('tunnel-state', tunnelState); });
+  return tunnelReady;
+}
+ipcMain.on('tunnel-state', (e, st) => { if (tunnelWin && e.sender === tunnelWin.webContents) { tunnelState = st; send('tunnel-state', st); } });
+function tunnelOpts(data) {
+  const s = store.get();
+  const acc = auth.publicAccounts().find((a) => a.id === s.selectedAccount);
+  const ice = [{ urls: s.stunServers || [] }, ...((s.turnServers || []).filter((t) => t && t.urls))];
+  return {
+    name: String(data.name || '').trim(), password: String(data.password || ''), mode: data.mode === 'server' ? 'server' : 'world',
+    nick: acc ? acc.name : 'Игрок', brokers: s.tunnelBrokers, iceServers: ice, gameDir: s.gameDir,
+    serverPort: s.serverPort || 25565, localPort: s.tunnelLocalPort || 25565
+  };
+}
+async function tunnelCmd(cmd, opts) { const w = await tunnel(); w.webContents.send('tunnel-cmd', { cmd, opts }); return true; }
+handle('net:state', () => tunnelState);
+handle('net:host', (data) => {
+  const o = tunnelOpts(data);
+  if (o.name.length < 3) throw new Error('Имя комнаты — хотя бы 3 символа');
+  if (o.password.length < 4) throw new Error('Пароль — хотя бы 4 символа');
+  store.set({ roomName: o.name });
+  return tunnelCmd('host', o);
+});
+handle('net:join', (data) => {
+  const o = tunnelOpts(data);
+  if (!o.name || !o.password) throw new Error('Введи имя комнаты и пароль');
+  store.set({ roomName: o.name });
+  return tunnelCmd('join', o);
+});
+handle('net:leave', () => (tunnelWin ? tunnelCmd('leave') : true));
+
+// ---------------- сервер сборки ----------------
+const server = require('./server.cjs');
+server.init((ch, data) => send(ch, data));
+async function packVersions() {
+  const s = store.get();
+  let manifest = null;
+  try { manifest = s.pinnedPackVersion ? await pack.manifestByTag(s.pinnedPackVersion) : await pack.latestManifest(); } catch (_) {}
+  return {
+    mcVersion: (manifest && manifest.minecraft) || s.minecraftVersion,
+    neoVersion: (manifest && manifest.loader && manifest.loader.version) || s.neoforgeVersion
+  };
+}
+handle('server:status', () => server.status());
+handle('server:start', async () => {
+  try { return await server.start(await packVersions(), progress); } finally { progress(null); }
+});
+handle('server:stop', () => server.stop());
+handle('server:command', (text) => server.command(text));
+handle('server:openDir', () => { fs.mkdirSync(server.dir(), { recursive: true }); shell.openPath(server.dir()); return true; });
+let quitting = false;
+app.on('before-quit', (e) => {
+  if (quitting) return;
+  if (server.running() || tunnelWin) {
+    e.preventDefault();
+    quitting = true;
+    Promise.all([server.stop(), tunnelWin ? tunnelCmd('leave').then(() => new Promise((r) => setTimeout(r, 700))) : null])
+      .finally(() => { if (tunnelWin && !tunnelWin.isDestroyed()) tunnelWin.destroy(); app.quit(); });
+  }
+});
 
 // ---------------- запуск игры ----------------
 handle('game:status', () => ({ running: !!game, busy, what: busyWhat }));
@@ -359,8 +411,25 @@ handle('game:play', async (opts = {}) => {
 handle('game:kill', () => { if (game) game.proc.kill(); return true; });
 
 // ---------------- автообновление лаунчера ----------------
+// На Mac лаунчер без подписи Apple — сам себя заменить не может; говорим о новой версии и даём ссылку.
+function newer(a, b) { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; }
+function macUpdateCheck() {
+  const check = async () => {
+    try {
+      const rel = await require('./net.cjs').getJson('https://api.github.com/repos/kokkas56/VillagersLauncher/releases/latest');
+      const v = String(rel.tag_name || '').replace(/^v/, '');
+      if (v && newer(v, app.getVersion())) {
+        const asset = (rel.assets || []).find((a) => a.name === `VillagersLauncher-mac-${process.arch === 'arm64' ? 'arm64' : 'x64'}.dmg`);
+        send('update-state', { state: 'manual', version: v, url: asset ? asset.browser_download_url : rel.html_url });
+      }
+    } catch (_) {}
+  };
+  setTimeout(check, 5000);
+  setInterval(check, 3 * 3600e3);
+}
 function setupUpdater() {
   if (DEV || !app.isPackaged) return;
+  if (process.platform === 'darwin') { macUpdateCheck(); return; }
   let autoUpdater;
   try { autoUpdater = require('electron-updater').autoUpdater; } catch (_) { return; }
   autoUpdater.autoDownload = true;

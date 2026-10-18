@@ -80,7 +80,8 @@ async function detect() {
 }
 
 async function findManaged(major) {
-  for (const c of [...candidatesFrom(path.join(JAVA_DIR, `mojang-${major}`), 2), ...candidatesFrom(path.join(JAVA_DIR, `temurin-${major}`), 2)]) {
+  const depth = process.platform === 'darwin' ? 4 : 2; // на Mac Java лежит глубже: jre.bundle/Contents/Home/bin
+  for (const c of [...candidatesFrom(path.join(JAVA_DIR, `mojang-${major}`), depth), ...candidatesFrom(path.join(JAVA_DIR, `temurin-${major}`), depth)]) {
     const info = await probe(c);
     if (info && info.major === major) return info;
   }
@@ -130,7 +131,7 @@ async function installTemurin(major, onProgress) {
 // Java от Mojang (та же, что ставит официальный лаунчер): каждый файл сверяется по SHA-1
 const MOJANG_RUNTIMES = 'https://launchermeta.mojang.com/v1/products/java-runtime/2ec0cc96c44e5a76b9c8b7c39df7210883d12871/all.json';
 async function installMojang(major, onProgress) {
-  const plat = process.platform === 'win32' ? (process.arch === 'arm64' ? 'windows-arm64' : 'windows-x64') : process.platform === 'darwin' ? 'mac-os' : 'linux';
+  const plat = process.platform === 'win32' ? (process.arch === 'arm64' ? 'windows-arm64' : 'windows-x64') : process.platform === 'darwin' ? (process.arch === 'arm64' ? 'mac-os-arm64' : 'mac-os') : 'linux';
   const comp = major >= 21 ? 'java-runtime-delta' : major >= 17 ? 'java-runtime-gamma' : 'jre-legacy';
   const all = await netu.getJson(MOJANG_RUNTIMES);
   const entry = all[plat] && all[plat][comp] && all[plat][comp][0];

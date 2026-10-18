@@ -52,6 +52,25 @@ jobs:
           powershell -Command "Compress-Archive -Path dist/* -DestinationPath ui-dist.zip -Force"
           gh release upload nightly ui-dist.zip --clobber
 
+  launcher-mac:
+    needs: launcher
+    if: github.ref == 'refs/heads/release' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install
+        run: npm install --no-audit --no-fund
+      - name: Build UI
+        run: npm run build:ui
+      - name: Build Mac app (Intel + Apple Silicon)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --mac --publish always
+
   mods:
     runs-on: ubuntu-latest
     strategy:

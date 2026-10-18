@@ -1,151 +1,212 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../lib/app.jsx';
-import { call } from '../lib/api.js';
+import { call, on } from '../lib/api.js';
 import Icon from '../components/Icon.jsx';
-import { Section, Progress, Toggle, Empty } from '../components/ui.jsx';
+import { Section, Progress } from '../components/ui.jsx';
 
-function NetworkCard({ net, st, owned, onLeave, onDelete, t, toast }) {
-  const [members, setMembers] = useState(null);
-  const local = (st.networks || []).find((n) => n.id === net.networkId || n.nwid === net.networkId);
-  const status = local ? local.status : 'NOT_JOINED';
-  const ips = (local && local.assignedAddresses || []).map((a) => a.split('/')[0]);
+// Игра с друзьями: своя «локальная сеть» через лаунчер (Windows и Mac вместе, без VPN и аккаунтов) и сервер сборки.
 
-  const load = async () => { try { setMembers(await call('net:members', net.networkId)); } catch (_) { setMembers(null); } };
-  useEffect(() => { load(); const id = setInterval(load, 20000); return () => clearInterval(id); /* eslint-disable-next-line */ }, [net.networkId]);
+const STATUS = {
+  starting: 'Открываю комнату…', open: 'Комната открыта', offline: 'Нет связи с брокерами, пробую ещё',
+  searching: 'Ищу комнату…', found: 'Комната найдена, соединяюсь…', connecting: 'Соединяюсь…',
+  connected: 'Подключено', reconnecting: 'Переподключаюсь…', error: 'Не получилось'
+};
+const ROUTE = { direct: 'напрямую', lan: 'по локальной сети', relay: 'через ретранслятор' };
+const fmt = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + ' МБ' : Math.round(n / 1024) + ' КБ');
 
-  const statusText = {
-    OK: t('Подключено'), REQUESTING_CONFIGURATION: t('Подключаюсь…'), ACCESS_DENIED: t('Ждёт одобрения автора сети'),
-    NOT_FOUND: t('Сеть не найдена'), PORT_ERROR: t('Ошибка порта'), NOT_JOINED: t('Не подключено')
-  }[status] || status;
-
-  const pending = (members || []).filter((m) => !m.authorized);
-  const approved = (members || []).filter((m) => m.authorized);
-
+function RoomCard({ st, t, toast, account, openAccounts }) {
+  const host = st.role === 'host';
+  const leave = () => call('net:leave');
+  const play = async () => {
+    if (!account) { openAccounts && openAccounts(); return; }
+    try { await call('game:play', { quickPlay: '127.0.0.1:' + st.port }); } catch (e) { toast(e.message, 'error', 8000); }
+  };
   return (
     <div className="card net-card">
       <div className="card-head">
-        <Icon name="link" />
-        <h3>{net.name}</h3>
-        <span className={'pill sm ' + (status === 'OK' ? 'green' : status === 'ACCESS_DENIED' ? 'warn' : '')}>{statusText}</span>
+        <Icon name="globe" />
+        <h3>{st.name}</h3>
+        <span className={'pill sm ' + (st.status === 'connected' || st.status === 'open' ? 'green' : st.status === 'error' ? 'warn' : '')}>{t(STATUS[st.status] || st.status)}</span>
         <div className="grow" />
-        {owned ? <button className="btn sm danger" onClick={() => onDelete(net)}><Icon name="trash" size={12} /> {t('Удалить сеть')}</button>
-          : <button className="btn sm ghost" onClick={() => onLeave(net)}>{t('Выйти')}</button>}
+        <button className="btn sm ghost" onClick={leave}>{host ? t('Закрыть комнату') : t('Выйти')}</button>
       </div>
-      {ips.length > 0 && <p className="muted small">{t('Мой адрес в сети')}: <b className="mono">{ips.join(', ')}</b></p>}
-      {owned && pending.length > 0 && (
-        <div className="net-requests">
-          <b>{t('Заявки')}</b>
-          {pending.map((m) => (
-            <div key={m.nodeId} className="net-member req">
-              <span className="dot off" />
-              <span className="grow">{m.name} <small className="muted mono">{m.nodeId}</small></span>
-              <button className="btn sm primary" onClick={async () => { await call('net:authorize', { networkId: net.networkId, nodeId: m.nodeId, allow: true }); toast(t('Пущен:') + ' ' + m.name, 'ok'); load(); }}>{t('Пустить')}</button>
-              <button className="btn sm danger" onClick={async () => { await call('net:authorize', { networkId: net.networkId, nodeId: m.nodeId, allow: false }); load(); }}>{t('Отклонить')}</button>
-            </div>
-          ))}
-        </div>
+      {st.error && <p className="warn-text small">{t(st.error)}</p>}
+      {host ? (
+        <>
+          <p className="muted small">{t('Что открыто')}: <b>{st.target}</b></p>
+          {st.mode === 'world' && <ol className="net-steps">
+            <li>{t('Запусти игру и зайди в свой мир.')}</li>
+            <li>{t('Esc → «Открыть для сети» → «Открыть мир».')}</li>
+            <li>{t('Друзья в своём лаунчере жмут «Войти к другу» с тем же именем и паролем — и сразу «Играть».')}</li>
+          </ol>}
+          <div className="net-members">
+            {(st.peers || []).filter((p) => p.state !== 'closed').length === 0 && <p className="muted small">{t('Пока никого. Скажи друзьям имя комнаты и пароль.')}</p>}
+            {(st.peers || []).filter((p) => p.state !== 'closed').map((p) => (
+              <div key={p.id} className="net-member">
+                <span className={'dot ' + (p.state === 'connected' ? 'on' : 'off')} />
+                <b>{p.nick}</b>
+                <span className="muted small">{p.state === 'connected' ? t(ROUTE[p.route && p.route.kind] || 'подключён') + (p.route && p.route.rtt != null ? ` · ${p.route.rtt} мс` : '') : p.state === 'failed' ? t('не соединился') : t('соединяется…')}</span>
+                <div className="grow" />
+                {p.conns > 0 && <span className="pill sm green">{t('в игре')}</span>}
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          {st.host && <p className="muted small">{t('Хозяин')}: <b>{st.host.nick}</b> · {st.host.mode === 'server' ? t('сервер сборки') : t('свой мир')}{st.host.ready === false ? ' · ' + t('мир ещё не открыт для сети') : ''}</p>}
+          {st.status === 'connected' && (
+            <>
+              <p className="muted small">{t('Связь')}: <b>{t(ROUTE[st.route && st.route.kind] || 'есть')}</b>{st.route && st.route.rtt != null ? ` · ${t('пинг')} ${st.route.rtt} мс` : ''}</p>
+              <div className="row wrap">
+                <button className="btn primary" onClick={play}><Icon name="play" /> {t('Играть у друга')}</button>
+                <button className="btn ghost" onClick={() => { navigator.clipboard.writeText('127.0.0.1:' + st.port); toast(t('Адрес скопирован'), 'ok'); }}><Icon name="copy" size={12} /> 127.0.0.1:{st.port}</button>
+              </div>
+              <small className="muted">{t('Если игра уже открыта: «Сетевая игра» — мир друга появится внизу списка сам.')}</small>
+            </>
+          )}
+        </>
       )}
-      {members && (
-        <div className="net-members">
-          {approved.map((m) => (
-            <div key={m.nodeId} className="net-member">
-              <span className={'dot ' + (m.online ? 'on' : 'off')} />
-              <span className="grow">{m.name}</span>
-              <span className="mono small muted">{m.ips.join(', ')}</span>
-            </div>
-          ))}
-          {approved.length === 0 && <span className="muted small">{t('Пока никого')}</span>}
-        </div>
-      )}
+      <p className="muted small">↑ {fmt(st.stats ? st.stats.up : 0)} · ↓ {fmt(st.stats ? st.stats.down : 0)} · {t('брокеры')} {st.brokers}/{st.brokersTotal}</p>
+      {st.log && st.log.length > 0 && <pre className="console-body net-log">{st.log.slice(-12).join('\n')}</pre>}
     </div>
   );
 }
 
-export default function Network() {
-  const { t, settings, progress, toast, account } = useApp();
+function ServerCard({ t, toast, settings, saveSettings, progress }) {
   const [st, setSt] = useState(null);
-  const [name, setName] = useState('');
-  const [password, setPassword] = useState('');
+  const [lines, setLines] = useState([]);
+  const [cmd, setCmd] = useState('');
   const [busy, setBusy] = useState(false);
-  const [cName, setCName] = useState('');
-  const [cPass, setCPass] = useState('');
-  const [cAuto, setCAuto] = useState(false);
-  const [apiToken, setApiToken] = useState('');
-
-  const load = async () => { try { setSt(await call('net:status')); } catch (e) { toast(e.message, 'error'); } };
-  useEffect(() => { load(); const id = setInterval(load, 15000); return () => clearInterval(id); /* eslint-disable-next-line */ }, []);
-
-  const run = async (fn, ok) => {
+  const logRef = useRef(null);
+  const load = async () => { try { const s = await call('server:status'); setSt(s); setLines(s.tail || []); } catch (_) {} };
+  useEffect(() => {
+    load();
+    const offs = [
+      on('server-state', (s) => { setSt((o) => ({ ...(o || {}), ...s })); if (s.crashed) toast(s.hint || t('Сервер остановился с ошибкой — смотри консоль'), 'error', 10000); }),
+      on('server-log', (l) => setLines((o) => { const n = o.concat(l); return n.length > 600 ? n.slice(-500) : n; }))
+    ];
+    return () => offs.forEach((f) => f());
+    // eslint-disable-next-line
+  }, []);
+  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [lines]);
+  if (!st) return null;
+  const running = st.state === 'running' || st.state === 'starting' || st.state === 'stopping';
+  const start = async () => {
     setBusy(true);
-    try { await fn(); if (ok) toast(ok, 'ok', 6000); await load(); } catch (e) { toast(e.message, 'error', 9000); } finally { setBusy(false); }
+    try { await call('server:start'); } catch (e) { toast(e.message, 'error', 9000); } finally { setBusy(false); load(); }
+  };
+  const label = { stopped: 'остановлен', installing: 'ставится', starting: 'запускается…', running: 'работает', stopping: 'останавливается…' }[st.state] || st.state;
+  return (
+    <Section title={t('Сервер сборки')} icon="crown" right={<span className={'pill sm ' + (st.state === 'running' ? 'green' : '')}><span className={'dot ' + (st.state === 'running' ? 'on' : 'off')} /> {t(label)}</span>}>
+      <p className="muted small">{t('Отдельный сервер с модами сборки прямо на твоём компьютере: мир живёт, даже если ты вышел из игры. Друзья заходят через комнату (режим «Сервер сборки»), ты сам — кнопкой «Играть на своём сервере».')}</p>
+      {progress && progress.stage === 'server' && <Progress p={progress} />}
+      <label className="check-row">
+        <input type="checkbox" checked={!!settings.serverEulaAccepted} onChange={(e) => saveSettings({ serverEulaAccepted: e.target.checked })} />
+        <span>{t('Я принимаю лицензию Minecraft (EULA)')} — <a href="#" onClick={(e) => { e.preventDefault(); call('shell:open', 'https://aka.ms/MinecraftEULA'); }}>aka.ms/MinecraftEULA</a></span>
+      </label>
+      <div className="row wrap">
+        {!running
+          ? <button className="btn primary" disabled={busy || !settings.serverEulaAccepted} onClick={start}><Icon name="play" /> {busy ? t('Готовлю…') : t('Запустить сервер')}</button>
+          : <button className="btn danger" disabled={st.state === 'stopping'} onClick={() => call('server:stop')}>{t('Остановить')}</button>}
+        {st.state === 'running' && <button className="btn" onClick={() => call('game:play', { quickPlay: '127.0.0.1:' + (settings.serverPort || 25565) }).catch((e) => toast(e.message, 'error'))}><Icon name="play" size={12} /> {t('Играть на своём сервере')}</button>}
+        <button className="btn ghost" onClick={() => call('server:openDir')}><Icon name="folder" size={12} /> {t('Папка сервера')}</button>
+      </div>
+      <div className="row wrap" style={{ marginTop: 10 }}>
+        <label className="small">{t('Порт')} <input className="input num" type="number" value={settings.serverPort || 25565} onChange={(e) => saveSettings({ serverPort: Number(e.target.value) || 25565 })} /></label>
+        <label className="small">{t('Память, МБ')} <input className="input num" type="number" step="512" value={settings.serverMemoryMb || 4096} onChange={(e) => saveSettings({ serverMemoryMb: Number(e.target.value) || 4096 })} /></label>
+        <label className="small">{t('Игроков')} <input className="input num" type="number" value={settings.serverMaxPlayers || 10} onChange={(e) => saveSettings({ serverMaxPlayers: Number(e.target.value) || 10 })} /></label>
+      </div>
+      <details style={{ marginTop: 8 }}>
+        <summary className="small muted">{t('Не брать на сервер (моды только для клиента)')}</summary>
+        <textarea className="input mono" rows={3} value={(settings.serverExcludeMods || []).join(', ')}
+          onChange={(e) => saveSettings({ serverExcludeMods: e.target.value.split(/[,\n]/).map((x) => x.trim()).filter(Boolean) })} />
+        <small className="muted">{t('Часть имени файла мода. Если сервер падает из-за клиентского мода — допиши его сюда.')}</small>
+      </details>
+      {lines.length > 0 && (
+        <>
+          <pre ref={logRef} className="console-body net-log server-log">{lines.slice(-300).join('\n')}</pre>
+          {st.state === 'running' && (
+            <form className="row" onSubmit={(e) => { e.preventDefault(); if (cmd.trim()) { call('server:command', cmd); setCmd(''); } }}>
+              <input className="input mono" placeholder={t('команда сервера, например: op Ник')} value={cmd} onChange={(e) => setCmd(e.target.value)} />
+              <button className="btn">{t('Отправить')}</button>
+            </form>
+          )}
+        </>
+      )}
+    </Section>
+  );
+}
+
+export default function Network({ openAccounts }) {
+  const { t, toast, settings, saveSettings, account, progress } = useApp();
+  const [st, setSt] = useState({ active: false });
+  const [tab, setTab] = useState('join');
+  const [name, setName] = useState(settings.roomName || '');
+  const [password, setPassword] = useState('');
+  const [mode, setMode] = useState('world');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    call('net:state').then((s) => s && setSt(s)).catch(() => {});
+    return on('tunnel-state', (s) => setSt(s || { active: false }));
+  }, []);
+
+  const go = async (e) => {
+    e && e.preventDefault();
+    setBusy(true);
+    try { await call(tab === 'host' ? 'net:host' : 'net:join', { name, password, mode }); } catch (err) { toast(err.message, 'error', 8000); } finally { setBusy(false); }
   };
 
-  if (!st) return <div className="page"><div className="page-head"><h2><Icon name="link" size={22} /> {t('Сети')}</h2></div><Progress p={{ text: t('Проверяю ZeroTier…'), indeterminate: true }} /></div>;
-
-  const owned = new Set((st.owned || []).map((n) => n.networkId));
-  const all = [...(st.owned || []).filter((o) => !(st.joined || []).some((j) => j.networkId === o.networkId)), ...(st.joined || [])];
+  const turnText = (settings.turnServers || []).map((x) => [x.urls, x.username, x.credential].filter(Boolean).join(' ')).join('\n');
 
   return (
     <div className="page">
       <div className="page-head">
-        <h2><Icon name="link" size={22} /> {t('Сети для игры с друзьями')}</h2>
+        <h2><Icon name="globe" size={22} /> {t('Игра с друзьями')}</h2>
         <div className="grow" />
-        <span className={'pill ' + (st.running ? 'green' : '')}><span className={'dot ' + (st.running ? 'on' : 'off')} /> ZeroTier {st.running ? (st.address || '') : t('не запущен')}</span>
+        <span className="pill">{t('Windows и Mac вместе · без VPN и регистрации')}</span>
       </div>
-      {progress && progress.stage === 'net' && <Progress p={progress} />}
 
       <div className="net-grid">
         <div>
-          <Section title={t('Подключиться к сети')} icon="plus">
-            <p className="muted small">{t('Как в Radmin: введи имя сети и пароль, которые дал друг. Лаунчер сам поставит ZeroTier и откроет игру в брандмауэре — Windows один раз спросит права администратора.')}</p>
-            <form className="form" onSubmit={(e) => { e.preventDefault(); run(() => call('net:join', { name, password }), t('Готово! Если сеть с одобрением — дождись, пока автор пустит.')); }}>
-              <input className="input" placeholder={t('Имя сети')} value={name} onChange={(e) => setName(e.target.value)} />
-              <input className="input" type="password" placeholder={t('Пароль')} value={password} onChange={(e) => setPassword(e.target.value)} />
-              <button className="btn primary" disabled={busy || !name || !password || !account}>{busy ? t('Подключаю…') : t('Подключиться')}</button>
-              {!account && <small className="muted">{t('Сначала выбери аккаунт — ник увидит автор сети')}</small>}
-            </form>
-          </Section>
-
-          {all.length === 0 && <Empty icon="link">{t('Ты пока не в сети. Подключись по имени и паролю или создай свою.')}</Empty>}
-          {all.map((n) => (
-            <NetworkCard key={n.networkId} net={n} st={st} owned={owned.has(n.networkId)} t={t} toast={toast}
-              onLeave={(net) => run(() => call('net:leave', net.networkId), t('Вышел из сети'))}
-              onDelete={(net) => { if (window.confirm(t('Удалить сеть') + ' «' + net.name + '»?')) run(() => call('net:delete', net.networkId), t('Сеть удалена')); }} />
-          ))}
-        </div>
-
-        <div>
-          <Section title={t('Как играть')} icon="info">
-            <ol className="net-steps">
-              <li>{t('Все подключаются к одной сети здесь.')}</li>
-              <li>{t('Хост заходит в мир → Esc → «Открыть для сети».')}</li>
-              <li>{t('У друзей мир появится в «Сетевая игра» внизу списка. Мод NetKokk ищет миры сразу через все сети: ZeroTier, Radmin, Hamachi и любые VPN.')}</li>
-              <li>{t('Если мир не виден — хосту в чат придут адреса, их можно вставить в «Прямое подключение».')}</li>
-            </ol>
-            <button className="btn sm" disabled={busy} onClick={() => run(() => call('net:setup', { installZt: false, firewall: true }), t('Java открыта в брандмауэре'))}><Icon name="java" size={12} /> {t('Открыть Java в брандмауэре')}</button>
-            <p className="muted small">{t('Помогает, если играешь через Radmin или другой VPN и друзья не могут подключиться.')}</p>
-          </Section>
-
-          {settings.authorMode && (
-            <Section title={t('Мои сети')} icon="crown">
-              {!st.hasApiToken ? (
-                <div className="form">
-                  <p className="muted small">{t('Нужен API-токен ZeroTier (бесплатно): my.zerotier.com → Account → API Access Tokens → New Token. Лучше заведи для игры отдельный аккаунт ZeroTier: токен в зашифрованном виде получают друзья, знающие пароль сети.')}</p>
-                  <button className="btn ghost sm" type="button" onClick={() => call('shell:open', 'https://my.zerotier.com/account')}><Icon name="link" size={12} /> my.zerotier.com</button>
-                  <input className="input mono" type="password" placeholder={t('API-токен ZeroTier')} value={apiToken} onChange={(e) => setApiToken(e.target.value)} />
-                  <button className="btn primary" disabled={busy || !apiToken} onClick={() => run(async () => { await call('net:setApiToken', apiToken.trim()); setApiToken(''); }, t('Токен ZeroTier сохранён'))}>{t('Проверить и сохранить')}</button>
-                </div>
-              ) : (
-                <form className="form" onSubmit={(e) => { e.preventDefault(); run(async () => { await call('net:create', { name: cName, password: cPass, autoApprove: cAuto }); setCName(''); setCPass(''); }, t('Сеть создана — скажи друзьям имя и пароль')); }}>
-                  <input className="input" placeholder={t('Имя новой сети')} value={cName} onChange={(e) => setCName(e.target.value)} />
-                  <input className="input" type="password" placeholder={t('Пароль сети')} value={cPass} onChange={(e) => setCPass(e.target.value)} />
-                  <Toggle checked={cAuto} onChange={setCAuto} label={t('Пускать сразу по паролю')} hint={t('Иначе каждого нужно одобрить кнопкой «Пустить»')} />
-                  <button className="btn primary" disabled={busy || cName.length < 3 || cPass.length < 4}>{t('Создать сеть')}</button>
-                  <button type="button" className="link-btn small" onClick={() => run(() => call('net:setApiToken', null))}>{t('Сменить токен ZeroTier')}</button>
-                </form>
-              )}
+          {st.active ? <RoomCard st={st} t={t} toast={toast} account={account} openAccounts={openAccounts} /> : (
+            <Section title={t('Комната')} icon="lock">
+              <div className="seg full">
+                <button className={tab === 'join' ? 'on' : ''} onClick={() => setTab('join')}>{t('Войти к другу')}</button>
+                <button className={tab === 'host' ? 'on' : ''} onClick={() => setTab('host')}>{t('Создать комнату')}</button>
+              </div>
+              <form className="form" onSubmit={go}>
+                <p className="muted small">{tab === 'host'
+                  ? t('Придумай имя комнаты и пароль и скажи их друзьям. Лаунчер соединит вас напрямую, как в локальной сети — ничего ставить не нужно.')
+                  : t('Введи имя комнаты и пароль, которые дал друг. Его мир появится у тебя в игре в «Сетевой игре».')}</p>
+                <label>{t('Имя комнаты')}<input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={t('например: деревня-кокка')} autoFocus /></label>
+                <label>{t('Пароль')}<input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+                {tab === 'host' && (
+                  <div className="seg">
+                    <button type="button" className={mode === 'world' ? 'on' : ''} onClick={() => setMode('world')}>{t('Мой мир')}</button>
+                    <button type="button" className={mode === 'server' ? 'on' : ''} onClick={() => setMode('server')}>{t('Сервер сборки')}</button>
+                  </div>
+                )}
+                {tab === 'host' && <small className="muted">{mode === 'world' ? t('Ты играешь в своём мире и открываешь его для сети — друзья заходят к тебе.') : t('Друзья заходят на сервер сборки, запущенный ниже. Мир живёт без тебя.')}</small>}
+                <button className="btn primary" disabled={busy || !name.trim() || !password}>{tab === 'host' ? t('Открыть комнату') : t('Войти')}</button>
+              </form>
             </Section>
           )}
+
+          <Section title={t('Если не соединяется')} icon="gear">
+            <p className="muted small">{t('Обычно связь идёт напрямую. Если у кого-то очень строгий интернет (мобильный, общежитие), можно добавить TURN-сервер — по одному в строке: адрес логин пароль.')}</p>
+            <textarea className="input mono" rows={2} defaultValue={turnText} placeholder="turn:example.com:3478 user pass"
+              onBlur={(e) => saveSettings({ turnServers: e.target.value.split('\n').map((l) => l.trim().split(/\s+/)).filter((p) => p[0]).map(([urls, username, credential]) => ({ urls, username, credential })) })} />
+            <details>
+              <summary className="small muted">{t('Брокеры для поиска комнат')}</summary>
+              <textarea className="input mono" rows={3} defaultValue={(settings.tunnelBrokers || []).join('\n')}
+                onBlur={(e) => saveSettings({ tunnelBrokers: e.target.value.split('\n').map((x) => x.trim()).filter(Boolean) })} />
+            </details>
+          </Section>
+        </div>
+        <div>
+          <ServerCard t={t} toast={toast} settings={settings} saveSettings={saveSettings} progress={progress} />
         </div>
       </div>
     </div>

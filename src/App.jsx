@@ -25,7 +25,7 @@ const NAV = [
   { id: 'mods', icon: 'mods', label: 'Моды' },
   { id: 'gallery', icon: 'image', label: 'Миры и скрины' },
   { id: 'servers', icon: 'globe', label: 'Сервера' },
-  { id: 'network', icon: 'link', label: 'Сети' },
+  { id: 'network', icon: 'globe', label: 'С друзьями' },
   { id: 'settings', icon: 'gear', label: 'Настройки' }
 ];
 
@@ -120,6 +120,12 @@ export default function App() {
         </div>
       )}
 
+      {update && update.state === 'manual' && (
+        <div className="update-banner">
+          <span>{t('Вышла новая версия лаунчера')} {update.version}</span>
+          <button className="btn sm primary" onClick={() => call('shell:open', update.url)}>{t('Скачать')}</button>
+        </div>
+      )}
       {update && update.state === 'ready' && (
         <div className="update-banner">
           <Icon name="rocket" />

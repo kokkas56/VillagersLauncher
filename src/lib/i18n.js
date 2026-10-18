@@ -1,5 +1,17 @@
 // Переводы. Ключ — русский текст, для английского берём EN[key].
 const EN = {
+  'С друзьями': 'Friends',
+  'Игра с друзьями': 'Play with friends',
+  'Войти к другу': 'Join a friend',
+  'Создать комнату': 'Create a room',
+  'Имя комнаты': 'Room name',
+  'Открыть комнату': 'Open room',
+  'Мой мир': 'My world',
+  'Сервер сборки': 'Pack server',
+  'Играть у друга': "Play at friend's",
+  'Запустить сервер': 'Start server',
+  'Остановить': 'Stop',
+  'Закрыть комнату': 'Close room',
   'Чтобы открывался именно твой профиль, войди в Ely.by через браузер (Аккаунты → Ely.by)': 'To open your own profile, sign in to Ely.by with the browser (Accounts → Ely.by)',
   'Каталог Ely.by: тысячи готовых скинов. Каталог откроется в твоём браузере — выбранный там скин сразу станет твоим на Ely.by.': 'Ely.by catalog: thousands of ready skins. It opens in your browser — the skin you pick there becomes your Ely.by skin right away.',
   'Идёт заливка…': 'Uploading pack…',

@@ -15,7 +15,7 @@ const totalMb = Math.floor(os.totalmem() / 1024 / 1024);
 
 const DEFAULTS = {
   language: 'ru',
-  gameDir: 'C:\\Games\\MineVillagers',
+  gameDir: process.platform === 'win32' ? 'C:\\Games\\MineVillagers' : path.join(os.homedir(), process.platform === 'darwin' ? 'Library/Application Support/MineVillagers' : '.minevillagers'),
   memoryMaxMb: Math.min(8192, Math.max(3072, Math.floor(totalMb * 0.5 / 512) * 512)),
   memoryMinMb: 1024,
   width: 1600,
@@ -48,7 +48,7 @@ const DEFAULTS = {
     'config/betterfpsdist.json', 'config/DistantHorizons.toml', 'config/bobby.toml', 'config/iris.properties', 'config/oculus.properties',
     'config/fancymenu/user_variables.db', 'config/voicechat/username-cache.json', 'config/sounds/chat.json', 'config/fml.toml',
     'kubejs/fenix_dump/**', 'kubejs/exported/**', 'kubejs/fenix_night_spawn_status.json',
-    'config/skinkokk-client.toml'
+    'config/skinkokk-client.toml', 'server/**'
   ],
   // Версии игры, которые ставятся, пока сборка не опубликована
   minecraftVersion: '1.21.1',
@@ -58,7 +58,22 @@ const DEFAULTS = {
   accounts: [], // {id, type: 'ely'|'offline', name, uuid}
   theme: 'auto', // auto | day | night | evening
   animations: true,
-  sounds: true
+  sounds: true,
+  // Игра с друзьями: свой туннель (комната = имя + пароль)
+  roomName: '',
+  tunnelBrokers: ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt'],
+  stunServers: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478', 'stun:stun1.l.google.com:19302'],
+  turnServers: [], // {urls, username, credential} — если напрямую не соединяется
+  tunnelLocalPort: 25565,
+  // Сервер сборки в лаунчере
+  serverPort: 25565,
+  serverMemoryMb: 4096,
+  serverMaxPlayers: 10,
+  serverMotd: 'MineVillagers — сервер сборки',
+  serverEulaAccepted: false,
+  serverExcludeMods: ['sodium', 'iris', 'oculus', 'embeddium', 'rubidium', 'sounds-', 'entityculling', 'immediatelyfast', 'betterfpsdist',
+    'notenoughanimations', 'fancymenu', 'drippyloadingscreen', 'konkrete', 'entity_model_features', 'entity_texture_features', 'continuity',
+    'dynamic-fps', 'dynamicfps', 'skinlayers3d', 'kokkhud', 'floatingdamagenumbers', 'emi_loot', 'emi_ores']
 };
 
 let settings = { ...DEFAULTS };
