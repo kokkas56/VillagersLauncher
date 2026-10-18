@@ -80,7 +80,7 @@ async function detect() {
 }
 
 async function findManaged(major) {
-  for (const c of candidatesFrom(path.join(JAVA_DIR, `temurin-${major}`), 2)) {
+  for (const c of [...candidatesFrom(path.join(JAVA_DIR, `mojang-${major}`), 2), ...candidatesFrom(path.join(JAVA_DIR, `temurin-${major}`), 2)]) {
     const info = await probe(c);
     if (info && info.major === major) return info;
   }
@@ -96,18 +96,20 @@ async function installTemurin(major, onProgress) {
   const pkg = list[0].binary.package;
   const dest = path.join(JAVA_DIR, `temurin-${major}`);
   const archive = path.join(JAVA_DIR, pkg.name);
-  let got = 0;
-  onProgress && onProgress({ stage: 'java', text: `Java ${major}`, bytes: 0, total: pkg.size });
-  await netu.downloadFile(pkg.link, archive, {
-    size: pkg.size,
-    onBytes: (n) => { got += n; onProgress && onProgress({ stage: 'java', text: `Java ${major}`, bytes: got, total: pkg.size }); }
-  });
-  // сверяем sha256
   const crypto = require('crypto');
-  const h = crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
-  if (pkg.checksum && h !== pkg.checksum) {
+  let ok = false;
+  for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+    let got = 0;
     fs.rmSync(archive, { force: true });
-    throw new Error('Контрольная сумма Java не совпала, попробуй ещё раз');
+    await netu.downloadFile(pkg.link, archive, {
+      onBytes: (n) => { got += n; onProgress && onProgress({ stage: 'java', text: `Java ${major}`, bytes: got, total: pkg.size }); }
+    });
+    const h = crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
+    ok = !pkg.checksum || h.toLowerCase() === String(pkg.checksum).toLowerCase();
+  }
+  if (!ok) {
+    fs.rmSync(archive, { force: true });
+    throw new Error('Не удалось скачать Java: файл приходит повреждённым. Проверь антивирус/прокси или выбери свою Java в настройках.');
   }
   fs.rmSync(dest, { recursive: true, force: true });
   fs.mkdirSync(dest, { recursive: true });
@@ -125,6 +127,45 @@ async function installTemurin(major, onProgress) {
   return info;
 }
 
+// Java от Mojang (та же, что ставит официальный лаунчер): каждый файл сверяется по SHA-1
+const MOJANG_RUNTIMES = 'https://launchermeta.mojang.com/v1/products/java-runtime/2ec0cc96c44e5a76b9c8b7c39df7210883d12871/all.json';
+async function installMojang(major, onProgress) {
+  const plat = process.platform === 'win32' ? (process.arch === 'arm64' ? 'windows-arm64' : 'windows-x64') : process.platform === 'darwin' ? 'mac-os' : 'linux';
+  const comp = major >= 21 ? 'java-runtime-delta' : major >= 17 ? 'java-runtime-gamma' : 'jre-legacy';
+  const all = await netu.getJson(MOJANG_RUNTIMES);
+  const entry = all[plat] && all[plat][comp] && all[plat][comp][0];
+  if (!entry) throw new Error('Mojang не даёт Java для ' + plat);
+  const manifest = await netu.getJson(entry.manifest.url);
+  const dest = path.join(JAVA_DIR, `mojang-${major}`);
+  const items = [];
+  for (const [rel, f] of Object.entries(manifest.files)) {
+    const abs = path.join(dest, rel);
+    if (f.type === 'directory') { fs.mkdirSync(abs, { recursive: true }); continue; }
+    if (f.type !== 'file') continue;
+    const raw = f.downloads.raw;
+    items.push({ url: raw.url, file: abs, sha1: raw.sha1, size: raw.size, name: rel });
+  }
+  await netu.downloadAll(items, {
+    threads: 12,
+    onProgress: (p) => onProgress && onProgress({ stage: 'java', text: `Java ${major}: ${p.files}/${p.filesTotal}`, bytes: p.bytes, total: p.total })
+  });
+  if (process.platform !== 'win32') {
+    for (const [rel, f] of Object.entries(manifest.files)) if (f.executable) try { fs.chmodSync(path.join(dest, rel), 0o755); } catch (_) {}
+  }
+  const info = await findManaged(major);
+  if (!info) throw new Error('Java скачана, но не запускается');
+  return info;
+}
+
+async function installJava(major, onProgress) {
+  try {
+    return await installMojang(major, onProgress);
+  } catch (e) {
+    console.error('mojang java failed, trying Adoptium', e);
+    return installTemurin(major, onProgress);
+  }
+}
+
 // Возвращает путь к javaw подходящей версии, при необходимости скачивая её.
 async function resolveJava(major, onProgress) {
   const s = store.get();
@@ -136,8 +177,8 @@ async function resolveJava(major, onProgress) {
   }
   const m = await findManaged(major);
   if (m) return m.path;
-  const installed = await installTemurin(major, onProgress);
+  const installed = await installJava(major, onProgress);
   return installed.path;
 }
 
-module.exports = { detect, probe, resolveJava, installTemurin, findManaged, JAVA_DIR };
+module.exports = { detect, probe, resolveJava, installTemurin, installJava, installMojang, findManaged, JAVA_DIR };

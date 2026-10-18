@@ -166,7 +166,7 @@ handle('pack:hasToken', () => !!store.getSecret('githubToken'));
 handle('java:detect', () => java.detect());
 handle('java:probe', (p) => java.probe(p));
 handle('java:install', async (major) => {
-  try { return await java.installTemurin(major || 21, progress); } finally { progress(null); }
+  try { return await java.installJava(major || 21, progress); } finally { progress(null); }
 });
 
 // моды

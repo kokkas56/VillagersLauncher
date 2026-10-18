@@ -1,7 +1,7 @@
 {
   "name": "villagerslauncher",
   "productName": "VillagersLauncher",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Лаунчер сборки MineVillagers от Кокка",
   "author": "Kokk",
   "license": "UNLICENSED",
@@ -32,7 +32,7 @@
   "build": {
     "appId": "ru.kokk.villagerslauncher",
     "productName": "VillagersLauncher",
-    "artifactName": "VillagersLauncher-Setup-${version}.${ext}",
+    "artifactName": "VillagersLauncher-Setup.${ext}",
     "directories": {
       "output": "release",
       "buildResources": "build"
