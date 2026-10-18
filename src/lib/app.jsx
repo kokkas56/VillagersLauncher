@@ -65,6 +65,31 @@ export function AppProvider({ children }) {
     return () => { offs.forEach((f) => f()); clearInterval(timer); };
   }, [refreshSettings, refreshAccounts, refreshPack]);
 
+  // «Проверить обновления»: и лаунчер, и сборка
+  const [checking, setChecking] = useState(false);
+  const checkUpdates = useCallback(async () => {
+    setChecking(true);
+    const tr = (s, v) => translate(lang, s, v);
+    try {
+      let l = null;
+      try { l = await call('app:checkUpdates'); } catch (e) { toast(tr('Лаунчер: не удалось проверить') + ' — ' + e.message, 'error', 7000); }
+      if (l) {
+        if (l.state === 'latest') toast(tr('Лаунчер: последняя версия') + ' ' + l.version, 'ok');
+        else if (l.state === 'downloading') toast(tr('Лаунчер: качаю версию') + ' ' + l.version + ' — ' + tr('потом появится кнопка «Перезапустить»'), 'info', 7000);
+        else if (l.state === 'ready') { toast(tr('Лаунчер: версия') + ' ' + l.version + ' ' + tr('готова — нажми «Перезапустить» сверху'), 'info', 7000); setUpdate({ state: 'ready', version: l.version }); }
+        else if (l.state === 'manual') { toast(tr('Лаунчер: вышла версия') + ' ' + l.version + ' — ' + tr('скачай её по кнопке сверху'), 'info', 7000); setUpdate(l); }
+      }
+      let p = null;
+      try { p = await call('pack:info'); setPack(p); } catch (e) { toast(tr('Сборка: не удалось проверить') + ' — ' + e.message, 'error', 7000); }
+      if (p) {
+        if (p.error) toast(tr('Сборка: нет связи с GitHub') + ' — ' + p.error, 'error', 7000);
+        else if (p.authorHome) toast(tr('Сборка: это папка автора — обновляется заливкой'), 'info');
+        else if (p.latest && (!p.state || p.state.version !== p.latest.version)) toast(tr('Сборка: есть обновление') + ' #' + p.latest.version + ' — ' + tr('нажми «Обновить и играть»'), 'info', 7000);
+        else if (p.latest) toast(tr('Сборка: последняя версия') + ' #' + p.latest.version, 'ok');
+      }
+    } finally { setChecking(false); }
+  }, [lang, toast]);
+
   const account = useMemo(() => accounts.accounts.find((a) => a.id === accounts.selected) || null, [accounts]);
 
   const value = {
@@ -73,7 +98,7 @@ export function AppProvider({ children }) {
     pack, refreshPack,
     progress, gameState, logs, busyState,
     toasts, toast,
-    update,
+    update, checkUpdates, checking,
     lang, t
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -438,19 +438,25 @@ handle('game:kill', () => { if (game) game.proc.kill(); return true; });
 // ---------------- автообновление лаунчера ----------------
 // На Mac лаунчер без подписи Apple — сам себя заменить не может; говорим о новой версии и даём ссылку.
 function newer(a, b) { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; }
+// кнопка «Проверить обновления»: лаунчер (сборка проверяется в окне сама)
+let checkLauncher = async () => ({ state: 'dev', version: app.getVersion() });
+handle('app:checkUpdates', () => checkLauncher());
+
 function macUpdateCheck() {
   const check = async () => {
-    try {
-      const rel = await require('./net.cjs').getJson('https://api.github.com/repos/kokkas56/VillagersLauncher/releases/latest');
-      const v = String(rel.tag_name || '').replace(/^v/, '');
-      if (v && newer(v, app.getVersion())) {
-        const asset = (rel.assets || []).find((a) => a.name === `VillagersLauncher-mac-${process.arch === 'arm64' ? 'arm64' : 'x64'}.dmg`);
-        send('update-state', { state: 'manual', version: v, url: asset ? asset.browser_download_url : rel.html_url });
-      }
-    } catch (_) {}
+    const rel = await require('./net.cjs').getJson('https://api.github.com/repos/kokkas56/VillagersLauncher/releases/latest');
+    const v = String(rel.tag_name || '').replace(/^v/, '');
+    if (v && newer(v, app.getVersion())) {
+      const asset = (rel.assets || []).find((a) => a.name === `VillagersLauncher-mac-${process.arch === 'arm64' ? 'arm64' : 'x64'}.dmg`);
+      const st = { state: 'manual', version: v, url: asset ? asset.browser_download_url : rel.html_url };
+      send('update-state', st);
+      return st;
+    }
+    return { state: 'latest', version: app.getVersion() };
   };
-  setTimeout(check, 5000);
-  setInterval(check, 3 * 3600e3);
+  checkLauncher = check;
+  setTimeout(() => check().catch(() => {}), 5000);
+  setInterval(() => check().catch(() => {}), 3 * 3600e3);
 }
 function setupUpdater() {
   if (DEV || !app.isPackaged) return;
@@ -464,6 +470,15 @@ function setupUpdater() {
   autoUpdater.on('update-downloaded', (i) => send('update-state', { state: 'ready', version: i.version }));
   autoUpdater.on('error', () => {});
   handle('app:installUpdate', () => { autoUpdater.quitAndInstall(); });
+  let ready = null;
+  autoUpdater.on('update-downloaded', (i) => { ready = i.version; });
+  checkLauncher = async () => {
+    if (ready && newer(ready, app.getVersion())) return { state: 'ready', version: ready };
+    const r = await autoUpdater.checkForUpdates();
+    const v = r && r.updateInfo && r.updateInfo.version;
+    if (v && newer(v, app.getVersion())) return { state: 'downloading', version: v };
+    return { state: 'latest', version: app.getVersion() };
+  };
   setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 4000);
   setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 3 * 3600e3);
 }

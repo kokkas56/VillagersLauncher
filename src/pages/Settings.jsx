@@ -7,7 +7,7 @@ import { Section, Toggle, Progress } from '../components/ui.jsx';
 const RES = [[1280, 720], [1600, 900], [1920, 1080], [2560, 1440]];
 
 export default function Settings() {
-  const { t, lang, settings, saveSettings, info, toast, progress, pack, refreshPack } = useApp();
+  const { t, lang, settings, saveSettings, info, toast, progress, pack, refreshPack, checkUpdates, checking } = useApp();
   const [javas, setJavas] = useState(null);
   const [releases, setReleases] = useState(null);
   const [checking, setChecking] = useState(false);
@@ -157,6 +157,7 @@ export default function Settings() {
         <Toggle checked={s.authorMode} onChange={(v) => set({ authorMode: v })} label={t('Режим автора')} hint={t('Для Кокка: вкладка «Автор» с кнопкой «Залить сборку»')} />
         <div className="row">
           <button className="btn ghost" onClick={() => call('shell:openPath', '@data')}><Icon name="folder" /> {t('Папка лаунчера')}</button>
+          <button className="btn ghost" disabled={checking} onClick={checkUpdates}><Icon name="refresh" /> {checking ? t('Проверяю…') : t('Проверить обновления')}</button>
           <span className="muted small">VillagersLauncher {info && info.version}</span>
         </div>
       </Section>

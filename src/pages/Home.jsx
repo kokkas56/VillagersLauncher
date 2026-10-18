@@ -7,7 +7,7 @@ import SkinPreview from '../components/SkinPreview.jsx';
 import { defaultSkinDataUrl } from '../editor/templates.js';
 
 export default function Home({ go, openAccounts, openDonate, skin }) {
-  const { t, lang, settings, account, pack, progress, gameState, busyState, toast, refreshAccounts } = useApp();
+  const { t, lang, settings, account, pack, progress, gameState, busyState, toast, refreshAccounts, checkUpdates, checking } = useApp();
   const [servers, setServers] = useState([]);
   const [fallbackSkin] = useState(() => defaultSkinDataUrl());
 
@@ -60,6 +60,7 @@ export default function Home({ go, openAccounts, openDonate, skin }) {
               <span>{playLabel}</span>
             </button>
             {running && <button className="btn danger" onClick={() => call('game:kill')}>{t('Закрыть игру')}</button>}
+            {!running && <button className="btn ghost" disabled={checking} onClick={checkUpdates} title={t('Проверить обновления лаунчера и сборки')}><Icon name="refresh" size={14} /> {checking ? t('Проверяю…') : t('Обновления')}</button>}
           </div>
           <div className="play-progress">
             {progress && preparing ? <Progress p={progress} /> : (

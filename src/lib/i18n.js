@@ -1,5 +1,9 @@
 // Переводы. Ключ — русский текст, для английского берём EN[key].
 const EN = {
+  'Обновления': 'Updates',
+  'Проверить обновления': 'Check for updates',
+  'Проверяю…': 'Checking…',
+  'Проверить обновления лаунчера и сборки': 'Check launcher and pack updates',
   'С друзьями': 'Friends',
   'Игра с друзьями': 'Play with friends',
   'Войти к другу': 'Join a friend',
