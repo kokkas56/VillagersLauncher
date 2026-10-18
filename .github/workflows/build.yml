@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, release]
     tags: ['v*']
   workflow_dispatch:
 
@@ -33,15 +33,15 @@ jobs:
           gh release view ci-logs >/dev/null 2>&1 || gh release create ci-logs --prerelease --title "CI logs" --notes "Логи сборки" --target main
           [ -f ui-build.log ] && gh release upload ci-logs ui-build.log --clobber || true
       - name: Build installer (release)
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.ref == 'refs/heads/release' || startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win nsis --publish always
       - name: Build installer (nightly)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ github.ref != 'refs/heads/release' && !startsWith(github.ref, 'refs/tags/v') }}
         run: npx electron-builder --win nsis --publish never
       - name: Upload nightly
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ github.ref != 'refs/heads/release' && !startsWith(github.ref, 'refs/tags/v') }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
