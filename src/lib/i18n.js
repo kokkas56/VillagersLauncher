@@ -1,5 +1,12 @@
 // Переводы. Ключ — русский текст, для английского берём EN[key].
 const EN = {
+  'Показать пароль': 'Show password',
+  'Скрыть пароль': 'Hide password',
+  'Скопировать для друга': 'Copy for a friend',
+  'Изменить': 'Edit',
+  'Новый пароль': 'New password',
+  'Отмена': 'Cancel',
+  'Пароль и настройки': 'Password and settings',
   'Обновления': 'Updates',
   'Проверить обновления': 'Check for updates',
   'Проверяю…': 'Checking…',

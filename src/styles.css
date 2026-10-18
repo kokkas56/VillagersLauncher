@@ -536,3 +536,9 @@ input[type='range'] { accent-color: var(--emerald); width: 100%; }
 .check-row { display: flex; gap: 8px; align-items: center; margin: 8px 0 10px; font-size: 13px; }
 .check-row a { color: var(--emerald-2); }
 .net-card .dot.on { background: var(--emerald); }
+
+.pw-row { gap: 6px; }
+.pw-row .input { flex: 1; }
+.room-secrets { margin: 6px 0 10px; }
+.room-secrets.compact { margin: 4px 0 10px 18px; padding: 8px 10px; border-radius: 9px; background: rgba(0, 0, 0, 0.18); }
+.saved-room + .saved-room { margin-top: 4px; }

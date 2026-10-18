@@ -306,6 +306,29 @@ handle('net:removeRoom', async (id) => {
   store.set({ rooms: (store.get().rooms || []).filter((r) => r.id !== id), activeRoom: store.get().activeRoom === id ? null : store.get().activeRoom });
   return true;
 });
+handle('net:roomPassword', (id) => store.getSecret('room:' + id) || '');
+// изменить комнату: имя, пароль, режим (включённая — перезапускается с новыми)
+handle('net:updateRoom', async ({ id, name, password, mode }) => {
+  const rooms = store.get().rooms || [];
+  const r = rooms.find((x) => x.id === id);
+  if (!r) throw new Error('Комната не найдена');
+  const newName = String(name || r.name).trim();
+  const newPass = password != null && password !== '' ? String(password) : store.getSecret('room:' + id);
+  if (newName.length < 3) throw new Error('Имя комнаты — хотя бы 3 символа');
+  if (!newPass || newPass.length < 4) throw new Error('Пароль — хотя бы 4 символа');
+  const wasActive = store.get().activeRoom === id && tunnelState.active;
+  const newId = roomKey(r.role, newName);
+  store.setSecret('room:' + id, null);
+  store.setSecret('room:' + newId, newPass);
+  const next = rooms.filter((x) => x.id !== id && x.id !== newId);
+  next.unshift({ ...r, id: newId, name: newName, mode: mode || r.mode, lastUsed: Date.now() });
+  store.set({ rooms: next, activeRoom: wasActive ? newId : store.get().activeRoom === id ? null : store.get().activeRoom });
+  if (wasActive) {
+    const o = tunnelOpts({ name: newName, password: newPass, mode: mode || r.mode });
+    await tunnelCmd(r.role === 'host' ? 'host' : 'join', o);
+  }
+  return { id: newId, restarted: wasActive };
+});
 handle('net:leave', () => { store.set({ activeRoom: null }); return tunnelWin ? tunnelCmd('leave') : true; });
 
 // ---------------- сервер сборки ----------------

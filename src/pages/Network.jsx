@@ -14,7 +14,67 @@ const STATUS = {
 const ROUTE = { direct: 'напрямую', lan: 'по локальной сети', relay: 'через ретранслятор', tcp: 'через проброс порта' };
 const fmt = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + ' МБ' : Math.round(n / 1024) + ' КБ');
 
-function RoomCard({ st, t, toast, account, openAccounts, roomId, reload }) {
+// поле пароля с «глазом»
+function PasswordInput({ value, onChange, t, autoFocus }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="row pw-row">
+      <input className="input" type={show ? 'text' : 'password'} value={value} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} />
+      <button type="button" className="btn sm ghost icon-btn" title={show ? t('Скрыть пароль') : t('Показать пароль')} onClick={() => setShow(!show)}><Icon name={show ? 'eyeOff' : 'eye'} size={14} /></button>
+    </div>
+  );
+}
+
+// имя и пароль комнаты: посмотреть, скопировать для друзей, изменить
+function RoomSecrets({ roomId, room, t, toast, reload, compact }) {
+  const [pw, setPw] = useState(null);
+  const [show, setShow] = useState(false);
+  const [edit, setEdit] = useState(false);
+  const [name, setName] = useState(room ? room.name : '');
+  const [npw, setNpw] = useState('');
+  const [mode, setMode] = useState(room ? room.mode : 'world');
+  useEffect(() => { if (roomId) call('net:roomPassword', roomId).then(setPw).catch(() => {}); setName(room ? room.name : ''); setMode(room ? room.mode : 'world'); }, [roomId]);
+  if (!roomId || !room) return null;
+  const copy = () => { navigator.clipboard.writeText(`${t('Комната')}: ${room.name}\n${t('Пароль')}: ${pw}`); toast(t('Имя и пароль скопированы — отправь другу'), 'ok'); };
+  const save = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await call('net:updateRoom', { id: roomId, name, password: npw, mode });
+      toast(r.restarted ? t('Сохранено, комната перезапущена с новыми данными') : t('Сохранено'), 'ok');
+      setEdit(false); setNpw(''); reload();
+    } catch (err) { toast(err.message, 'error', 7000); }
+  };
+  return (
+    <div className={'room-secrets' + (compact ? ' compact' : '')}>
+      {!edit ? (
+        <div className="row wrap">
+          <span className="muted small">{t('Пароль')}: <b className="mono">{pw == null ? '…' : show ? pw : '•'.repeat(Math.max(4, pw.length))}</b></span>
+          <button className="btn sm ghost icon-btn" title={show ? t('Скрыть пароль') : t('Показать пароль')} onClick={() => setShow(!show)}><Icon name={show ? 'eyeOff' : 'eye'} size={12} /></button>
+          <button className="btn sm ghost" onClick={copy}><Icon name="copy" size={12} /> {t('Скопировать для друга')}</button>
+          <button className="btn sm ghost" onClick={() => setEdit(true)}><Icon name="pencil" size={12} /> {t('Изменить')}</button>
+        </div>
+      ) : (
+        <form className="form" onSubmit={save}>
+          <label>{t('Имя комнаты')}<input className="input" value={name} onChange={(e) => setName(e.target.value)} /></label>
+          <label>{t('Новый пароль')} <small className="muted">({t('пусто — оставить прежний')})</small><PasswordInput value={npw} onChange={setNpw} t={t} /></label>
+          {room.role === 'host' && (
+            <div className="seg">
+              <button type="button" className={mode === 'world' ? 'on' : ''} onClick={() => setMode('world')}>{t('Мой мир')}</button>
+              <button type="button" className={mode === 'server' ? 'on' : ''} onClick={() => setMode('server')}>{t('Сервер сборки')}</button>
+            </div>
+          )}
+          {room.role === 'host' && <small className="muted">{t('После смены имени или пароля скажи друзьям новые.')}</small>}
+          <div className="row">
+            <button className="btn sm primary">{t('Сохранить')}</button>
+            <button type="button" className="btn sm ghost" onClick={() => setEdit(false)}>{t('Отмена')}</button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function RoomCard({ st, t, toast, account, openAccounts, roomId, room, reload }) {
   const host = st.role === 'host';
   const leave = async () => { await call('net:leave'); reload(); };
   const remove = async () => { if (roomId) await call('net:removeRoom', roomId); else await call('net:leave'); reload(); };
@@ -34,6 +94,7 @@ function RoomCard({ st, t, toast, account, openAccounts, roomId, reload }) {
       </div>
       {st.error && <p className="warn-text small">{t(st.error)}</p>}
       {st.notice && <p className="warn-text small">⚠ {t(st.notice)}</p>}
+      <RoomSecrets roomId={roomId} room={room} t={t} toast={toast} reload={reload} />
       {host ? (
         <>
           <p className="muted small">{t('Что открыто')}: <b>{st.target}</b></p>
@@ -152,6 +213,7 @@ export default function Network({ openAccounts }) {
   const [mode, setMode] = useState('world');
   const [busy, setBusy] = useState(false);
   const [rooms, setRooms] = useState({ rooms: [], active: null });
+  const [openRoom, setOpenRoom] = useState(null);
   const reload = () => call('net:rooms').then((r) => r && setRooms(r)).catch(() => {});
 
   useEffect(() => {
@@ -181,18 +243,22 @@ export default function Network({ openAccounts }) {
 
       <div className="net-grid">
         <div>
-          {st.active && <RoomCard st={st} t={t} toast={toast} account={account} openAccounts={openAccounts} roomId={rooms.active} reload={reload} />}
+          {st.active && <RoomCard st={st} t={t} toast={toast} account={account} openAccounts={openAccounts} roomId={rooms.active} room={(rooms.rooms || []).find((r) => r.id === rooms.active)} reload={reload} />}
           {savedRooms.length > 0 && (
             <Section title={t('Мои комнаты')} icon="star">
               <div className="net-members">
                 {savedRooms.map((r) => (
-                  <div key={r.id} className="net-member">
+                  <div key={r.id} className="saved-room">
+                  <div className="net-member">
                     <span className="dot off" />
                     <b>{r.name}</b>
                     <span className="muted small">{r.role === 'host' ? (r.mode === 'server' ? t('моя · сервер сборки') : t('моя · мой мир')) : t('у друга')}</span>
                     <div className="grow" />
                     <button className="btn sm primary" disabled={busy} onClick={() => startRoom(r.id)}>{r.role === 'host' ? t('Включить') : t('Подключиться')}</button>
+                    <button className="btn sm ghost" title={t('Пароль и настройки')} onClick={() => setOpenRoom(openRoom === r.id ? null : r.id)}><Icon name="gear" size={12} /></button>
                     <button className="btn sm danger" title={t('Удалить')} onClick={() => removeRoom(r)}><Icon name="trash" size={12} /></button>
+                  </div>
+                  {openRoom === r.id && <RoomSecrets roomId={r.id} room={r} t={t} toast={toast} reload={reload} compact />}
                   </div>
                 ))}
               </div>
@@ -210,7 +276,7 @@ export default function Network({ openAccounts }) {
                   ? t('Придумай имя комнаты и пароль и скажи их друзьям. Лаунчер соединит вас напрямую, как в локальной сети — ничего ставить не нужно.')
                   : t('Введи имя комнаты и пароль, которые дал друг. Его мир появится у тебя в игре в «Сетевой игре».')}</p>
                 <label>{t('Имя комнаты')}<input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={t('например: деревня-кокка')} autoFocus /></label>
-                <label>{t('Пароль')}<input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+                <label>{t('Пароль')}<PasswordInput value={password} onChange={setPassword} t={t} /></label>
                 {tab === 'host' && (
                   <div className="seg">
                     <button type="button" className={mode === 'world' ? 'on' : ''} onClick={() => setMode('world')}>{t('Мой мир')}</button>
