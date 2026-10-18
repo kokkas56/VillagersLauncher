@@ -49,6 +49,8 @@ jobs:
           gh release view nightly >/dev/null 2>&1 || gh release create nightly --prerelease --title "Nightly" --notes "Тестовая сборка лаунчера с ветки main" --target main
           for f in release/*.exe; do cp "$f" "release/VillagersLauncher-nightly.exe"; done
           gh release upload nightly release/VillagersLauncher-nightly.exe --clobber
+          powershell -Command "Compress-Archive -Path dist/* -DestinationPath ui-dist.zip -Force"
+          gh release upload nightly ui-dist.zip --clobber
 
   skinkokk:
     runs-on: ubuntu-latest

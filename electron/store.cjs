@@ -65,9 +65,10 @@ let settings = { ...DEFAULTS };
 try {
   if (fs.existsSync(SETTINGS_FILE)) {
     settings = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
-  } else if (fs.existsSync('C:\\Games\\MINEVILLAGERS\\mods\\villagerskokk.jar')) {
-    // Компьютер автора: игра уже лежит здесь
+  } else if (fs.existsSync('C:\\Games\\MINEVILLAGERS\\Исходники')) {
+    // Компьютер автора: игра и исходники модов уже лежат здесь
     settings.gameDir = 'C:\\Games\\MINEVILLAGERS';
+    settings.authorMode = true;
   }
 } catch (e) {
   console.error('settings read failed', e);
