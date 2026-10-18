@@ -22,6 +22,7 @@ export default function Home({ go, openAccounts, openDonate, skin }) {
 
   const play = async (quickPlay, how) => {
     if (!account) { openAccounts(); return; }
+    if (pack && pack.dir && pack.dir.lost) { toast(t('Сначала укажи, где папка игры — баннер сверху'), 'warn', 7000); return; }
     try {
       await call('game:play', { ...(quickPlay ? { quickPlay } : {}), ...(how || {}) });
     } catch (e) {

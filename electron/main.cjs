@@ -153,6 +153,7 @@ handle('pack:info', async () => {
     state,
     latest: latest ? { version: latest.version, tag: latest.tag, date: latest.date, changelog: latest.changelog, minecraft: latest.minecraft, loader: latest.loader, files: latest.files.length, size: latest.files.reduce((a, f) => a + f.size, 0), servers: latest.servers || [], optional: latest.files.filter((f) => f.optional).map((f) => f.path) } : null,
     authorHome: pack.isAuthorHome(s.gameDir),
+    dir: dirStatus(),
     error
   };
 });
@@ -367,12 +368,105 @@ app.on('before-quit', (e) => {
   }
 });
 
+
+// ---------- папка игры: нашлась ли сборка, переименование, перенос ----------
+function hasPackIn(d) { try { return fs.existsSync(path.join(d, '.villagers', 'state.json')); } catch (_) { return false; } }
+function samePath(a, b) { return !!a && !!b && path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase(); }
+// сборка уже скачивалась сюда, а теперь папки нет (переименовали/перенесли) — не качаем заново молча
+function dirStatus() {
+  const s = store.get();
+  const d = s.gameDir;
+  const exists = fs.existsSync(d);
+  const has = hasPackIn(d);
+  if (has && !s.lastPackDir) store.set({ lastPackDir: d });
+  const lost = !has && !pack.isAuthorHome(d) && samePath(s.lastPackDir, d);
+  let candidates = [];
+  if (lost) {
+    // ищем рядом: папка с нашей сборкой с другим названием
+    try {
+      const parent = path.dirname(d);
+      candidates = fs.readdirSync(parent, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && hasPackIn(path.join(parent, e.name)))
+        .map((e) => path.join(parent, e.name)).slice(0, 5);
+    } catch (_) {}
+  }
+  return { path: d, name: path.basename(d), exists, hasPack: has, lost, candidates };
+}
+function dirBusyCheck() {
+  if (game) throw new Error('Сначала закрой игру');
+  if (busy) throw new Error('Лаунчер сейчас занят — подожди');
+  if (server.running()) throw new Error('Сначала выключи сервер (раздел «Сеть»)');
+  if (tunnelState.active) throw new Error('Сначала выключи комнату (раздел «Сеть»)');
+}
+function setGameDir(d) {
+  const s = store.get();
+  const patch = { gameDir: d };
+  if (samePath(s.authorSourceDir, s.gameDir)) patch.authorSourceDir = d;
+  if (hasPackIn(d)) patch.lastPackDir = d;
+  store.set(patch);
+}
+// выбрать папку: если выбрали «родителя», а сборка лежит внутри — берём её
+handle('game:useDir', (d) => {
+  if (!d) return null;
+  let pick = d;
+  if (!hasPackIn(d)) {
+    try {
+      const inner = fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory() && hasPackIn(path.join(d, e.name)));
+      if (inner.length === 1) pick = path.join(d, inner[0].name);
+    } catch (_) {}
+  }
+  setGameDir(pick);
+  return dirStatus();
+});
+handle('game:freshDir', () => { store.set({ lastPackDir: null }); return dirStatus(); });
+const BAD_NAME = /[<>:"/\\|?*\x00-\x1f]/;
+handle('game:renameDir', async (name) => {
+  dirBusyCheck();
+  name = String(name || '').trim().replace(/[. ]+$/, '');
+  if (!name || BAD_NAME.test(name) || name === '.' || name === '..') throw new Error('Такое название папки нельзя: без символов < > : " / \\ | ? *');
+  const from = store.get().gameDir;
+  const to = path.join(path.dirname(from), name);
+  if (samePath(from, to) && path.basename(from) === name) return dirStatus();
+  if (!samePath(from, to) && fs.existsSync(to)) throw new Error('Папка «' + name + '» уже есть рядом — выбери другое название');
+  if (fs.existsSync(from)) {
+    try { await fs.promises.rename(from, to); }
+    catch (e) { throw new Error('Не получилось переименовать: папка чем-то занята (открыта в Проводнике или другой программе?). ' + (e.code || e.message)); }
+  }
+  setGameDir(to);
+  return dirStatus();
+});
+handle('game:moveDir', async (parent) => {
+  dirBusyCheck();
+  if (!parent) return dirStatus();
+  const from = store.get().gameDir;
+  const to = path.join(parent, path.basename(from));
+  if (samePath(from, to)) return dirStatus();
+  if (path.resolve(to).toLowerCase().startsWith(path.resolve(from).toLowerCase() + path.sep)) throw new Error('Нельзя перенести папку внутрь самой себя');
+  if (fs.existsSync(to)) throw new Error('В выбранном месте уже есть папка «' + path.basename(from) + '»');
+  if (fs.existsSync(from)) {
+    setBusy('move');
+    try {
+      try { await fs.promises.rename(from, to); }
+      catch (e) {
+        if (e.code !== 'EXDEV') throw new Error('Не получилось перенести: папка чем-то занята. ' + (e.code || e.message));
+        // другой диск: копируем, потом убираем старую
+        progress({ stage: 'move', text: 'Переношу папку игры на другой диск…', indeterminate: true });
+        await fs.promises.cp(from, to, { recursive: true, errorOnExist: true, force: false });
+        await fs.promises.rm(from, { recursive: true, force: true });
+      }
+    } finally { setBusy(null); progress(null); }
+  }
+  setGameDir(to);
+  return dirStatus();
+});
+
 // ---------------- запуск игры ----------------
 handle('game:status', () => ({ running: !!game, busy, what: busyWhat }));
 
 async function prepareGame({ verify = false, update = false, noUpdate = false } = {}) {
   const s = store.get();
   const gameDir = s.gameDir;
+  if (dirStatus().lost && !verify) throw new Error('Сборка не найдена в папке «' + gameDir + '». Если ты переименовал или перенёс папку — укажи её в «Настройках», иначе нажми «Скачать заново» в баннере сверху.');
   fs.mkdirSync(gameDir, { recursive: true });
   let manifest = null;
   if (!pack.isAuthorHome(gameDir)) {
@@ -395,6 +489,7 @@ async function prepareGame({ verify = false, update = false, noUpdate = false } 
   if (manifest && (verify || !have || (!noUpdate && (update || s.autoUpdatePack)))) {
     await pack.sync(manifest, gameDir, progress, { verify });
   }
+  if (hasPackIn(gameDir) && !samePath(store.get().lastPackDir, gameDir)) store.set({ lastPackDir: gameDir });
   return { installed, gameDir };
 }
 

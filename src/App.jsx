@@ -120,6 +120,19 @@ export default function App() {
         </div>
       )}
 
+      {app.pack && app.pack.dir && app.pack.dir.lost && (
+        <div className="update-banner warn">
+          <Icon name="folder" />
+          <span>{t('Сборка не найдена в папке')} <b className="mono">{app.pack.dir.path}</b> — {t('её переименовали или перенесли?')}</span>
+          {app.pack.dir.candidates.map((c) => (
+            <button key={c} className="btn sm primary" onClick={async () => { try { await call('game:useDir', c); await app.refreshSettings(); app.refreshPack(); app.toast(t('Нашлась! Качать заново не нужно'), 'ok'); } catch (e) { app.toast(e.message, 'error'); } }}>
+              {t('Это она:')} {c.split(/[\\/]/).pop()}
+            </button>
+          ))}
+          <button className="btn sm" onClick={async () => { const d = await call('dialog:pickFolder', app.pack.dir.path); if (!d) return; try { const r = await call('game:useDir', d); await app.refreshSettings(); app.refreshPack(); app.toast(r.hasPack ? t('Нашлась! Качать заново не нужно') : t('В этой папке сборки нет — она скачается туда'), r.hasPack ? 'ok' : 'warn'); } catch (e) { app.toast(e.message, 'error'); } }}>{t('Указать папку')}</button>
+          <button className="btn sm ghost" onClick={async () => { await call('game:freshDir'); app.refreshPack(); }}>{t('Скачать заново')}</button>
+        </div>
+      )}
       {update && update.state === 'manual' && (
         <div className="update-banner">
           <span>{t('Вышла новая версия лаунчера')} {update.version}</span>

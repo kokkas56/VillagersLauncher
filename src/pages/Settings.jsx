@@ -7,7 +7,7 @@ import { Section, Toggle, Progress } from '../components/ui.jsx';
 const RES = [[1280, 720], [1600, 900], [1920, 1080], [2560, 1440]];
 
 export default function Settings() {
-  const { t, lang, settings, saveSettings, info, toast, progress, pack, refreshPack, checkUpdates, checking: checkingUpd } = useApp();
+  const { t, lang, settings, saveSettings, refreshSettings, info, toast, progress, pack, refreshPack, checkUpdates, checking: checkingUpd } = useApp();
   const [javas, setJavas] = useState(null);
   const [releases, setReleases] = useState(null);
   const [checking, setChecking] = useState(false);
@@ -25,7 +25,20 @@ export default function Settings() {
   };
   const pickDir = async () => {
     const d = await call('dialog:pickFolder', s.gameDir);
-    if (d) { await set({ gameDir: d }); refreshPack(); }
+    if (!d) return;
+    try { const r = await call('game:useDir', d); await refreshSettings(); refreshPack(); toast(r.hasPack ? t('Папка выбрана — сборка в ней найдена') : t('Папка выбрана — сборка скачается туда при запуске'), 'ok'); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  const [dirName, setDirName] = useState(null);
+  const renameDir = async () => {
+    try { await call('game:renameDir', dirName); setDirName(null); await refreshSettings(); refreshPack(); toast(t('Папка переименована, качать заново ничего не нужно'), 'ok'); }
+    catch (e) { toast(e.message, 'error', 9000); }
+  };
+  const moveDir = async () => {
+    const d = await call('dialog:pickFolder', s.gameDir);
+    if (!d) return;
+    try { await call('game:moveDir', d); await refreshSettings(); refreshPack(); toast(t('Папка перенесена'), 'ok'); }
+    catch (e) { toast(e.message, 'error', 9000); }
   };
   const pickJava = async () => {
     const p = await call('dialog:pickJava');
@@ -54,6 +67,15 @@ export default function Settings() {
             <button className="btn" onClick={pickDir}>{t('Выбрать')}</button>
             <button className="btn ghost" onClick={() => call('shell:openPath', '')}><Icon name="folder" /></button>
           </div>
+        </div>
+        <div className="field">
+          <span>{t('Название папки')}</span>
+          <div className="row">
+            <input className="input mono grow" value={dirName != null ? dirName : (s.gameDir || '').split(/[\\/]/).filter(Boolean).pop() || ''} onChange={(e) => setDirName(e.target.value)} />
+            <button className="btn" disabled={dirName == null || !dirName.trim()} onClick={renameDir}><Icon name="pencil" size={12} /> {t('Переименовать')}</button>
+            <button className="btn ghost" onClick={moveDir}>{t('Перенести…')}</button>
+          </div>
+          <small className="muted">{t('Переименовывай и переноси папку здесь, а не в Проводнике — тогда лаунчер её не потеряет и не станет качать сборку заново.')}</small>
         </div>
         <div className="row">
           <button className="btn" disabled={checking} onClick={verify}><Icon name="check" /> {checking ? t('Проверяю…') : t('Проверить папку')}</button>
