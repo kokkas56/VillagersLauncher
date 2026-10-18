@@ -117,3 +117,6 @@ footer > * { background: rgba(14, 10, 7, .6); padding: 6px 12px; border-radius: 
   .hero { padding-top: 140px; }
   .btn-play { padding: 18px 26px; font-size: 13px; }
 }
+
+.dl-other { font-size: 12px; opacity: .9; }
+.dl-other a { color: inherit; }

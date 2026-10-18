@@ -70,8 +70,9 @@
       const r = await gh(LAUNCHER + '/releases/latest');
       const v = document.getElementById('launcher-version');
       if (v && r.tag_name) {
-        const asset = (r.assets || []).find((a) => /\.exe$/i.test(a.name));
-        v.textContent = 'Версия ' + r.tag_name.replace(/^v/, '') + ' · Windows 10/11' + (asset ? ' · ' + Math.round(asset.size / 1048576) + ' МБ' : '');
+        const isMac = /Mac/i.test(navigator.platform || navigator.userAgent);
+        const asset = (r.assets || []).find((a) => (isMac ? /mac-arm64\.dmg$/i : /\.exe$/i).test(a.name));
+        v.textContent = 'Версия ' + r.tag_name.replace(/^v/, '') + (isMac ? ' · macOS' : ' · Windows 10/11') + (asset ? ' · ' + Math.round(asset.size / 1048576) + ' МБ' : '');
       }
     } catch (_) {}
   }
@@ -90,5 +91,13 @@
     onScroll();
   }
 
-  window.addEventListener('DOMContentLoaded', () => { load(); spy(); });
+  // Mac: главная кнопка ведёт на версию для Mac
+  function platform() {
+    if (!/Mac/i.test(navigator.platform || navigator.userAgent)) return;
+    const btn = document.getElementById('download');
+    const mac = document.getElementById('dl-mac-arm');
+    if (btn && mac) { btn.href = mac.href; btn.lastChild.textContent = ' Скачать для Mac '; }
+  }
+
+  window.addEventListener('DOMContentLoaded', () => { platform(); load(); spy(); });
 })();
