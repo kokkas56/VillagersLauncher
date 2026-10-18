@@ -1,5 +1,6 @@
 // Переводы. Ключ — русский текст, для английского берём EN[key].
 const EN = {
+  'Чтобы открывался именно твой профиль, войди в Ely.by через браузер (Аккаунты → Ely.by)': 'To open your own profile, sign in to Ely.by with the browser (Accounts → Ely.by)',
   'Каталог Ely.by: тысячи готовых скинов. Каталог откроется в твоём браузере — выбранный там скин сразу станет твоим на Ely.by.': 'Ely.by catalog: thousands of ready skins. It opens in your browser — the skin you pick there becomes your Ely.by skin right away.',
   'Идёт заливка…': 'Uploading pack…',
   'Проверяю файлы…': 'Checking files…',

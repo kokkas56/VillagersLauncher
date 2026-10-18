@@ -154,7 +154,7 @@ async function loginElyBrowser(openExternal) {
   if (!me.uuid || !me.username) throw new Error('У этого аккаунта Ely.by нет игрового профиля');
   const id = 'ely:' + me.uuid.replace(/-/g, '');
   store.setSecret(id, { accessToken: tok.access_token, refreshToken: tok.refresh_token || null, expiresAt: Date.now() + (Number(tok.expires_in) || 86400) * 1000, oauth: true });
-  return upsert({ id, type: 'ely', via: 'browser', name: me.username, uuid: dashed(me.uuid), login: me.username, addedAt: Date.now() });
+  return upsert({ id, type: 'ely', via: 'browser', name: me.username, uuid: dashed(me.uuid), login: me.username, profileLink: me.profileLink ? String(me.profileLink).replace(/^http:/, 'https:') : null, addedAt: Date.now() });
 }
 
 async function refreshOauth(acc, sec) {

@@ -78,7 +78,7 @@ export default function Skins({ openEditor, skin, refreshSkin, openAccounts }) {
                 <p className="muted">{t('Каталог Ely.by: тысячи готовых скинов. Каталог откроется в твоём браузере — выбранный там скин сразу станет твоим на Ely.by.')}</p>
                 <div className="row">
                   <button className="btn" onClick={reloadAfterEly}><Icon name="link" /> {t('Открыть каталог скинов')}</button>
-                  <button className="btn ghost" onClick={() => openEly('https://ely.by/profile')}>{t('Мой профиль Ely.by')}</button>
+                  <button className="btn ghost" onClick={() => { if (account && account.profileLink) openEly(account.profileLink); else { toast(t('Чтобы открывался именно твой профиль, войди в Ely.by через браузер (Аккаунты → Ely.by)'), 'info', 7000); openEly('https://ely.by/'); } }}>{t('Мой профиль Ely.by')}</button>
                 </div>
                 {ely && <div className="ely-row"><img className="pix" src={ely.dataUrl} alt="" /><span className="muted">{t('Текущий скин на Ely.by')}</span>
                   <button className="btn sm" onClick={() => openEditor({ skin: ely.dataUrl, slim: ely.slim, cape: elyCape, name: account.name })}>{t('Изменить в редакторе')}</button></div>}
