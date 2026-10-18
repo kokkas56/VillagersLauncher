@@ -137,13 +137,16 @@ public class VillagersEarlyWindow extends DisplayWindow {
 
     /** The progress bars, drawn smaller and lower: same element, rendered into a shrunken, shifted viewport. */
     private Object scaledElement(RenderElement inner) throws Exception {
-        final float s = 0.7f;
+        // Stock bars sit at a fixed y≈236..300 of the 854x480 canvas. Shrinking the viewport by s and centring it
+        // vertically maps them to ≈237..285, below the logo. A centred viewport lands in the same place whether or
+        // not the early framebuffer is drawn flipped, so no orientation guessing.
+        final float s = 0.75f;
         return element((bb, ctx, frame) -> {
             int[] vp = new int[4];
             GL32C.glGetIntegerv(GL32C.GL_VIEWPORT, vp);
             int w = Math.round(vp[2] * s), h = Math.round(vp[3] * s);
             int x = vp[0] + (vp[2] - w) / 2;
-            int y = vp[1] - Math.round(vp[3] * 0.03f);
+            int y = vp[1] + (vp[3] - h) / 2;
             GL32C.glViewport(x, y, w, h);
             try {
                 inner.render(ctx, frame);
@@ -213,7 +216,8 @@ public class VillagersEarlyWindow extends DisplayWindow {
         float w = Math.min(sw * 0.34f, logoW * Math.max(1, ctx.scale()) * 0.6f);
         float h = w * logoH / (float) logoW;
         float x0 = (sw - w) / 2f;
-        float y0 = sh * 0.38f - h / 2f;
+        // logo centred at 1/3 of the height (visible art ≈ y 137..183 of 480), clear of the bars below (from ≈237)
+        float y0 = sh * 0.333f - h / 2f;
 
         ElementShader shader = ctx.elementShader();
         GL32C.glActiveTexture(GL32C.GL_TEXTURE0 + TEXTURE_UNIT);
