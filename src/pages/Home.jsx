@@ -12,7 +12,7 @@ export default function Home({ go, openAccounts, openDonate, skin }) {
   const [fallbackSkin] = useState(() => defaultSkinDataUrl());
 
   const running = gameState.state === 'running' || gameState.state === 'starting';
-  const preparing = gameState.state === 'preparing' || (!!progress && !running);
+  const preparing = gameState.state === 'preparing';
 
   useEffect(() => {
     const list = [...(settings.servers || []), ...((pack && pack.latest && pack.latest.servers) || [])].slice(0, 3);
@@ -60,7 +60,7 @@ export default function Home({ go, openAccounts, openDonate, skin }) {
             {running && <button className="btn danger" onClick={() => call('game:kill')}>{t('Закрыть игру')}</button>}
           </div>
           <div className="play-progress">
-            {progress ? <Progress p={progress} /> : (
+            {progress && preparing ? <Progress p={progress} /> : (
               <div className="play-meta">
                 {pack && pack.authorHome && <span className="pill gold"><Icon name="crown" size={12} /> {t('Режим автора: игра с твоими локальными файлами')}</span>}
                 {needUpdate && <span className="pill green"><Icon name="download" size={12} /> {t('Доступна сборка')} #{latest.version}</span>}

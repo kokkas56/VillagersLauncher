@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../lib/app.jsx';
-import { call, fmtBytes, fmtDate } from '../lib/api.js';
+import { call, on, fmtBytes, fmtDate } from '../lib/api.js';
 import Icon from '../components/Icon.jsx';
 import { Section, Progress, Toggle } from '../components/ui.jsx';
 
@@ -29,6 +29,8 @@ export default function Author() {
   const [publishing, setPublishing] = useState(false);
   const [releases, setReleases] = useState([]);
   const [showAll, setShowAll] = useState(false);
+  const [scanP, setScanP] = useState(null);
+  useEffect(() => on('scan-progress', setScanP), []);
   const optional = new Set(settings.authorOptional || []);
 
   const loadReleases = () => call('pack:releases').then(setReleases).catch(() => {});
@@ -81,7 +83,7 @@ export default function Author() {
         <div className="grow" />
         <button className="btn ghost" onClick={scan} disabled={loading}><Icon name="refresh" /> {loading ? t('Сканирую…') : t('Пересканировать')}</button>
       </div>
-      {progress && <Progress p={progress} />}
+      {(progress || scanP) && <Progress p={progress || scanP} />}
 
       <div className="author-grid">
         <Section title={t('Локальные изменения')} icon="layers" right={changes && <span className="muted small">{changes.files.length} {t('файлов')}, {fmtBytes(changes.totalSize)}</span>}>

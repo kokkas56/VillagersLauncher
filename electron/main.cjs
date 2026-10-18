@@ -145,7 +145,9 @@ handle('pack:info', async () => {
   };
 });
 handle('pack:releases', () => pack.listReleases());
-handle('pack:changes', () => pack.localChanges(progress));
+handle('pack:changes', async () => {
+  try { return await pack.localChanges((p) => send('scan-progress', p)); } finally { send('scan-progress', null); }
+});
 handle('pack:publish', async (data) => {
   if (busy) throw new Error('Лаунчер уже чем-то занят');
   busy = true;
