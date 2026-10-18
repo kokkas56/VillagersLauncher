@@ -114,7 +114,7 @@ function snapshot() {
     active: true, role: room.role, name: room.name, mode: room.mode, status: room.status, error: room.error || null,
     brokers: room.sig ? room.sig.online() : 0, brokersTotal: room.brokers.length,
     port: room.port || null, target: room.role === 'host' ? room.targetDesc : null,
-    host: room.hostInfo || null, route: room.route || null,
+    host: room.hostInfo || null, route: room.route || null, notice: room.notice || null,
     peers: room.role === 'host' ? [...room.peers.values()].map((p) => ({ id: p.id, nick: p.nick, state: p.state, route: p.route, conns: p.conns })) : [],
     stats: room.stats, log: room.log.slice(-60)
   };
@@ -133,6 +133,27 @@ function lanPortFromFile(gameDir) {
     if (j && j.port && Date.now() - (j.at || 0) < 12 * 3600e3) return j.port;
   } catch (_) {}
   return null;
+}
+
+// порт открытого мира — из лога игры («Started serving on 51234» после «Открыть для сети»)
+function lanPortFromLog(gameDir) {
+  try {
+    const f = path.join(gameDir, 'logs', 'latest.log');
+    const st = fs.statSync(f);
+    const fd = fs.openSync(f, 'r');
+    const len = Math.min(st.size, 1024 * 1024);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, st.size - len);
+    fs.closeSync(fd);
+    const text = buf.toString('utf8');
+    const all = [...text.matchAll(/Started serving on (\d+)/g)];
+    if (!all.length) return null;
+    const last = all[all.length - 1];
+    // мир закрыт или игра вышла после этого — порт уже не тот
+    const after = text.slice(last.index);
+    if (/Stopping server|Stopping!|Saving worlds/.test(after.split('\n').slice(1).join('\n'))) return null;
+    return Number(last[1]);
+  } catch (_) { return null; }
 }
 
 function startLanSniffer(r) {
@@ -157,7 +178,7 @@ function startLanSniffer(r) {
 
 function hostTarget(r) {
   if (r.mode === 'server') return r.serverPort;
-  const f = lanPortFromFile(r.gameDir);
+  const f = lanPortFromFile(r.gameDir) || lanPortFromLog(r.gameDir);
   if (f) return f;
   if (r.lanPort && Date.now() - (r.lanSeen || 0) < 20000) return r.lanPort;
   return null;
@@ -206,18 +227,30 @@ function onHostMsg(r, m) {
       else if (st === 'disconnected' || st === 'closed') { if (p.state === 'connected') log(`${p.nick} отключился`); p.state = st; }
       push();
     };
+    const tell = (text) => { try { if (p.ctl && p.ctl.readyState === 'open') p.ctl.send(JSON.stringify({ t: 'err', text })); } catch (_) {} };
     p.pc.ondatachannel = (e) => {
       const dc = e.channel;
       if (dc.label === 'ctl') return;
       const target = hostTarget(r);
-      if (!target) { try { dc.close(); } catch (_) {} log(`${p.nick} пытается зайти, но мир ещё не открыт для сети`); return; }
+      if (!target) {
+        try { dc.close(); } catch (_) {}
+        const why = r.mode === 'server' ? 'Сервер сборки у хозяина не запущен' : 'Хозяин ещё не открыл мир для сети (Esc → «Открыть для сети»)';
+        log(`${p.nick} пытается зайти, но ${r.mode === 'server' ? 'сервер не запущен' : 'мир ещё не открыт для сети'}`);
+        tell(why);
+        return;
+      }
       const sock = net.connect({ host: '127.0.0.1', port: target });
+      sock.once('error', (err) => {
+        const why = r.mode === 'server' ? `Сервер сборки у хозяина не отвечает (порт ${target})` : `Мир хозяина не отвечает (порт ${target}) — открой его для сети заново`;
+        log(why + ': ' + err.code);
+        tell(why);
+      });
       p.conns++;
       sock.on('close', () => { p.conns = Math.max(0, p.conns - 1); push(); });
       pipe(sock, dc, r.stats);
       push();
     };
-    p.pc.createDataChannel('ctl');
+    p.ctl = p.pc.createDataChannel('ctl');
     p.pc.createOffer().then((o) => p.pc.setLocalDescription(o)).then(() => {
       r.sig.pub(to, { t: 'offer', from: 'host', session: m.session, sdp: p.pc.localDescription.toJSON(), mode: r.mode, host: r.nick });
     }).catch((e) => log('offer: ' + e.message));
@@ -306,6 +339,12 @@ function onGuestMsg(r, m) {
       }
       push();
     };
+    pc.ondatachannel = (e) => {
+      if (e.channel.label !== 'ctl') return;
+      e.channel.onmessage = (ev) => {
+        try { const msg = JSON.parse(String(ev.data)); if (msg.t === 'err') { r.notice = msg.text; log('Хозяин: ' + msg.text); } } catch (_) {}
+      };
+    };
     pc.setRemoteDescription(m.sdp).then(() => pc.createAnswer()).then((a) => pc.setLocalDescription(a)).then(() => {
       r.sig.pub(`${B}/host`, { t: 'answer', from: r.me, session: r.session, sdp: pc.localDescription.toJSON() });
     }).catch((e) => log('answer: ' + e.message));
@@ -323,6 +362,7 @@ async function openLocal(r) {
   r.server = net.createServer((sock) => {
     if (!r.pc || r.pc.connectionState !== 'connected') { sock.destroy(); return; }
     const dc = r.pc.createDataChannel('c' + (++n), { ordered: true });
+    r.notice = null;
     r.conns++;
     sock.on('close', () => { r.conns = Math.max(0, r.conns - 1); push(); });
     pipe(sock, dc, r.stats);

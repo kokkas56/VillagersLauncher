@@ -33,6 +33,7 @@ function RoomCard({ st, t, toast, account, openAccounts, roomId, reload }) {
         <button className="btn sm danger" onClick={remove} title={t('Выключить и убрать из списка')}><Icon name="trash" size={12} /></button>
       </div>
       {st.error && <p className="warn-text small">{t(st.error)}</p>}
+      {st.notice && <p className="warn-text small">⚠ {t(st.notice)}</p>}
       {host ? (
         <>
           <p className="muted small">{t('Что открыто')}: <b>{st.target}</b></p>
