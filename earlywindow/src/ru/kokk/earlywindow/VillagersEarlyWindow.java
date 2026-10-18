@@ -54,6 +54,29 @@ public class VillagersEarlyWindow extends DisplayWindow {
         return r;
     }
 
+    /**
+     * The stock implementation calls {@code getClass().getModule().addReads(...)}: with a subclass that is OUR module,
+     * and Module.addReads may only be called from inside the module itself, so FML's code would throw
+     * IllegalCallerException. Do the same work from here instead.
+     */
+    @Override
+    public void updateModuleReads(ModuleLayer layer) {
+        Module neoforge = layer.findModule("neoforge").orElseThrow();
+        VillagersEarlyWindow.class.getModule().addReads(neoforge);
+        try {
+            Class<?> overlay = Class.forName(neoforge, "net.neoforged.neoforge.client.loading.NeoForgeLoadingOverlay");
+            java.lang.reflect.Method factory = null;
+            for (java.lang.reflect.Method m : overlay.getMethods()) {
+                if (java.lang.reflect.Modifier.isStatic(m.getModifiers()) && m.getName().equals("newInstance")) factory = m;
+            }
+            Field f = DisplayWindow.class.getDeclaredField("loadingOverlay");
+            f.setAccessible(true);
+            f.set(this, factory);
+        } catch (Throwable t) {
+            throw new IllegalStateException("VillagersEarlyWindow: could not link the NeoForge loading overlay", t);
+        }
+    }
+
     /** Runs on the early window's own (single) render thread, so it never races the painter. */
     private void scheduleCustomise(ScheduledExecutorService exec, int attempt) {
         exec.schedule(() -> {
