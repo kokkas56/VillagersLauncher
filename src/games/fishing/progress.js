@@ -2,6 +2,7 @@
 // Корень сохранения: { v, p: настоящий прогресс, authorSave: прогресс режима автора }.
 import { SPECIES, LAKES, LEGENDS, ALBUM_TOTAL, UPGRADES, upgradeCost, xpNeed, MAX_LVL } from './data.js';
 import { rewardById } from '../rewards.js';
+import { sanitizeEv } from './meta.js';
 
 export const SAVE_V = 1;
 export const AUTHOR_SPEED = 40;
@@ -21,7 +22,7 @@ export function albumCount(p) {
 }
 
 export function freshProgress() {
-  return { xp: 0, lvl: 1, coins: 0, lake: 0, spot: 0, alb: {}, up: [0, 0, 0, 0, 0], tc: 0, gold: 0, best: 0, d: null };
+  return { xp: 0, lvl: 1, coins: 0, lake: 0, spot: 0, alb: {}, up: [0, 0, 0, 0, 0], tc: 0, gold: 0, best: 0, d: null, ev: null };
 }
 const num = (v, d, lo, hi) => { v = Number(v); if (!Number.isFinite(v)) return d; return v < lo ? lo : v > hi ? hi : v; };
 function sanitize(o) {
@@ -47,6 +48,7 @@ function sanitize(o) {
     while (p.d.c.length < 3) p.d.c.push(0);
     if (p.d.l.length !== 3) p.d = null;
   }
+  p.ev = sanitizeEv(o.ev);
   // уровень по опыту (самолечение)
   while (p.lvl < MAX_LVL && p.xp >= xpNeed(p.lvl)) { p.xp -= xpNeed(p.lvl); p.lvl++; }
   if (p.lake > 0 && p.lvl < LAKES[p.lake].lvl) p.lake = 0;
@@ -117,6 +119,9 @@ export function createProgress(api) {
     get p() { return p; },
     get author() { return author; },
     events,
+    bonus: 1, // множитель монет от мастерства
+    push,
+    onDaily: null,
     load() {
       if (variant) { p = freshProgress(); p.lake = Math.max(0, Math.min(LAKES.length - 1, variant - 1)); p.lvl = LAKES[p.lake].lvl; author = false; return p; }
       let o = null;
@@ -175,7 +180,7 @@ export function createProgress(api) {
       const sizeK = 0.6 + 0.8 * (size / Math.max(1, avg)) * 0.5;
       const TIERS_XP = [4, 10, 26, 60, 300], TIERS_C = [3, 8, 22, 60, 400];
       const m = P.mul();
-      const coins = Math.max(1, Math.round(TIERS_C[T] * L.coin * sizeK)) * m;
+      const coins = Math.max(1, Math.round(TIERS_C[T] * L.coin * sizeK * P.bonus)) * m;
       const xp = Math.max(1, Math.round(TIERS_XP[T] * L.xp)) * m;
       const a = p.alb[sp.id] || (p.alb[sp.id] = [0, 0]);
       const isNew = a[0] === 0;
@@ -218,6 +223,7 @@ export function createProgress(api) {
           const r = dailyReward(p) * P.mul();
           p.coins += r;
           push('Задание! +' + r, '#8af0a8', 4);
+          if (P.onDaily) P.onDaily();
           P.addXp(Math.round(xpNeed(p.lvl) * 0.08));
         }
       }

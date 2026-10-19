@@ -14,6 +14,10 @@ import {
   sprite, drawSprite, drawSilhouette, SPECIES, LAKES, TIERS, SPOT_NAMES, BOOT, CHEST, MINNOW, UPGRADES, xpNeed, ALBUM_TOTAL, MAX_LVL
 } from './fishing/data.js';
 import { createProgress, albumCount, upgradePrice } from './fishing/progress.js';
+import { createMeta } from './fishing/meta.js';
+import { seasonOf, eventItem, eventGoal } from './fishing/season.js';
+import { GAME_NAMES, rewardById } from './rewards.js';
+const rewardName = (id) => { const r = rewardById(id); return r ? r.name : id; };
 
 const W = 320;
 const H = 180;
@@ -54,8 +58,14 @@ const IC = {
   check: sprite({ a: '#60e070' }, ['....a', '...a.', 'a.a..', '.a...']),
   lock: sprite({ a: '#8a8070', b: '#5a5048' }, ['.aa.', 'a..a', 'bbbb', 'bbbb']),
   flask: sprite({ a: '#c0c8d0', b: '#e05a40' }, ['.aa.', 'abba', 'abba', 'abba', '.aa.']),
-  gold: sprite({ a: '#ffd34a', b: '#c8901e' }, ['.a.', 'aab', '.b.'])
+  gold: sprite({ a: '#ffd34a', b: '#c8901e' }, ['.a.', 'aab', '.b.']),
+  ev: sprite({ a: '#c8a0ff', b: '#ffffff', c: '#7a50c0' }, ['..a..', '.aba.', 'aabaa', '.cac.', 'c...c'])
 };
+// поплавки мастерства: каждые 5 уровней — новый цвет (на забег выбирается случайный из открытых)
+const BOB_COLS = ['#e04040', '#3a8ae0', '#40c060', '#c060e0', '#ff9a2a', '#f0f0f0'];
+const BAND_GOLD = [230, 190, 60];
+// опыт мастерства за улов по редкости (× множитель озера)
+const XP_TIER = [2, 4, 10, 25, 150];
 const UPG_ICON = [
   sprite({ a: '#a8723e', b: '#7a4e2a' }, ['......a', '.....a.', '....a..', '...a...', '..a....', '.b.....', 'b......']),
   sprite({ a: '#e8e8f0', b: '#9aa0b0' }, ['.aaa.', 'a...a', 'a.b.a', 'a...a', '.aaa.']),
@@ -66,6 +76,7 @@ const UPG_ICON = [
 // подсказки снастей в две строки
 const HINTS = UPGRADES.map((u) => { const i = u.hint.indexOf(' '); return i > 0 ? [u.hint.slice(0, i), u.hint.slice(i + 1)] : [u.hint, '']; });
 const DIGIT_RE = /^(Digit|Numpad)[0-9]$/;
+const PANELS = ['album', 'shop', 'map', 'event'];
 const DAILY_LABEL = ['РЫБЫ', '', 'РЕДКИЕ', 'МОНЕТЫ', 'ПОДРЯД', 'НОЧЬЮ', ''];
 const DAILY_ICON = [IC.fish, IC.fish, IC.star, IC.coin, IC.chain, IC.moon, IC.pin];
 
@@ -106,23 +117,25 @@ const HAT_C = [214, 180, 96], BAND_C = [160, 60, 50];
 const HAIR_C = [96, 60, 34];
 const DUCK_BODY = [150, 110, 70], DUCK_HEAD = [40, 110, 60], DUCK_WHITE = [230, 226, 210], DUCKLING = [240, 214, 90];
 const DUCK_BEAK = [240, 150, 40];
+const RUB_Y = [255, 216, 74];
 const DRAGON = [60, 150, 220];
 const ROCK_C = [110, 112, 120], ROCK_D = [40, 42, 52];
 const SNAG_C = [80, 60, 44], SNAG_D = [30, 24, 24];
 const CAPE_OLD = [190, 160, 60], CAPE_YOU = [60, 70, 90];
 const FOG_C = [220, 226, 230];
+const RGB_RB = [[255, 96, 96], [255, 176, 80], [255, 232, 96], [112, 224, 112], [96, 168, 255], [160, 112, 240]];
 
 // панели
 const PX = 16, PY = 16, PW = 288, PH = 150;
 const BTN_Y = 165;
-const BTN_X = [4, 19, 34];
+const BTN_X = [4, 19, 34, 49];
 
 export default {
   id: 'fishing',
   title: 'Рыбалка',
   sceneTitle: 'Озеро',
   desc: 'Бесконечная рыбалка: 4 озера, 28 видов рыб, альбом, снасти и задания дня.',
-  controls: 'Пробел / мышь: держи — сила заброса, клик — подсечка, держи — подмотка · Tab альбом · B лавка · M карта',
+  controls: 'Пробел / мышь: держи — сила заброса, клик — подсечка, держи — подмотка · Tab альбом · B лавка · M карта · E событие',
   mount(canvas, api) {
     canvas.width = W;
     canvas.height = H;
@@ -144,6 +157,20 @@ export default {
     // ---------- прогресс ----------
     const P = createProgress(api);
     P.load();
+    // ---------- событие месяца, мастерство, турнир ----------
+    const MT = createMeta(api, { getP: () => P.p, push: P.push, isAuthor: () => P.author, variant, mul: () => P.mul(), goal: eventGoal });
+    let SEA = seasonOf(MT.id);
+    let EVI = eventItem(MT.id);
+    const applyMeta = () => {
+      const was = SEA;
+      SEA = seasonOf(MT.id);
+      EVI = eventItem(MT.id);
+      P.bonus = MT.coinMul();
+      if (!variant) { MT.chal(); MT.checkReward(true); }
+      return was !== SEA;
+    };
+    applyMeta();
+    P.onDaily = () => MT.addXp(15);
 
     // ---------- мир ----------
     const treeline = new Int16Array(Math.ceil(W / 3));
@@ -203,6 +230,32 @@ export default {
     };
     buildScene(P.p.lake, P.p.spot);
 
+    // ---------- украшения события месяца (пулы — без выделений в кадре) ----------
+    const fall = [];
+    for (let i = 0; i < 40; i++) fall.push({ ef: 1, x: rand() * W, y: rand() * H, v: 8 + rand() * 10, p: rand() * 6, c: i % 3 });
+    const deco = []; // на воде: свечи, льдины, венки, огоньки, призрак
+    for (let i = 0; i < 6; i++) deco.push({ ed: 1, x: 0.5, y: 0.5, w: 4, v: 0.5, p: rand() * 6 });
+    const birds = []; // грачи / летучие мыши
+    for (let i = 0; i < 5; i++) birds.push({ eb: 1, x: rand() * W, y: 10 + rand() * 40, v: 10 + rand() * 8, p: rand() * 6 });
+    const meteors = [];
+    for (let i = 0; i < 3; i++) meteors.push({ em: 1, on: false, x: 0.5, y: 0.5, vx: 0.5, vy: 0.5, t: 0.5, big: false });
+    const initDecor = () => {
+      const id = MT.id;
+      for (let i = 0; i < deco.length; i++) {
+        const d = deco[i];
+        d.p = rand() * 6;
+        d.x = 10 + rand() * 200;
+        d.y = HORIZON + 10 + rand() * 62;
+        if (id === 'thaw') { d.w = 5 + Math.floor(rand() * 9); d.v = 2 + rand() * 2; }
+        else if (id === 'kupala' || id === 'yule') { d.y = 108 + rand() * 60; d.w = 5; d.v = 1 + rand() * 1.5; }
+        else { d.w = 2; d.v = 3 + rand() * 4; }
+      }
+      for (let i = 0; i < birds.length; i++) { const b = birds[i]; b.x = rand() * W; b.y = 8 + rand() * 40; }
+      for (let i = 0; i < meteors.length; i++) meteors[i].on = false;
+    };
+    initDecor();
+
+
     const parts = [];
     for (let i = 0; i < 48; i++) parts.push({ fp: 1, on: false, x: 0.5, y: 0.5, vx: 0.5, vy: 0.5, life: 0.5, c: '#fff' });
     const puff = (x, y, n, c, sp = 20) => {
@@ -252,7 +305,8 @@ export default {
       sky: 0, clock: 0, hud: 0, jumpT: 5 + rand() * 8,
       wx: 0, wxT: 60, cloudK: 0, rainK: 0,
       panel: null, sel: 0, msel: 0, fade: 0, fadeTo: -1, fadeSpot: 0,
-      toast: null, toastT: 0
+      toast: null, toastT: 0,
+      evRun: 0, evT: 60, bobC: BOB_COLS[0], metT: 3, boltT: 3, boltX: 100, flash: 0, rainMem: 0
     };
     {
       const env = getEnv();
@@ -261,7 +315,7 @@ export default {
     }
     const pickWeather = () => {
       const r = rand();
-      const rain = LAKES[scene.lake].rain;
+      const rain = SEA.rain != null ? Math.max(SEA.rain, LAKES[scene.lake].rain) : LAKES[scene.lake].rain;
       g.wx = r < rain ? 2 : r < rain + 0.25 ? 1 : 0;
     };
     pickWeather();
@@ -321,10 +375,10 @@ export default {
     const onKeyDown = (e) => {
       if (!playing()) return;
       const c = e.code;
-      if (c === 'Tab' || c === 'KeyB' || c === 'KeyM' || c === 'KeyI') {
+      if (c === 'Tab' || c === 'KeyB' || c === 'KeyM' || c === 'KeyI' || c === 'KeyE') {
         e.preventDefault();
         if (e.repeat) return;
-        openPanel(c === 'Tab' || c === 'KeyI' ? 'album' : c === 'KeyB' ? 'shop' : 'map');
+        openPanel(c === 'Tab' || c === 'KeyI' ? 'album' : c === 'KeyB' ? 'shop' : c === 'KeyE' ? 'event' : 'map');
         return;
       }
       if (P.author && (c === 'BracketRight' || c === 'BracketLeft')) {
@@ -377,7 +431,7 @@ export default {
       }
       const p = toLocal(e);
       // кнопки HUD
-      for (let i = 0; i < 3; i++) if (inR(p, BTN_X[i] - 1, BTN_Y - 1, 14, 13)) { openPanel(i === 0 ? 'album' : i === 1 ? 'shop' : 'map'); return; }
+      for (let i = 0; i < 4; i++) if (inR(p, BTN_X[i] - 1, BTN_Y - 1, 14, 13)) { openPanel(PANELS[i]); return; }
       if (g.panel) { panelClick(p); return; }
       press();
     };
@@ -511,6 +565,9 @@ export default {
     };
     const pickCatch = (d) => {
       const up = P.p.up;
+      // особый улов события месяца (в испытание)
+      const evc = (P.author ? 0.25 : 0.05) * (SEA.night && (tod() === 2 || g.wx === 2) ? 1.6 : 1);
+      if (!variant && rand() < evc) return EVI;
       const r0 = rand();
       if (r0 < 0.07 * (1 - d * 0.5)) return BOOT;
       if (r0 < 0.07 * (1 - d * 0.5) + 0.025 + d * 0.025) return CHEST;
@@ -540,6 +597,7 @@ export default {
     };
     // улов старика в фоне: обычные виды своего озера, изредка редкая
     const npcPick = () => {
+      if (rand() < 0.08) return EVI;
       const v = rand();
       if (v < 0.14) return BOOT;
       const want = v < 0.97 ? (rand() < 0.75 ? 0 : 1) : 2;
@@ -640,12 +698,13 @@ export default {
         api.sfx('win');
         P.p.best = Math.max(P.p.best, Math.round(g.score));
         P.save();
+        MT.flush();
       } else g.st = 'ready';
     };
 
     const startReel = () => {
       const c = g.catchSp;
-      const t = c.tier < 0 ? 0 : c.tier;
+      const t = c.ev ? 1 : c.tier < 0 ? 0 : c.tier;
       const T = TIERS[t];
       const up = P.p.up;
       const R = g.R;
@@ -679,10 +738,22 @@ export default {
       ctxD.tod = tod(); ctxD.spot = scene.spot; ctxD.streak = g.streak;
       if (c === BOOT) {
         g.score += 1;
+        MT.addXp(0.5);
         P.daily(null, 0, ctxD);
         P.save();
+      } else if (c.ev) {
+        // особый улов события: монеты + шаг испытания
+        const coins = Math.round(12 * LAKES[scene.lake].coin * P.bonus) * P.mul();
+        g.showCoins = coins;
+        g.score += coins;
+        g.evRun++;
+        MT.addXp(6);
+        MT.count(P.mul());
+        P.addCoins(coins, ctxD);
+        g.lastSpr = c.spr;
       } else if (c === CHEST) {
-        const coins = Math.round((20 + rand() * 30) * LAKES[scene.lake].coin) * P.mul();
+        MT.addXp(3);
+        const coins = Math.round((20 + rand() * 30) * LAKES[scene.lake].coin * P.bonus) * P.mul();
         g.showCoins = coins;
         g.score += coins;
         if (rand() < 0.35) { P.p.gold += 3; }
@@ -690,6 +761,7 @@ export default {
       } else {
         const size = Math.round(lerp(c.len[0], c.len[1], Math.pow(rand(), 1.6 - 0.08 * P.p.up[3])));
         const r = P.addCatch(c, size, ctxD);
+        MT.addXp(XP_TIER[c.tier] * LAKES[c.lake].xp + (r.isNew ? 20 : 0));
         g.showSize = size;
         g.showCoins = r.coins;
         g.showNew = r.isNew;
@@ -814,7 +886,7 @@ export default {
             g.timer = 1.9;
             puff(g.bob.tx, g.bob.ty, 10, '#e8f4ff', 26);
             const t = tierOf(g.show);
-            api.sfx(t >= 2 || g.show === CHEST ? 'win' : g.show === BOOT ? 'click' : 'coin');
+            api.sfx(t >= 2 || g.show === CHEST || g.show.ev ? 'win' : g.show === BOOT ? 'click' : 'coin');
             emote(old, 2, 1.2);
           } else if (g.prog <= 0) {
             g.st = 'miss';
@@ -858,6 +930,8 @@ export default {
       if (from === 'idle') {
         // свежая копия прогресса (могла прийти с другого компьютера)
         P.load();
+        MT.refresh();
+        if (applyMeta()) initDecor();
         if (P.p.lake !== scene.lake || P.p.spot !== scene.spot) buildScene(P.p.lake, P.p.spot);
       }
       if (from === 'wait' || from === 'finish') handOverCatch();
@@ -883,6 +957,9 @@ export default {
       g.streak = 0;
       g.runFish = 0;
       g.caughtN = 0;
+      g.evRun = 0;
+      g.bobC = BOB_COLS[Math.floor(rand() * Math.min(BOB_COLS.length, 1 + Math.floor(MT.lvl / 5)))];
+      P.bonus = MT.coinMul();
       applyUpgrades();
       g.fat = g.fatMax;
       g.st = 'ready';
@@ -896,6 +973,7 @@ export default {
     };
     const startOutro = () => {
       if (g.phase === 'play' || g.phase === 'intro') { P.p.best = Math.max(P.p.best, Math.round(g.score)); P.save(); }
+      MT.flush();
       g.phase = 'outro';
       g.pt = 0;
       held = false;
@@ -936,9 +1014,11 @@ export default {
     const arrived = (a) => Math.abs(a.tx - a.x) <= 0.5;
 
     const updateWorld = (dt) => {
+      const cdir = MT.id === 'jest' ? -1 : 1; // «неделя шуток»: облака плывут обратно
       for (let i5 = 0; i5 < clouds.length; i5++) { const c = clouds[i5];
-        c.x += c.v * dt;
+        c.x += c.v * dt * cdir;
         if (c.x > W + 10) c.x = -c.w - 10;
+        else if (c.x < -c.w - 12) c.x = W + 8;
       }
       for (let i = 0; i < fogs.length; i++) { const f = fogs[i]; f.x += f.v * dt; if (f.x > W + 20) f.x = -f.w - 20; }
       for (let i6 = 0; i6 < parts.length; i6++) { const p = parts[i6];
@@ -1012,10 +1092,63 @@ export default {
       }
     };
 
+    // ---------- украшения события: движение ----------
+    const updateDecor = (dt) => {
+      const id = MT.id;
+      if (SEA.fall) {
+        const snow = SEA.fall === 'snow';
+        const n = snow ? fall.length : 22;
+        for (let i = 0; i < n; i++) {
+          const f = fall[i];
+          f.y += f.v * (snow ? 1 : 0.8) * dt;
+          f.x += (Math.sin(g.t * (snow ? 1.2 : 2.2) + f.p) * (snow ? 6 : 12) - (snow ? 2 : 7)) * dt;
+          if (f.y > H + 2 || f.x < -4) { f.y = -2 - rand() * 10; f.x = rand() * (W + 20); }
+        }
+      }
+      if (id === 'thaw' || id === 'kupala' || id === 'yule') {
+        for (let i = 0; i < deco.length; i++) { const d = deco[i]; d.x += d.v * dt; if (d.x > 226) { d.x = -d.w - rand() * 30; d.y = (id === 'thaw' ? HORIZON + 10 : 108) + rand() * 60; } }
+      }
+      if (id === 'thaw' || id === 'pumpkin') {
+        for (let i = 0; i < birds.length; i++) { const b = birds[i]; b.x += b.v * dt; if (b.x > W + 10) { b.x = -10 - rand() * 80; b.y = 8 + rand() * 40; } }
+      }
+      if (id === 'starfall') {
+        g.metT -= dt;
+        if (g.metT <= 0) {
+          g.metT = g.sky > 0.8 ? 1.2 + rand() * 3.5 : 6 + rand() * 8;
+          for (let i = 0; i < meteors.length; i++) { const m = meteors[i];
+            if (m.on) continue;
+            m.on = true; m.t = 0; m.big = rand() < 0.22;
+            m.x = 60 + rand() * 250; m.y = 2 + rand() * 18;
+            m.vx = -(50 + rand() * 50); m.vy = m.big ? 34 + rand() * 12 : 18 + rand() * 18;
+            break;
+          }
+        }
+        for (let i = 0; i < meteors.length; i++) { const m = meteors[i];
+          if (!m.on) continue;
+          m.t += dt; m.x += m.vx * dt; m.y += m.vy * dt;
+          if (m.big ? m.y >= HORIZON + 8 : m.t > 0.9) {
+            m.on = false;
+            if (m.big && m.x > 0 && m.x < 226) { puff(m.x, m.y, 8, '#e8dcff', 20); puff(m.x, m.y, 4, '#ffffff', 12); }
+          }
+        }
+      }
+      if (id === 'storm') {
+        if (g.rainK > 0.6) {
+          g.rainMem = 40;
+          g.boltT -= dt;
+          if (g.boltT <= 0) { g.boltT = 4 + rand() * 8; g.flash = 0.3; g.boltX = 20 + Math.floor(rand() * 200); }
+        } else if (g.rainK < 0.15 && g.rainMem > 0) g.rainMem -= dt;
+      }
+      if (g.flash > 0) g.flash -= dt;
+      if (id === 'kupala' && g.sky > 0.7 && rand() < dt * 3) puff(rand() < 0.5 ? 62 : 172, HORIZON - 6, 1, '#ffc060', 8);
+    };
+
     const update = (dt) => {
       g.t += dt;
       g.pt += dt;
       updateWorld(dt);
+      updateDecor(dt);
+      MT.tick(dt, g.phase === 'play' && !g.panel);
 
       // небо: в фоне — по реальным часам, в игре — свои сутки
       const env = getEnv();
@@ -1092,6 +1225,9 @@ export default {
           g.phase = 'idle'; g.pt = 0;
         }
       } else if (g.phase === 'idle') {
+        // смена месяца, пока висит фон
+        g.evT -= dt;
+        if (g.evT <= 0) { g.evT = 60; MT.refreshEvent(); if (applyMeta()) initDecor(); }
         if (holder === old && atSpot(old)) {
           if (!old.sit) old.sit = true;
           npcUpdate(dt);
@@ -1197,7 +1333,7 @@ export default {
         ctx.fillStyle = rgbMix(HAT_C, SHADE, sd);
         vr(-3 + shake, yy - 1, 8, 1);
         vr(-1 + shake, yy - 3, 4, 2);
-        ctx.fillStyle = rgbMix(BAND_C, SHADE, sd);
+        ctx.fillStyle = rgbMix(MT.lvl >= 10 ? BAND_GOLD : BAND_C, SHADE, sd);
         vr(-1 + shake, yy - 2, 4, 1);
       } else {
         ctx.fillStyle = rgbMix(HAIR_C, SHADE, sd);
@@ -1225,7 +1361,7 @@ export default {
       x = Math.round(x); y = Math.round(y);
       ctx.fillStyle = '#f4f0e8';
       ctx.fillRect(x - 1, y - 2, 3, 2);
-      ctx.fillStyle = g.goldCast && g.phase === 'play' ? '#ffd34a' : '#e04040';
+      ctx.fillStyle = g.goldCast && g.phase === 'play' ? '#ffd34a' : holder === you ? g.bobC : '#e04040';
       ctx.fillRect(x - 1, y, 3, 2);
       ctx.fillStyle = '#2a2420';
       ctx.fillRect(x, y - 3, 1, 1);
@@ -1271,20 +1407,22 @@ export default {
       const bob = Math.round(Math.sin(g.t * 2 + x * 0.1) * 0.5);
       const d = duck.dir;
       const sd = dusk * 0.5;
+      const rub = MT.id === 'jest'; // резиновые уточки
+      const DB = rub ? RUB_Y : DUCK_BODY, DH = rub ? RUB_Y : DUCK_HEAD, DW = rub ? RUB_Y : DUCK_WHITE;
       ctx.fillStyle = 'rgba(230,245,255,0.35)';
       ctx.fillRect(x - d * 8, y + 2, 3, 1);
       ctx.fillRect(x - d * 12, y + 3, 3, 1);
       if (duck.dive > 0 && duck.dive < 1.4) {
-        ctx.fillStyle = rgbMix(DUCK_BODY, SHADE, sd);
+        ctx.fillStyle = rgbMix(DB, SHADE, sd);
         ctx.fillRect(x - 1, y - 1 + bob, 3, 2);
-        ctx.fillStyle = rgbMix(DUCK_WHITE, SHADE, sd);
+        ctx.fillStyle = rgbMix(DW, SHADE, sd);
         ctx.fillRect(x, y - 2 + bob, 1, 1);
       } else {
-        ctx.fillStyle = rgbMix(DUCK_BODY, SHADE, sd);
+        ctx.fillStyle = rgbMix(DB, SHADE, sd);
         ctx.fillRect(x - 3, y - 1 + bob, 7, 3);
-        ctx.fillStyle = rgbMix(DUCK_WHITE, SHADE, sd);
+        ctx.fillStyle = rgbMix(DW, SHADE, sd);
         ctx.fillRect(x - 3 + (d > 0 ? 0 : 5), y - 1 + bob, 2, 1);
-        ctx.fillStyle = rgbMix(DUCK_HEAD, SHADE, sd);
+        ctx.fillStyle = rgbMix(DH, SHADE, sd);
         ctx.fillRect(x + d * 3 - (d > 0 ? 0 : 1), y - 4 + bob, 2, 3);
         ctx.fillStyle = rgbMix(DUCK_BEAK, SHADE, sd);
         ctx.fillRect(x + d * 5, y - 3 + bob, 1, 1);
@@ -1325,18 +1463,358 @@ export default {
       ctx.fillRect(0, HORIZON - 2, W, 2);
     };
 
+    // ---------- украшения события: отрисовка ----------
+    const RAINBOW = ['#ff6060', '#ffb050', '#ffe860', '#70e070', '#60a8ff', '#a070f0'];
+    const flame = (x, y, k) => {
+      const f = 0.7 + 0.3 * Math.sin(g.t * 11 + x) * Math.sin(g.t * 4.3 + y);
+      ctx.fillStyle = rgbStr(255, 150 + 60 * f, 50);
+      ctx.fillRect(x - 1, y - 2, 3, 2);
+      ctx.fillStyle = rgbStr(255, 230, 120);
+      ctx.fillRect(x, y - 3 - (f > 0.85 ? 1 : 0), 1, 2);
+      ctx.fillStyle = rgbStr(255, 170, 70, 0.04 + 0.08 * k * f);
+      ctx.fillRect(x - 3, y - 6, 7, 7);
+    };
+    const lantern = (x, y, k) => {
+      ctx.fillStyle = rgbMix([255, 138, 42], SHADE, 0.2);
+      ctx.fillRect(x, y - 4, 6, 4);
+      ctx.fillRect(x + 1, y - 5, 4, 1);
+      ctx.fillStyle = '#4a7a2a';
+      ctx.fillRect(x + 2, y - 6, 1, 1);
+      const f = 0.75 + 0.25 * Math.sin(g.t * 9 + x);
+      ctx.fillStyle = rgbStr(255, 230 * f, 90);
+      ctx.fillRect(x + 1, y - 3, 1, 1);
+      ctx.fillRect(x + 4, y - 3, 1, 1);
+      ctx.fillRect(x + 1, y - 1, 4, 1);
+      if (k > 0.1) { ctx.fillStyle = rgbStr(255, 160, 60, 0.07 * k * f); ctx.fillRect(x - 2, y - 7, 10, 9); }
+    };
+    // небо: радуга, молния, метеоры, птицы
+    const drawSkyDeco = (s, night) => {
+      const id = MT.id;
+      if (id === 'storm' && g.rainMem > 0 && g.rainK < 0.3 && s < 1.3) {
+        const a = Math.min(1, g.rainMem / 6) * (1 - g.rainK * 3.3) * 0.45;
+        if (a > 0.02) {
+          for (let b = 0; b < 6; b++) {
+            ctx.fillStyle = rgbMix(RGB_RB[b], WHITE, 0, a);
+            const r = 74 - b * 2;
+            for (let dx = -r; dx <= r; dx += 2) {
+              const y = Math.round(HORIZON + 6 - Math.sqrt(r * r - dx * dx));
+              if (y < HORIZON - 3) ctx.fillRect(176 + dx, y, 2, 2);
+            }
+          }
+        }
+      }
+      if (id === 'storm' && g.flash > 0.12) {
+        ctx.fillStyle = '#fffbe0';
+        let x = g.boltX;
+        for (let i = 0; i < 7; i++) {
+          const y0 = 6 + i * 11;
+          const nx = x + Math.round(Math.sin(g.boltX * 0.37 + i * 2.1) * 4);
+          ctx.fillRect(Math.min(x, nx), y0, Math.abs(nx - x) + 1, 1);
+          ctx.fillRect(nx, y0, 1, 11);
+          x = nx;
+        }
+      }
+      if (id === 'starfall') {
+        for (let i = 0; i < meteors.length; i++) { const m = meteors[i];
+          if (!m.on || m.y >= HORIZON - 1) continue;
+          const a = m.big ? 1 : Math.max(0, 1 - m.t / 0.9);
+          for (let k = 0; k < (m.big ? 9 : 6); k++) {
+            const y = Math.round(m.y - m.vy * 0.012 * k);
+            if (y >= HORIZON - 1) continue;
+            ctx.fillStyle = rgbStr(m.big ? 255 : 240, m.big ? 210 - k * 10 : 236, m.big ? 160 : 255, a * (1 - k / 9));
+            ctx.fillRect(Math.round(m.x - m.vx * 0.012 * k), y, k === 0 && m.big ? 2 : 1, 1);
+          }
+        }
+      }
+      if (id === 'thaw' || (id === 'pumpkin' && s > 0.7)) {
+        const bat = id === 'pumpkin';
+        ctx.fillStyle = bat ? rgbStr(30, 20, 34, clamp((s - 0.7) * 2, 0, 1)) : rgbMix([30, 30, 34], SHADE, s * 0.3);
+        for (let i = 0; i < birds.length; i++) { const b = birds[i];
+          if (b.x < -4 || b.x > W + 4) continue;
+          const x = Math.round(b.x), y = Math.round(b.y + Math.sin(g.t * 2 + b.p) * 3);
+          const up = Math.floor(g.t * (bat ? 12 : 6) + b.p) % 2;
+          ctx.fillRect(x, y, 2, 1);
+          ctx.fillRect(x - 2, y - up, 2, 1);
+          ctx.fillRect(x + 2, y - up, 2, 1);
+          if (bat) { ctx.fillRect(x - 3, y + 1 - up * 2, 1, 1); ctx.fillRect(x + 4, y + 1 - up * 2, 1, 1); }
+        }
+      }
+    };
+    // дальний берег: снег, цвет садов, чучело, костры, снопы
+    const drawShoreDeco = (s, dusk, night) => {
+      const id = MT.id;
+      if (id === 'yule' || id === 'newyear' || id === 'maslenitsa' || id === 'thaw') {
+        ctx.fillStyle = rgbMix(WHITE, SHADE, s * 0.35);
+        const st = id === 'thaw' ? 4 : 1;
+        for (let i = 0; i < treeline.length; i += st) ctx.fillRect(i * 3, treeline[i], id === 'thaw' ? 2 : 3, 1);
+        if (id !== 'thaw') ctx.fillRect(0, HORIZON - 2, W, 1);
+      } else if (id === 'bloom') {
+        for (let i = 0; i < treeline.length; i += 2) {
+          ctx.fillStyle = rgbMix(i % 4 ? [255, 180, 210] : WHITE, SHADE, s * 0.4);
+          ctx.fillRect(i * 3 + 1, treeline[i] + 1 + (i % 3), 1, 1);
+        }
+      } else if (id === 'harvest') {
+        for (let k = 0; k < 5; k++) {
+          const x = 30 + k * 34, y = HORIZON - 2;
+          ctx.fillStyle = rgbMix([230, 190, 80], SHADE, dusk);
+          ctx.fillRect(x, y - 3, 5, 3);
+          ctx.fillRect(x + 1, y - 5, 3, 2);
+          ctx.fillRect(x + 2, y - 7, 1, 2);
+          ctx.fillStyle = rgbMix([170, 120, 40], SHADE, dusk);
+          ctx.fillRect(x, y - 2, 5, 1);
+        }
+      }
+      if (id === 'maslenitsa') {
+        const x = 150, y = HORIZON - 2;
+        ctx.fillStyle = rgbMix([110, 76, 40], SHADE, dusk);
+        ctx.fillRect(x, y - 18, 1, 18);
+        ctx.fillRect(x - 4, y - 14, 9, 1);
+        ctx.fillStyle = rgbMix([230, 196, 90], SHADE, dusk);
+        ctx.fillRect(x - 2, y - 13, 5, 7);
+        ctx.fillRect(x - 3, y - 7, 7, 3);
+        ctx.fillStyle = rgbMix([240, 210, 170], SHADE, dusk);
+        ctx.fillRect(x - 1, y - 17, 3, 3);
+        ctx.fillStyle = rgbMix([220, 60, 60], SHADE, dusk);
+        ctx.fillRect(x - 2, y - 18, 5, 1);
+        ctx.fillRect(x - 2, y - 11, 5, 1);
+        if (s > 0.6) { flame(x - 3, y, clamp(s - 0.6, 0, 1)); flame(x + 3, y, clamp(s - 0.6, 0, 1)); }
+      } else if (id === 'kupala') {
+        const k = clamp(s * 0.8, 0.2, 1);
+        for (let b = 0; b < 2; b++) {
+          const x = b ? 172 : 62, y = HORIZON - 2;
+          ctx.fillStyle = rgbMix([90, 60, 40], SHADE, dusk);
+          ctx.fillRect(x - 3, y - 1, 7, 1);
+          flame(x, y - 1, k);
+          flame(x - 2, y, k * 0.6);
+          flame(x + 2, y, k * 0.6);
+        }
+        if (night > 0.2) {
+          const b = 0.6 + 0.4 * Math.sin(g.t * 3);
+          ctx.fillStyle = rgbStr(255, 80, 60, night * b);
+          ctx.fillRect(110, HORIZON - 4, 3, 1);
+          ctx.fillRect(111, HORIZON - 5, 1, 3);
+          ctx.fillStyle = rgbStr(255, 120, 90, night * b * 0.2);
+          ctx.fillRect(107, HORIZON - 8, 9, 8);
+        }
+      } else if (id === 'pumpkin') {
+        const k = clamp((s - 0.6) * 1.5, 0, 1);
+        lantern(36, HORIZON - 1, k);
+        lantern(118, HORIZON - 1, k);
+        lantern(196, HORIZON - 1, k);
+      }
+    };
+    // вода: свечи-гадания, льдины, венки, огоньки, призрак, туман
+    const drawWaterDeco = (s, dusk, night) => {
+      const id = MT.id;
+      if (id === 'thaw') {
+        for (let i = 0; i < deco.length; i++) { const d = deco[i];
+          const x = Math.round(d.x), y = Math.round(d.y);
+          ctx.fillStyle = rgbMix([226, 240, 248], SHADE, s * 0.45);
+          ctx.fillRect(x, y, d.w, 2);
+          ctx.fillRect(x + 1, y - 1, d.w - 2, 1);
+          ctx.fillStyle = rgbMix([150, 190, 220], SHADE, s * 0.45, 0.8);
+          ctx.fillRect(x, y + 2, d.w, 1);
+        }
+      } else if (id === 'yule' || id === 'kupala') {
+        const k = clamp(s * 0.8, 0.25, 1);
+        for (let i = 0; i < (id === 'yule' ? 4 : 5); i++) { const d = deco[i];
+          const x = Math.round(d.x), y = Math.round(d.y + Math.sin(g.t * 1.5 + d.p) * 0.6);
+          if (id === 'yule') {
+            ctx.fillStyle = rgbMix([120, 80, 40], SHADE, dusk);
+            ctx.fillRect(x, y, 4, 2);
+            ctx.fillStyle = '#f0e8d0';
+            ctx.fillRect(x + 1, y - 2, 1, 2);
+            flame(x + 1, y - 2, k * 0.7);
+          } else {
+            ctx.fillStyle = rgbMix([60, 140, 60], SHADE, dusk);
+            ctx.fillRect(x, y, 5, 1);
+            ctx.fillRect(x - 1, y + 1, 7, 1);
+            ctx.fillStyle = rgbMix(i % 2 ? [255, 220, 70] : [230, 70, 70], SHADE, dusk);
+            ctx.fillRect(x + (i % 3), y, 1, 1);
+            ctx.fillRect(x + 4 - (i % 2), y + 1, 1, 1);
+            ctx.fillStyle = '#f0e8d0';
+            ctx.fillRect(x + 2, y - 2, 1, 2);
+            flame(x + 2, y - 2, k * 0.7);
+          }
+        }
+      } else if (id === 'fog' || id === 'pumpkin') {
+        if (id === 'fog') {
+          for (let i = 0; i < deco.length; i++) { const d = deco[i];
+            const b = 0.5 + 0.5 * Math.sin(g.t * 1.7 + d.p * 3);
+            const x = Math.round(d.x + Math.sin(g.t * 0.4 + d.p) * 12), y = Math.round(d.y + Math.sin(g.t * 0.9 + d.p) * 3) - 4;
+            ctx.fillStyle = rgbStr(120, 255, 210, (0.35 + 0.5 * clamp(s, 0, 1)) * b);
+            ctx.fillRect(x, y, 1, 1);
+            ctx.fillStyle = rgbStr(120, 255, 210, 0.12 * b);
+            ctx.fillRect(x - 2, y - 2, 5, 5);
+          }
+        } else if (s > 0.8) {
+          // призрак над водой
+          const d = deco[0];
+          const a = clamp((s - 0.8) * 1.5, 0, 0.6) * (0.7 + 0.3 * Math.sin(g.t * 2));
+          const x = Math.round(30 + ((g.t * 5 + d.p * 30) % 200)), y = Math.round(HORIZON + 12 + Math.sin(g.t * 1.2) * 3);
+          ctx.fillStyle = rgbStr(230, 240, 255, a);
+          ctx.fillRect(x, y, 5, 5);
+          ctx.fillRect(x + 1, y - 1, 3, 1);
+          ctx.fillRect(x + (Math.floor(g.t * 4) % 2), y + 5, 1, 1);
+          ctx.fillRect(x + 3 - (Math.floor(g.t * 4) % 2), y + 5, 1, 1);
+          ctx.fillStyle = rgbStr(20, 20, 40, a);
+          ctx.fillRect(x + 1, y + 1, 1, 1);
+          ctx.fillRect(x + 3, y + 1, 1, 1);
+        }
+      } else if (id === 'newyear' || id === 'maslenitsa') {
+        ctx.fillStyle = rgbMix([226, 238, 246], SHADE, s * 0.4, 0.85);
+        ctx.fillRect(0, HORIZON, W, 2);
+        for (let x = 0; x < W; x += 14) ctx.fillRect(x, HORIZON + 2, 6 + (x % 5), 1);
+      }
+    };
+    // причал: снег, блины, гирлянды, тыквы, ёлка...
+    const drawPierDeco = (s, dusk) => {
+      const id = MT.id;
+      const k = clamp((s - 0.5) * 1.4, 0, 1);
+      if (id === 'yule' || id === 'newyear' || id === 'maslenitsa') {
+        ctx.fillStyle = rgbMix(WHITE, SHADE, s * 0.35);
+        ctx.fillRect(PIER_X, DECK_Y - 1, W - PIER_X, 1);
+        ctx.fillRect(SEAT_X - 2, DECK_Y - 5, 7, 1);
+      }
+      if (id === 'maslenitsa') {
+        ctx.fillStyle = rgbMix([240, 240, 236], SHADE, dusk);
+        ctx.fillRect(255, DECK_Y - 1, 8, 1);
+        ctx.fillStyle = rgbMix([230, 180, 90], SHADE, dusk);
+        ctx.fillRect(256, DECK_Y - 4, 6, 3);
+        ctx.fillStyle = rgbMix([200, 140, 60], SHADE, dusk);
+        ctx.fillRect(256, DECK_Y - 3, 6, 1);
+        ctx.fillStyle = rgbMix([255, 236, 150], SHADE, dusk);
+        ctx.fillRect(258, DECK_Y - 5, 2, 1);
+      } else if (id === 'jest') {
+        ctx.fillStyle = rgbMix(WOOD_C, WOOD_D, dusk);
+        ctx.fillRect(234, DECK_Y - 28, 1, 28);
+        ctx.fillRect(318, DECK_Y - 28, 1, 28);
+        for (let x = 235; x < 318; x += 2) {
+          const t = (x - 234) / 84;
+          const y = DECK_Y - 27 + Math.round(Math.sin(t * Math.PI) * 5);
+          ctx.fillStyle = 'rgba(240,240,240,0.6)';
+          ctx.fillRect(x, y, 2, 1);
+          if ((x - 235) % 6 === 0) {
+            ctx.fillStyle = rgbMix(RGB_RB[((x - 235) / 6) % 6], SHADE, dusk);
+            ctx.fillRect(x, y + 1, 3, 1);
+            ctx.fillRect(x + 1, y + 2, 1, 1);
+          }
+        }
+      } else if (id === 'bloom') {
+        ctx.fillStyle = rgbMix([150, 90, 60], SHADE, dusk);
+        ctx.fillRect(256, DECK_Y - 4, 5, 4);
+        ctx.fillStyle = rgbMix([70, 140, 60], SHADE, dusk);
+        ctx.fillRect(258, DECK_Y - 7, 1, 3);
+        ctx.fillStyle = rgbMix([255, 150, 200], SHADE, dusk);
+        ctx.fillRect(256, DECK_Y - 9, 2, 2);
+        ctx.fillRect(259, DECK_Y - 8, 2, 2);
+        ctx.fillStyle = rgbMix([255, 230, 90], SHADE, dusk);
+        ctx.fillRect(257, DECK_Y - 9, 1, 1);
+        if (s < 1.3) {
+          ctx.fillStyle = '#ffd040';
+          for (let i = 0; i < 2; i++) ctx.fillRect(Math.round(250 + Math.sin(g.t * 2.3 + i * 3) * 9), Math.round(DECK_Y - 12 + Math.sin(g.t * 4.1 + i) * 3), 1, 1);
+        }
+      } else if (id === 'harvest') {
+        ctx.fillStyle = rgbMix(WICK_C, WICK_D, dusk);
+        ctx.fillRect(255, DECK_Y - 4, 7, 4);
+        ctx.fillStyle = rgbMix([216, 58, 42], SHADE, dusk);
+        ctx.fillRect(256, DECK_Y - 6, 2, 2);
+        ctx.fillRect(259, DECK_Y - 6, 2, 2);
+        ctx.fillRect(257, DECK_Y - 7, 2, 1);
+        ctx.fillStyle = rgbMix([230, 190, 80], SHADE, dusk);
+        ctx.fillRect(312, DECK_Y - 5, 5, 5);
+        ctx.fillRect(313, DECK_Y - 8, 3, 3);
+      } else if (id === 'pumpkin') {
+        lantern(234, DECK_Y, k);
+        lantern(311, DECK_Y, k);
+      } else if (id === 'starfall') {
+        ctx.fillStyle = rgbMix([90, 70, 50], SHADE, dusk);
+        ctx.fillRect(256, DECK_Y - 5, 1, 5);
+        ctx.fillRect(260, DECK_Y - 5, 1, 5);
+        ctx.fillRect(258, DECK_Y - 6, 1, 6);
+        ctx.fillStyle = rgbMix([180, 150, 90], SHADE, dusk);
+        ctx.fillRect(254, DECK_Y - 9, 7, 2);
+        ctx.fillRect(253, DECK_Y - 10, 2, 1);
+      } else if (id === 'fog') {
+        ctx.fillStyle = rgbMix(WOOD_C, WOOD_D, dusk);
+        ctx.fillRect(235, DECK_Y - 16, 1, 16);
+        ctx.fillRect(235, DECK_Y - 16, 4, 1);
+        ctx.fillStyle = '#2a2420';
+        ctx.fillRect(237, DECK_Y - 15, 3, 4);
+        ctx.fillStyle = rgbStr(255, 220, 120, 0.6 + 0.4 * k);
+        ctx.fillRect(238, DECK_Y - 14, 1, 2);
+        ctx.fillStyle = rgbStr(255, 210, 120, 0.06 + 0.12 * k);
+        ctx.fillRect(232, DECK_Y - 20, 13, 13);
+      } else if (id === 'thaw') {
+        ctx.fillStyle = rgbMix([200, 230, 250], SHADE, s * 0.4);
+        for (let x = PIER_X + 3; x < W; x += 7) {
+          ctx.fillRect(x, DECK_Y + 5, 1, 2 + (x % 3));
+          const dy = (g.t * 18 + x * 3) % 22;
+          ctx.fillRect(x, DECK_Y + 8 + Math.round(dy), 1, 1);
+        }
+      } else if (id === 'kupala') {
+        ctx.fillStyle = rgbMix([60, 140, 60], SHADE, dusk);
+        ctx.fillRect(301, DECK_Y - 9, 6, 1);
+        ctx.fillStyle = rgbMix([255, 220, 70], SHADE, dusk);
+        ctx.fillRect(302, DECK_Y - 10, 1, 1);
+        ctx.fillStyle = rgbMix([230, 70, 70], SHADE, dusk);
+        ctx.fillRect(305, DECK_Y - 10, 1, 1);
+      }
+      if (id === 'newyear') {
+        // ёлочка в конце причала с гирляндой и подарком
+        const x = 313, y = DECK_Y;
+        ctx.fillStyle = rgbMix([90, 60, 40], SHADE, dusk);
+        ctx.fillRect(x, y - 2, 2, 2);
+        ctx.fillStyle = rgbMix([40, 120, 70], SHADE, dusk * 0.8);
+        for (let r = 0; r < 14; r++) { const w = 1 + ((r % 5) + Math.floor(r / 5) * 2); ctx.fillRect(x + 1 - (w >> 1), y - 16 + r, w, 1); }
+        ctx.fillStyle = '#ffe060';
+        ctx.fillRect(x, y - 18, 2, 2);
+        for (let i = 0; i < 7; i++) {
+          ctx.fillStyle = RAINBOW[(i + Math.floor(g.t * 3)) % 6];
+          ctx.fillRect(x - 3 + ((i * 3) % 8), y - 13 + i * 2, 1, 1);
+        }
+        ctx.fillStyle = rgbMix([224, 72, 72], SHADE, dusk);
+        ctx.fillRect(256, y - 5, 5, 5);
+        ctx.fillStyle = rgbMix([255, 224, 96], SHADE, dusk);
+        ctx.fillRect(258, y - 5, 1, 5);
+        ctx.fillRect(256, y - 3, 5, 1);
+        // гирлянда по столбикам
+        for (let x2 = PIER_X + 2; x2 < 306; x2 += 5) {
+          ctx.fillStyle = RAINBOW[(x2 + Math.floor(g.t * 2)) % 6];
+          ctx.fillRect(x2, DECK_Y + 4 + ((x2 >> 2) % 2), 1, 1);
+        }
+      }
+    };
+    // поверх всего: снег, лепестки, листья, вспышка
+    const drawOverDeco = () => {
+      if (SEA.fall) {
+        const snow = SEA.fall === 'snow';
+        const n = snow ? fall.length : 22;
+        const cols = SEA.fcol;
+        for (let i = 0; i < n; i++) { const f = fall[i];
+          ctx.fillStyle = cols[f.c % cols.length];
+          ctx.fillRect(Math.round(f.x), Math.round(f.y), snow ? (i % 5 === 0 ? 2 : 1) : 2, 1);
+        }
+      }
+      if (g.flash > 0) {
+        ctx.fillStyle = rgbStr(255, 255, 240, clamp(g.flash, 0, 0.3) * 0.8);
+        ctx.fillRect(0, 0, W, H);
+      }
+    };
+
     const draw = () => {
       const s = Math.round(clamp(g.sky, 0, 2) * 128) / 128;
       blendPal(s);
       const dusk = Math.min(1, s * 0.6);
       const night = clamp((s - 1.15) / 0.6, 0, 1) * (1 - g.cloudK * 0.7);
+      const starA = MT.id === 'starfall' ? Math.max(night, clamp((s - 0.75) / 0.6, 0, 1) * (1 - g.cloudK * 0.7)) : night;
       for (let y = 0; y < HORIZON; y += 4) {
         ctx.fillStyle = rgbMix(P3.top, P3.bot, y / HORIZON);
         ctx.fillRect(0, y, W, 4);
       }
-      if (night > 0) {
+      if (starA > 0) {
         for (let i9 = 0; i9 < stars.length; i9++) { const st = stars[i9];
-          const a = night * (0.45 + 0.45 * Math.sin(g.t * 1.4 + st.p));
+          const a = starA * (0.45 + 0.45 * Math.sin(g.t * 1.4 + st.p));
           ctx.fillStyle = rgbStr(255, 250, 230, a);
           ctx.fillRect(st.x, st.y, st.big ? 2 : 1, 1);
         }
@@ -1367,7 +1845,9 @@ export default {
         ctx.fillRect(cx, cy, cw, 4 + Math.round(g.cloudK * 3));
         ctx.fillRect(cx + 4, cy - 2, Math.floor(cw * 0.5), 2);
       }
+      drawSkyDeco(s, night);
       drawTrees(s, dusk);
+      drawShoreDeco(s, dusk, night);
       // вода
       for (let y = HORIZON; y < H; y += 2) {
         ctx.fillStyle = rgbMix(P3.water, P3.deep, (y - HORIZON) / (H - HORIZON));
@@ -1418,11 +1898,13 @@ export default {
         ctx.fillStyle = rgbMix(FLOW_C, FLOW_D, dusk);
         ctx.fillRect(p.x + 2, p.y - 2, 2, 1);
       }
+      drawWaterDeco(s, dusk, night);
       drawDuck(dusk);
-      // туман у старицы
-      if (LOOKS[scene.lake].trees === 'willow') {
+      // туман у старицы (и везде в месяц туманов)
+      if (LOOKS[scene.lake].trees === 'willow' || MT.id === 'fog') {
+        const fa = MT.id === 'fog' ? 0.26 : 0.16;
         for (let i = 0; i < fogs.length; i++) { const f = fogs[i];
-          ctx.fillStyle = rgbMix(FOG_C, SHADE, s * 0.4, 0.16);
+          ctx.fillStyle = rgbMix(FOG_C, SHADE, s * 0.4, fa);
           ctx.fillRect(Math.round(f.x), Math.round(f.y), Math.round(f.w), 5);
           ctx.fillRect(Math.round(f.x) + 10, Math.round(f.y) - 2, Math.round(f.w) - 20, 2);
         }
@@ -1497,6 +1979,7 @@ export default {
         ctx.fillStyle = '#5f8a5a';
         ctx.fillRect(BUCKET_X + 4, DECK_Y - 10, 3, 3);
       }
+      drawPierDeco(s, dusk);
 
       if (old.x >= you.x) { drawPerson(old, true, dusk); drawPerson(you, false, dusk); }
       else { drawPerson(you, false, dusk); drawPerson(old, true, dusk); }
@@ -1554,6 +2037,7 @@ export default {
         const n = Math.round(drops.length * g.rainK);
         for (let i = 0; i < n; i++) { const d = drops[i]; ctx.fillRect(Math.round(d.x), Math.round(d.y), 1, 3); }
       }
+      drawOverDeco();
       // затемнение при переходе
       if (g.fade > 0) {
         ctx.fillStyle = rgbStr(10, 12, 20, g.fade < 1 ? g.fade : 2 - g.fade);
@@ -1624,7 +2108,7 @@ export default {
         const fy = Math.round(py + ph - g.fish * ph) - 2;
         const c = g.catchSp;
         const t = tierOf(c);
-        const fc = c === BOOT ? '#7a5a3a' : c === CHEST ? '#b07a3a' : t >= 0 ? TIERS[t].col : '#e0c050';
+        const fc = c === BOOT ? '#7a5a3a' : c === CHEST ? '#b07a3a' : c.ev ? c.col : t >= 0 ? TIERS[t].col : '#e0c050';
         if (g.fishVis > 0) {
           ctx.fillStyle = '#1a1410';
           ctx.fillRect(px + 3, fy - 1, 9, 6);
@@ -1663,18 +2147,18 @@ export default {
         const cx = 150, cy = 40 - Math.round((1 - pop) * 10);
         const t = tierOf(c);
         box(cx - 52, cy - 17, 104, 58, 0.85);
-        ctx.fillStyle = t >= 0 ? TIERS[t].col : '#a08060';
+        ctx.fillStyle = c.ev ? c.col : t >= 0 ? TIERS[t].col : '#a08060';
         ctx.fillRect(cx - 52, cy - 17, 104, 1);
         ctx.fillRect(cx - 52, cy + 40, 104, 1);
         drawSprite(ctx, sp, cx - Math.round(sp.w * sc / 2), cy + 3 + Math.round(Math.sin(age * 6) * 1) - Math.round(sp.h * sc / 2), sc);
-        if (t >= 2 || c === CHEST) {
+        if (t >= 2 || c === CHEST || c.ev) {
           ctx.fillStyle = '#fff6b0';
           const kk = Math.floor(age * 10) % 4;
           ctx.fillRect(cx - 34 + kk * 20, cy - 10 + (kk % 2) * 22, 1, 3);
           ctx.fillRect(cx - 35 + kk * 20, cy - 9 + (kk % 2) * 22, 3, 1);
         }
         const nw = labelWidth(c.name);
-        shadowLabel(c.name, cx - (nw >> 1), cy + 18, t >= 0 ? TIERS[t].col : '#e0d0b0');
+        shadowLabel(c.name, cx - (nw >> 1), cy + 18, c.ev ? c.col : t >= 0 ? TIERS[t].col : '#e0d0b0');
         if (g.showSize > 0) {
           drawInt(ctx, g.showSize, cx - 46, cy + 30, '#e8e2d4');
           drawLabel(ctx, 'СМ', cx - 46 + intWidth(g.showSize) + 3, cy + 30, '#a89a88');
@@ -1688,6 +2172,11 @@ export default {
         if (g.showNew && Math.floor(age * 4) % 2 === 0) {
           const w2 = labelWidth('НОВЫЙ ВИД!');
           shadowLabel('НОВЫЙ ВИД!', cx - (w2 >> 1), cy - 14, '#ffe070');
+        } else if (c.ev) {
+          const ch = P.p.ev;
+          let x5 = cx - 30;
+          x5 += drawLabel(ctx, 'СОБЫТИЕ', x5, cy - 14, c.col) + 5;
+          if (ch) { x5 += drawInt(ctx, ch.n, x5, cy - 14, '#ffffff') + 1; x5 += drawText(ctx, '/', x5, cy - 14, '#8a7a70') + 1; drawInt(ctx, MT.goal(), x5, cy - 14, '#c8b890'); }
         } else if (t >= 0) {
           const w2 = labelWidth(TIERS[t].name);
           drawLabel(ctx, TIERS[t].name, cx - (w2 >> 1), cy - 14, TIERS[t].col);
@@ -1735,6 +2224,21 @@ export default {
       box(2, 34, labelWidth(LAKES[scene.lake].name) + 6, 15, 0.4);
       drawLabel(ctx, LAKES[scene.lake].name, 5, 36, '#cfe8ff');
       drawLabel(ctx, SPOT_NAMES[scene.spot], 5, 42, '#8fb0c8');
+      // мастерство и турнир недели
+      if (!variant) {
+        box(2, 51, 66, 11, 0.45);
+        const mx = 5 + drawLabel(ctx, 'МАСТЕР', 5, 53, '#c8a0ff') + 3;
+        drawInt(ctx, MT.lvl, mx, 53, '#ffffff');
+        ctx.fillStyle = '#2a2018';
+        ctx.fillRect(5, 59, 60, 1);
+        ctx.fillStyle = '#c8a0ff';
+        ctx.fillRect(5, 59, Math.round(60 * MT.frac), 1);
+        if (MT.tourney) {
+          box(2, 64, 44, 10, 0.55);
+          drawIcon(ctx, 'trophy', 4, 65);
+          drawLabel(ctx, 'ТУРНИР', 13, 67, Math.floor(g.t * 1.5) % 2 ? '#ffd34a' : '#fff0b0');
+        }
+      }
 
       // ---- верх справа: счёт и рекорд ----
       const scoreV = g.phase === 'intro' ? 0 : Math.round(g.score);
@@ -1769,13 +2273,29 @@ export default {
           drawLabel(ctx, lbl, x, y, done ? '#60e070' : '#a8b8c8');
         }
       }
+      // ---- событие месяца ----
+      const ch = P.p.ev;
+      if (!variant && ch && !(inPlay && g.st === 'reel')) {
+        const x0 = W - 104;
+        box(x0 - 2, 55, 104, 11, 0.5);
+        const sp = EVI.spr;
+        drawSprite(ctx, sp, x0 + 8 - (sp.w >> 1), 60 - (sp.h >> 1));
+        let x = x0 + 18;
+        if (ch.done) { drawSprite(ctx, IC.check, x, 58); x += 7; }
+        else {
+          x += drawInt(ctx, ch.n, x, 58, '#e8e2d4') + 1;
+          x += drawText(ctx, '/', x, 58, '#8a7a70') + 1;
+          x += drawInt(ctx, MT.goal(), x, 58, '#c8b890') + 4;
+        }
+        if (x + labelWidth(MT.ev.name) < W - 2) drawLabel(ctx, MT.ev.name, x, 58, ch.done ? '#60e070' : SEA.col);
+      }
       // ---- кнопки ----
       if (inPlay) {
-        for (let i = 0; i < 3; i++) {
-          const on = (i === 0 && g.panel === 'album') || (i === 1 && g.panel === 'shop') || (i === 2 && g.panel === 'map');
+        for (let i = 0; i < 4; i++) {
+          const on = g.panel === PANELS[i];
           box(BTN_X[i] - 1, BTN_Y - 1, 13, 11, on ? 0.9 : 0.55);
           if (on) { ctx.fillStyle = '#ffe070'; ctx.fillRect(BTN_X[i] - 1, BTN_Y + 9, 13, 1); }
-          drawSprite(ctx, i === 0 ? IC.book : i === 1 ? IC.bag : IC.map, BTN_X[i] + 2, BTN_Y + 1);
+          drawSprite(ctx, i === 0 ? IC.book : i === 1 ? IC.bag : i === 2 ? IC.map : IC.ev, BTN_X[i] + 2, BTN_Y + 1);
         }
       }
       // подсказка: держи
@@ -1899,6 +2419,8 @@ export default {
           }
         }
         drawLabel(ctx, 'ЗОЛОТАЯ НАЖИВКА - ЗА ВСЕ ЗАДАНИЯ ДНЯ', PX + 6, PY + PH - 12, '#8a7a70');
+      } else if (g.panel === 'event') {
+        drawEventPanel();
       } else if (g.panel === 'map') {
         panelFrame('КАРТА');
         for (let l = 0; l < LAKES.length; l++) {
@@ -1940,7 +2462,85 @@ export default {
       }
     };
 
-    if (typeof api._debug === 'function') { try { api._debug({ g, P, scene }); } catch (e) { /* тесты */ } }
+    // ---------- панель события и мастерства ----------
+    const TX = { lvl: -1, id: '', done: -1, coins: '', bobs: '', ok: '', todo: '' };
+    const evTexts = (done) => {
+      if (TX.lvl === MT.lvl && TX.id === MT.id && TX.done === done) return;
+      TX.lvl = MT.lvl; TX.id = MT.id; TX.done = done;
+      const rw = rewardName('ev_' + MT.id);
+      TX.coins = '+' + MT.coinPct() + '% МОНЕТ';
+      TX.bobs = 'ПОПЛАВКИ ' + Math.min(BOB_COLS.length, 1 + Math.floor(MT.lvl / 5)) + '/' + BOB_COLS.length;
+      TX.ok = 'ВЫПОЛНЕНО! ЗНАЧОК «' + rw + '»';
+      TX.todo = 'НАГРАДА: ЗНАЧОК «' + rw + '»';
+    };
+    const drawEventPanel = () => {
+      const ev = MT.ev;
+      const ch = P.p.ev;
+      evTexts(ch && ch.done ? 1 : 0);
+      panelFrame('СОБЫТИЕ МЕСЯЦА');
+      const dl = Math.max(0, ev.daysLeft | 0);
+      let xr = PX + PW - 16 - labelWidth('ДН.');
+      drawLabel(ctx, 'ДН.', xr, PY + 5, '#8a7a70');
+      xr -= intWidth(dl) + 3;
+      drawInt(ctx, dl, xr, PY + 5, '#e8e2d4');
+      drawLabel(ctx, 'ЕЩЁ', xr - 4 - labelWidth('ЕЩЁ'), PY + 5, '#8a7a70');
+      drawLabel(ctx, ev.name, PX + 6, PY + 16, SEA.col, 2);
+      drawLabel(ctx, ev.desc, PX + 6, PY + 29, '#a89a88');
+      // испытание
+      const sp = EVI.spr;
+      const sc = sp.w > 12 ? 2 : 3;
+      drawSprite(ctx, sp, PX + 22 - ((sp.w * sc) >> 1), PY + 50 - ((sp.h * sc) >> 1), sc);
+      let x = PX + 44;
+      x += drawLabel(ctx, 'ИСПЫТАНИЕ: ПОЙМАЙ', x, PY + 40, '#c8b890') + 4;
+      drawLabel(ctx, EVI.name, x, PY + 40, SEA.col);
+      const goal = MT.goal();
+      const n = ch ? ch.n : 0;
+      ctx.fillStyle = '#2a2018';
+      ctx.fillRect(PX + 44, PY + 49, 152, 5);
+      ctx.fillStyle = ch && ch.done ? '#60e070' : SEA.col;
+      ctx.fillRect(PX + 45, PY + 50, Math.round(150 * clamp(n / goal, 0, 1)), 3);
+      let x2 = PX + 202;
+      x2 += drawInt(ctx, n, x2, PY + 49, '#ffffff') + 1;
+      x2 += drawText(ctx, '/', x2, PY + 49, '#8a7a70') + 1;
+      drawInt(ctx, goal, x2, PY + 49, '#c8b890');
+      if (ch && ch.done) drawLabel(ctx, P.author ? 'ВЫПОЛНЕНО (АВТОР: БЕЗ НАГРАДЫ)' : TX.ok, PX + 44, PY + 59, '#60e070');
+      else drawLabel(ctx, TX.todo, PX + 44, PY + 59, '#8a7a70');
+      ctx.fillStyle = '#5a4030';
+      ctx.fillRect(PX + 6, PY + 71, PW - 12, 1);
+      // мастерство
+      let xm = PX + 6 + drawLabel(ctx, 'МАСТЕРСТВО', PX + 6, PY + 79, '#c8a0ff') + 6;
+      drawInt(ctx, MT.lvl, xm, PY + 76, '#ffffff', 2);
+      ctx.fillStyle = '#2a2018';
+      ctx.fillRect(PX + 110, PY + 79, 120, 4);
+      ctx.fillStyle = '#c8a0ff';
+      ctx.fillRect(PX + 111, PY + 80, Math.round(118 * MT.frac), 2);
+      const cur = Math.floor(MT.xp + MT.pend + MT.axp - MT.prevAt), need = MT.nextAt - MT.prevAt;
+      let x3 = PX + 236;
+      x3 += drawInt(ctx, Math.max(0, cur), x3, PY + 79, '#e8e2d4') + 1;
+      x3 += drawText(ctx, '/', x3, PY + 79, '#8a7a70') + 1;
+      drawInt(ctx, need, x3, PY + 79, '#8a7a70');
+      let x4 = PX + 6;
+      x4 += drawLabel(ctx, TX.coins, x4, PY + 92, MT.coinPct() ? '#ffe070' : '#8a7a70') + 10;
+      x4 += drawLabel(ctx, TX.bobs, x4, PY + 92, '#c8d8e8') + 10;
+      drawLabel(ctx, MT.lvl >= 10 ? 'ЗОЛОТАЯ ЛЕНТА СТАРИКА' : 'ЛЕНТА СТАРИКА - 10 УР.', x4, PY + 92, MT.lvl >= 10 ? '#ffd34a' : '#8a7a70');
+      drawLabel(ctx, '+1% МОНЕТ ЗА КАЖДЫЕ 5 УРОВНЕЙ (ДО +20%), ОПЫТ - ЗА ИГРУ И УЛОВ', PX + 6, PY + 101, '#6a5a50');
+      ctx.fillStyle = '#5a4030';
+      ctx.fillRect(PX + 6, PY + 111, PW - 12, 1);
+      // турнир недели
+      const wk = MT.week;
+      drawIcon(ctx, 'trophy', PX + 6, PY + 117);
+      let x5 = PX + 16 + drawLabel(ctx, 'ТУРНИР НЕДЕЛИ:', PX + 16, PY + 119, '#ffd34a') + 4;
+      if (!wk) drawLabel(ctx, 'НЕТ СВЯЗИ', x5, PY + 119, '#8a7a70');
+      else if (MT.tourney) drawLabel(ctx, 'РЫБАЛКА! СЧЁТ ЗАБЕГА ИДЁТ В ТАБЛИЦУ', x5, PY + 119, '#fff0b0');
+      else drawLabel(ctx, GAME_NAMES[wk.game] || '?', x5, PY + 119, '#e8e2d4');
+      if (wk) {
+        let x6 = PX + 16 + drawLabel(ctx, 'ДО КОНЦА', PX + 16, PY + 129, '#8a7a70') + 4;
+        x6 += drawInt(ctx, Math.max(0, wk.daysLeft | 0), x6, PY + 129, '#e8e2d4') + 3;
+        drawLabel(ctx, 'ДН.', x6, PY + 129, '#8a7a70');
+      }
+    };
+
+    if (typeof api._debug === 'function') { try { api._debug({ g, P, scene, MT }); } catch (e) { /* тесты */ } }
 
     // ---------- цикл ----------
     let raf = 0;
@@ -1979,6 +2579,7 @@ export default {
       alive = false;
       cancelAnimationFrame(raf);
       if (g.phase === 'play') { P.p.best = Math.max(P.p.best, Math.round(g.score)); P.save(); }
+      MT.flush();
       if (canvas.dataset) delete canvas.dataset.gamePhase;
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);

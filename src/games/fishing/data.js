@@ -41,7 +41,7 @@ export function drawSilhouette(ctx, sp, x, y, s, color) {
 }
 
 // Рыба смотрит вправо (голова справа). o: { L, H, back, body, belly, fin, eye, pat, pc, tail: 'f' | 'r', big (высокий спинной), nose }
-function fishSprite(o) {
+export function fishSprite(o) {
   const L = o.L, H = o.H;
   const rows = [];
   const HH = H + 2; // плавники сверху/снизу
