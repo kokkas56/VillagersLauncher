@@ -84,6 +84,39 @@ export function drawNumber(ctx, n, x, y, color, scale = 1) {
   return drawText(ctx, String(v), x, y, color, scale);
 }
 
+// Целые числа без аллокаций строк (для отрисовки каждый кадр).
+// intWidth(n, scale = 1, minDigits = 1) -> ширина; drawInt(ctx, n, x, y, color, scale = 1, minDigits = 1) -> ширина
+const DIGIT_GLYPHS = [];
+for (let i = 0; i < 10; i++) DIGIT_GLYPHS.push(FONT[String(i)]);
+
+function digitCount(v) {
+  let d = 1;
+  while (v >= 10) { v = Math.floor(v / 10); d++; }
+  return d;
+}
+
+export function intWidth(n, scale = 1, minDigits = 1) {
+  const v = Math.max(0, Math.floor(Number(n) || 0));
+  const d = Math.max(minDigits, digitCount(v));
+  return d * 4 * scale - scale;
+}
+
+export function drawInt(ctx, n, x, y, color, scale = 1, minDigits = 1) {
+  let v = Math.max(0, Math.floor(Number(n) || 0));
+  const d = Math.max(minDigits, digitCount(v));
+  x = Math.round(x);
+  y = Math.round(y);
+  if (color) ctx.fillStyle = color;
+  for (let k = d - 1; k >= 0; k--) {
+    const g = DIGIT_GLYPHS[v % 10];
+    v = Math.floor(v / 10);
+    const cx = x + k * 4 * scale;
+    const r = g.r;
+    for (let j = 0; j < r.length; j += 3) ctx.fillRect(cx + r[j] * scale, y + r[j + 1] * scale, r[j + 2] * scale, scale);
+  }
+  return d * 4 * scale - scale;
+}
+
 // ---------- иконки ----------
 // каждый символ строки — индекс в палитре иконки ('.' = прозрачно)
 const ICONS = {
@@ -183,4 +216,26 @@ export function drawIcon(ctx, name, x, y, scale = 1) {
     ctx.fillRect(x + r[j + 1] * scale, y + r[j + 2] * scale, r[j + 3] * scale, scale);
   }
   return ic.w * scale;
+}
+
+// ---------- кэш цветов ----------
+// rgbStr(r, g, b, a) -> строка 'rgb(...)' / 'rgba(...)' из кэша: без выделений памяти в кадре.
+// Альфа квантуется до 1/32. rgbMix(c1, c2, t, a) — то же для смеси двух цветов [r, g, b].
+const COLOR_CACHE = new Map();
+export function rgbStr(r, g, b, a = 1) {
+  r = r <= 0 ? 0 : r >= 255 ? 255 : r | 0;
+  g = g <= 0 ? 0 : g >= 255 ? 255 : g | 0;
+  b = b <= 0 ? 0 : b >= 255 ? 255 : b | 0;
+  const aq = a >= 1 ? 32 : a > 0 ? Math.round(a * 32) : 0;
+  const key = ((r << 16) | (g << 8) | b) * 33 + aq;
+  let s = COLOR_CACHE.get(key);
+  if (s === undefined) {
+    if (COLOR_CACHE.size > 40000) COLOR_CACHE.clear();
+    s = aq === 32 ? `rgb(${r},${g},${b})` : `rgba(${r},${g},${b},${aq / 32})`;
+    COLOR_CACHE.set(key, s);
+  }
+  return s;
+}
+export function rgbMix(c1, c2, t, a = 1) {
+  return rgbStr(c1[0] + (c2[0] - c1[0]) * t, c1[1] + (c2[1] - c1[1]) * t, c1[2] + (c2[2] - c1[2]) * t, a);
 }
