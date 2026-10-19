@@ -15,7 +15,7 @@ export const DEF_REWARDS = [
 ];
 
 export function freshProgress() {
-  return { em: 0, up: [0, 0, 0, 0, 0, 0], ckpt: 1, bestW: 0, kills: 0, alb: {}, runs: 0, best: 0, d: null };
+  return { em: 0, up: [0, 0, 0, 0, 0, 0], ckpt: 1, start: 1, fails: 0, bestW: 0, kills: 0, alb: {}, runs: 0, best: 0, d: null };
 }
 const num = (v, d, lo, hi) => { v = Number(v); if (!Number.isFinite(v)) return d; return v < lo ? lo : v > hi ? hi : v; };
 function sanitize(o) {
@@ -26,6 +26,8 @@ function sanitize(o) {
   p.ckpt = Math.floor(num(o.ckpt, 1, 1, 9999));
   p.ckpt = Math.min(p.ckpt, ckptOf(Math.max(1, p.bestW + 1)));
   p.ckpt = ckptOf(p.ckpt);
+  p.start = ckptOf(Math.floor(num(o.start, p.ckpt, 1, p.ckpt)));
+  p.fails = Math.floor(num(o.fails, 0, 0, 99));
   p.kills = Math.floor(num(o.kills, 0, 0, 1e9));
   p.runs = Math.floor(num(o.runs, 0, 0, 1e9));
   p.best = Math.floor(num(o.best, 0, 0, 1e9));
@@ -125,6 +127,14 @@ export function createProgress(api) {
       return false;
     },
     vlvl: () => villageLevel(p.up),
+    setStart(dir) {
+      const s = Math.max(1, Math.min(p.ckpt, p.start + dir * 5));
+      if (s === p.start) return false;
+      p.start = s;
+      p.fails = 0;
+      P.save();
+      return true;
+    },
     // убийство зомби: id типа, мечом ли
     kill(id, sword, gems) {
       p.kills++;
@@ -147,9 +157,14 @@ export function createProgress(api) {
       P.checkDay();
       P.daily(2, 1, 0);
       if (perfect) P.daily(3, 1, 0);
+      p.fails = 0;
       if (w % 5 === 0) {
         const c = w + 1;
-        if (c > p.ckpt) { p.ckpt = c; push('Рубеж: волна ' + c, '#8fe0ff', 2); }
+        if (c > p.ckpt) {
+          if (p.start === p.ckpt) p.start = c;
+          p.ckpt = c;
+          push('Рубеж: волна ' + c, '#8fe0ff', 2);
+        }
       }
       P.checkRewards(false);
       P.save();
@@ -189,8 +204,13 @@ export function createProgress(api) {
       P.save();
       return true;
     },
-    endRun(score) {
+    // cleared — сколько волн пройдено за забег; два пустых забега подряд — старт на рубеж ниже
+    endRun(score, cleared) {
       p.runs++;
+      if (!cleared) {
+        p.fails++;
+        if (p.fails >= 2 && p.start > 1) { p.start = Math.max(1, p.start - 5); p.fails = 0; push('Старт ниже: волна ' + p.start, '#8fe0ff', 2); }
+      }
       if (score > p.best) p.best = score;
       P.checkRewards(false);
       P.save();

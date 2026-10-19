@@ -14,7 +14,7 @@
 
 import { drawText, drawIcon, rgbStr, rgbMix, drawLabel, labelWidth, drawInt, intWidth } from './pixfont.js';
 import {
-  TYPES, TYPE_IDS, MOB_IDS, bossFor, bossFirstWave, waveCount, waveWindow, hpMul, spdMul, dmgMul, gemMul, typeWeight,
+  TYPES, TYPE_IDS, MOB_IDS, bossMul, bossFor, bossFirstWave, waveCount, waveWindow, hpMul, spdMul, dmgMul, gemMul, typeWeight,
   UPGRADES, villageLevel, wallMax, archerCount, arrowDmg, arrowCd, fenceCount, spikeDps, clickDmg, bellHeal, ckptOf
 } from './defense/data.js';
 import { createProgress, upgradePrice } from './defense/progress.js';
@@ -148,6 +148,7 @@ const CARD_Y = 72, CARD_W = 36, CARD_H = 76;
 const cardX = (i) => 12 + i * 37;
 const BOOK_X = 80, BOOK_Y = 14;
 const AX = 12, AY = 22, AW = 296, AH = 140;
+const START_X = AX + AW - 70, START_Y = AY + AH - 21;
 
 export default {
   id: 'defense',
@@ -238,7 +239,7 @@ export default {
       pt: 0, hold: 1.3, sawOver: false,
       mode: 'play', // внутри игры: play | shop
       t: 0,
-      hp: 100, maxHp: 100, kills: 0, wave: 0, startWave: 1, perfect: true,
+      hp: 100, maxHp: 100, kills: 0, wave: 0, startWave: 1, cleared: 0, perfect: true,
       toSpawn: 0, spawnT: 0, spawnInt: 2, spdMul: 1, hpMul: 1, dmgMul: 1, bossDue: null, bossAt: 0, boss: null,
       shopT: 0, banner: 0, shake: 0, hurtSnd: 0, hurtFlash: 0,
       overSent: false,
@@ -332,7 +333,7 @@ export default {
       if (!z) return;
       // боссы крепнут с каждым кругом
       const lap = Math.floor((g.wave - bossFirstWave(id)) / 30);
-      z.hp = z.max = TYPES[id].hp * g.hpMul * (1 + lap * 0.5);
+      z.hp = z.max = TYPES[id].hp * bossMul(g.wave) * (1 + lap * 0.5);
       z.spd = TYPES[id].spd * (1 + Math.min(0.3, lap * 0.1));
       g.boss = z;
       g.banner = 2.6;
@@ -492,6 +493,8 @@ export default {
       if (g.panel) {
         if (inR(p, AX + AW - 12, AY + 2, 10, 10) || !inR(p, AX, AY, AW, AH)) { g.panel = null; api.sfx('click'); return; }
         for (let i = 0; i < TYPE_IDS.length; i++) if (inR(p, AX + 6 + (i % 6) * 48, AY + 15 + Math.floor(i / 6) * 52, 46, 50)) { g.sel = i; api.sfx('click'); return; }
+        if (inR(p, START_X + 25, START_Y, 12, 15)) { api.sfx(P.setStart(-1) ? 'click' : 'hit'); return; }
+        if (inR(p, START_X + 52, START_Y, 12, 15)) { api.sfx(P.setStart(1) ? 'click' : 'hit'); return; }
         return;
       }
       if (g.mode === 'shop') {
@@ -527,6 +530,7 @@ export default {
           const d = c === 'ArrowLeft' ? -1 : c === 'ArrowRight' ? 1 : c === 'ArrowUp' ? -6 : 6;
           g.sel = (g.sel + d + TYPE_IDS.length) % TYPE_IDS.length;
         } else if (c === 'Space' || c === 'Enter' || c === 'Backspace') { e.preventDefault(); g.panel = null; }
+        else if (c === 'Minus' || c === 'NumpadSubtract' || c === 'Equal' || c === 'NumpadAdd') { e.preventDefault(); api.sfx(P.setStart(c === 'Minus' || c === 'NumpadSubtract' ? -1 : 1) ? 'click' : 'hit'); }
         return;
       }
       if (c === 'Space' || c === 'Enter' || c === 'NumpadEnter') {
@@ -827,7 +831,8 @@ export default {
       applyUpgrades(false);
       g.hp = g.maxHp;
       g.kills = 0;
-      g.startWave = P.p.ckpt;
+      g.startWave = Math.min(P.p.start, P.p.ckpt);
+      g.cleared = 0;
       g.wave = g.startWave - 1;
       g.overSent = false;
       g.sawOver = false;
@@ -842,14 +847,14 @@ export default {
         if (!z.on || z.mode === 'flee') continue;
         z.mode = 'play';
         z.dir = 1;
-        z.hp = z.max = z.T.hp * g.hpMul;
+        z.hp = z.max = z.T.hp * g.hpMul * 0.5;
         z.spd = z.T.spd * g.spdMul * (0.9 + rand() * 0.2);
       }
       callArchers();
     };
 
     const startOutro = () => {
-      if (g.phase === 'play') P.endRun(score());
+      if (g.phase === 'play') P.endRun(score(), g.cleared);
       g.phase = 'outro';
       g.pt = 0;
       g.ev = 0;
@@ -997,7 +1002,7 @@ export default {
       } else if (z.type === 'ram') {
         z.act -= dt;
         if (z.act <= 0) { z.act = 4.5; z.act2 = 1.1; }
-        if (z.act2 > 0) { z.act2 -= dt; v *= 3.5; if (Math.floor(g.t * 20) % 3 === 0) addPart(z.x - 4, z.y, -20, -10, 0.3, '#c8b890'); }
+        if (z.act2 > 0) { z.act2 -= dt; v *= 2.5; if (Math.floor(g.t * 20) % 3 === 0) addPart(z.x - 4, z.y, -20, -10, 0.3, '#c8b890'); }
       }
       if (z.x + front >= WALL_X) {
         z.x = WALL_X - front;
@@ -1009,7 +1014,7 @@ export default {
       z.atk = false;
       const jump = z.type === 'jumper' || z.type === 'ghost';
       const nf = fenceCount(UP());
-      if (!jump && !T.boss) for (let i = 0; i < nf; i++) if (Math.abs(z.x + 1 - FENCE_X[i]) < 8) v *= 0.5;
+      if (!jump) for (let i = 0; i < nf; i++) if (Math.abs(z.x + 1 - FENCE_X[i]) < 8) v *= T.boss ? 0.7 : 0.5;
       if (z.kb <= 0) z.x += v * dt;
       return 0;
     };
@@ -1068,7 +1073,7 @@ export default {
         api.sfx('lose');
         for (let i = 0; i < bolts.length; i++) bolts[i].on = false;
         for (let i18 = 0; i18 < zombies.length; i18++) { const z = zombies[i18]; if (z.on) { z.mode = 'stand'; z.give = 1 + rand() * 2; z.hx = z.x; z.ghost = false; z.hop = 0; } }
-        P.endRun(score());
+        P.endRun(score(), g.cleared);
         return;
       }
       g.gdmg = 1 - g.hp / g.maxHp;
@@ -1077,6 +1082,7 @@ export default {
         const bonus = (2 + (g.wave >> 1)) * P.mul();
         P.addGems(bonus);
         g.hp = Math.min(g.maxHp, g.hp + g.maxHp * bellHeal(UP()));
+        g.cleared++;
         P.waveCleared(g.wave, g.perfect);
         g.mode = 'shop';
         g.shopT = SHOP_T;
@@ -1300,7 +1306,7 @@ export default {
       if (m === 'play') {
         if (ph === 'idle') { if (g.hold <= 0) startIntro(); }
         else if (ph === 'outro') startIntro();
-        else if (ph === 'wait' && g.sawOver) startIntro();
+        else if (ph === 'wait' && (g.sawOver || g.pt > 1.5)) startIntro(); // хост мог сразу перезапустить
       } else if (m === 'idle') {
         if (ph === 'intro' || ph === 'play' || ph === 'lose' || ph === 'wait') startOutro();
       }
@@ -2169,6 +2175,17 @@ export default {
         x2 += drawText(ctx, 'x', x2, y, '#8a7a70') + 2;
         drawInt(ctx, pr.alb[id], x2, y, '#ffffff');
       } else drawLabel(ctx, '???', AX + 6, y, '#8a7a70');
+      // выбор стартовой волны
+      ctx.fillStyle = 'rgba(90,64,40,0.95)';
+      ctx.fillRect(START_X, y - 2, 64, 17);
+      drawLabel(ctx, 'СТАРТ', START_X + 4, y + 4, '#c8b890');
+      ctx.fillStyle = pr.start > 1 ? '#c8a060' : '#5a4a40';
+      ctx.fillRect(START_X + 27, y + 1, 8, 11);
+      drawText(ctx, '-', START_X + 29, y + 4, '#2a1a10');
+      drawInt(ctx, pr.start, START_X + 38, y + 4, '#ffffff');
+      ctx.fillStyle = pr.start < pr.ckpt ? '#c8a060' : '#5a4a40';
+      ctx.fillRect(START_X + 54, y + 1, 8, 11);
+      drawText(ctx, '+', START_X + 56, y + 4, '#2a1a10');
       let x3 = AX + 6;
       x3 += drawLabel(ctx, 'ВСЕГО', x3, y + 8, '#8a7a70') + 3;
       x3 += drawInt(ctx, pr.kills, x3, y + 8, '#e8e2d4') + 8;

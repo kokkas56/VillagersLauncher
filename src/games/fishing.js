@@ -1110,7 +1110,7 @@ export default {
       if (m === 'play') {
         if (ph === 'idle') { if (g.hold <= 0) startIntro(); }
         else if (ph === 'outro') startIntro();
-        else if (ph === 'wait' && g.sawOver) startIntro();
+        else if (ph === 'wait' && (g.sawOver || g.pt > 1.5)) startIntro(); // хост мог сразу перезапустить
       } else if (m === 'idle') {
         if (ph === 'intro' || ph === 'play' || ph === 'finish' || ph === 'wait') startOutro();
       }
