@@ -199,7 +199,7 @@ export default function Settings() {
           <input type="range" min="2" max="24" value={s.downloadThreads} onChange={(e) => set({ downloadThreads: +e.target.value })} />
         </div>
         {s.authorMode ? (
-          <Toggle checked={s.authorMode} onChange={(v) => set({ authorMode: v })} label={t('Режим автора')} hint={t('Вкладка «Автор»: заливка сборки, новости, ранний доступ')} />
+          <Toggle checked={s.authorMode} onChange={(v) => set({ authorMode: v })} label={t('Режим автора')} hint={t('Вкладка «Автор»: заливка сборки, новости, ранний доступ. Выключи, чтобы посмотреть лаунчер глазами игрока (вернуть — ссылка «Я автор сборки» внизу). Перед игрой в режиме игрока смени папку игры, иначе лаунчер приведёт твою папку к опубликованной сборке.')} />
         ) : authorAsk ? (
           <div className="field">
             <span>{t('Режим автора')}</span>
@@ -214,7 +214,7 @@ export default function Settings() {
         <div className="row">
           <button className="btn ghost" onClick={() => call('shell:openPath', '@data')}><Icon name="folder" /> {t('Папка лаунчера')}</button>
           <button className="btn ghost" disabled={checkingUpd} onClick={checkUpdates}><Icon name="refresh" /> {checkingUpd ? t('Проверяю…') : t('Проверить обновления')}</button>
-          {!s.authorMode && !authorAsk && <button className="link-btn small muted" onClick={() => setAuthorAsk(true)}>{t('Я автор сборки')}</button>}
+          {!s.authorMode && !authorAsk && <button className="link-btn small muted" onClick={async () => { if (await call('pack:hasToken')) { set({ authorMode: true }); toast(t('Режим автора включён'), 'ok'); } else setAuthorAsk(true); }}>{t('Я автор сборки')}</button>}
           <span className="muted small">VillagersLauncher {info && info.version}</span>
         </div>
       </Section>
