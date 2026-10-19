@@ -29,7 +29,7 @@ public static class KokkEmbed {
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool f);
   [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
-  const int GWL_STYLE = -16;
+  const int GWL_STYLE = -16, GWLP_HWNDPARENT = -8;
   const long WS_CHILD = 0x40000000L, WS_POPUP = 0x80000000L, WS_CAPTION = 0x00C00000L, WS_THICKFRAME = 0x00040000L,
              WS_SYSMENU = 0x00080000L, WS_MINIMIZEBOX = 0x00020000L, WS_MAXIMIZEBOX = 0x00010000L, WS_VISIBLE = 0x10000000L;
   const uint SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0x10, SWP_FRAMECHANGED = 0x20, SWP_SHOWWINDOW = 0x40, SWP_NOMOVE = 0x2, SWP_NOSIZE = 0x1;
@@ -75,6 +75,20 @@ public static class KokkEmbed {
         SetWindowPos(ch, IntPtr.Zero, I(a[4]), I(a[5]), Math.Max(1, I(a[6])), Math.Max(1, I(a[7])), SWP_FRAMECHANGED | SWP_SHOWWINDOW);
         return "1";
       }
+      // «поверх»: окно игры остаётся самостоятельным (OpenGL рисует нормально), но без рамки и принадлежит окну Студии —
+      // всегда над ним, сворачивается вместе с ним; координаты экранные (физические пиксели)
+      case "overlay": {
+        IntPtr ch = H(a[2]), own = H(a[3]);
+        if (!IsWindow(ch)) throw new Exception("окна игры уже нет");
+        long k = ch.ToInt64();
+        long st = GetWL(ch, GWL_STYLE).ToInt64();
+        if (!origStyle.ContainsKey(k)) { origStyle[k] = st; RECT r; GetWindowRect(ch, out r); origRect[k] = r; }
+        long ns = (st & ~(WS_CHILD | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)) | WS_POPUP | WS_VISIBLE;
+        SetWL(ch, GWL_STYLE, new IntPtr(ns));
+        SetWL(ch, GWLP_HWNDPARENT, own);
+        SetWindowPos(ch, IntPtr.Zero, I(a[4]), I(a[5]), Math.Max(1, I(a[6])), Math.Max(1, I(a[7])), SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        return "1";
+      }
       case "move": {
         IntPtr ch = H(a[2]);
         SetWindowPos(ch, IntPtr.Zero, I(a[3]), I(a[4]), Math.Max(1, I(a[5])), Math.Max(1, I(a[6])), SWP_NOACTIVATE);
@@ -83,6 +97,7 @@ public static class KokkEmbed {
       case "show": ShowWindow(H(a[2]), a[3] == "1" ? 8 : 0); return "1"; // SW_SHOWNA / SW_HIDE
       case "focus": {
         IntPtr ch = H(a[2]);
+        if ((GetWL(ch, GWL_STYLE).ToInt64() & WS_CHILD) == 0) { SetForegroundWindow(ch); return "1"; }
         uint pid; uint t = GetWindowThreadProcessId(ch, out pid);
         uint me = GetWindowThreadProcessId(GetParent(ch), out pid);
         AttachThreadInput(me, t, true); SetFocus(ch); AttachThreadInput(me, t, false);
@@ -92,7 +107,8 @@ public static class KokkEmbed {
         IntPtr ch = H(a[2]);
         long k = ch.ToInt64();
         if (!IsWindow(ch)) return "0";
-        SetParent(ch, IntPtr.Zero);
+        if (GetParent(ch) != IntPtr.Zero && (GetWL(ch, GWL_STYLE).ToInt64() & WS_CHILD) != 0) SetParent(ch, IntPtr.Zero);
+        SetWL(ch, GWLP_HWNDPARENT, IntPtr.Zero);
         if (origStyle.ContainsKey(k)) SetWL(ch, GWL_STYLE, new IntPtr(origStyle[k]));
         if (a.Length >= 7) SetWindowPos(ch, IntPtr.Zero, I(a[3]), I(a[4]), I(a[5]), I(a[6]), SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOZORDER);
         else if (origRect.ContainsKey(k)) { RECT r = origRect[k]; SetWindowPos(ch, IntPtr.Zero, r.L, r.T, r.R - r.L, r.B - r.T, SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOZORDER); }

@@ -14,11 +14,11 @@ module.exports = function setupStudioWindow({ handle, store, dev, getGame, linkI
   const pops = new Map(); // tab → BrowserWindow
   const helper = createHelper(log);
   // встраивание: mode = off | embedded | side | pending; hwnd окна игры (строкой)
-  const emb = { mode: 'off', hwnd: null, rect: null, hold: false, hidden: false, why: '', want: 'off' };
+  const emb = { method: 'overlay', mode: 'off', hwnd: null, rect: null, hold: false, hidden: false, why: '', want: 'off' };
 
   function all() { return [studio, ...pops.values()].filter((w) => w && !w.isDestroyed()); }
   function forward(ch, data) { if (!FORWARD.includes(ch)) return; for (const w of all()) w.webContents.send(ch, data); }
-  function embState() { return { mode: emb.mode, want: emb.want, why: emb.why, hwnd: emb.hwnd, helper: process.platform !== 'win32' ? 'unsupported' : helper.available() ? 'ok' : 'missing', platform: process.platform, game: gameInfo() }; }
+  function embState() { return { mode: emb.mode, method: emb.method, prefer: embMethod(), want: emb.want, why: emb.why, hwnd: emb.hwnd, helper: process.platform !== 'win32' ? 'unsupported' : helper.available() ? 'ok' : 'missing', platform: process.platform, game: gameInfo() }; }
   function emitEmb() { forward('studio-embed', embState()); }
   function emitWin() { forward('studio-win', { type: 'pops', pops: [...pops.keys()].filter((k) => pops.get(k) && !pops.get(k).isDestroyed()) }); }
   function gameInfo() { const g = getGame(); const li = linkInfo() || {}; return { running: !!g, pid: (g && g.proc && g.proc.pid) || li.pid || null, linked: !!li.t }; }
@@ -60,6 +60,9 @@ module.exports = function setupStudioWindow({ handle, store, dev, getGame, linkI
     const later = () => { clearTimeout(t); t = setTimeout(remember, 500); };
     studio.on('resize', later);
     studio.on('move', later);
+    // в режиме «поверх» окно игры двигается вместе со Студией
+    const follow = () => { if (emb.mode === 'embedded' && emb.method === 'overlay' && emb.rect) setRect(emb.rect).catch(() => {}); };
+    studio.on('move', follow); studio.on('resize', follow); studio.on('maximize', follow); studio.on('unmaximize', follow); studio.on('restore', follow);
     studio.on('maximize', remember);
     studio.on('unmaximize', remember);
     // перед закрытием вернуть окно игры на место — иначе Windows закроет его вместе с родителем
@@ -99,6 +102,18 @@ module.exports = function setupStudioWindow({ handle, store, dev, getGame, linkI
     const buf = studio.getNativeWindowHandle();
     return buf.length >= 8 ? buf.readBigUInt64LE(0).toString() : String(buf.readUInt32LE(0));
   }
+  // способ встраивания: overlay — окно игры без рамки лежит поверх видового окна (надёжно, по умолчанию);
+  // child — настоящее дочернее окно (SetParent), на части видеокарт/драйверов даёт чёрный экран
+  function embMethod() { return store.get().studioEmbedMode === 'child' ? 'child' : 'overlay'; }
+  // прямоугольник видового окна → экранные физические пиксели (для overlay)
+  function screenPx(r) {
+    const cb = studio.getContentBounds();
+    const d = { x: Math.round(cb.x + r.x), y: Math.round(cb.y + r.y), width: Math.max(1, Math.round(r.w)), height: Math.max(1, Math.round(r.h)) };
+    let p = d;
+    try { if (screen.dipToScreenRect) p = screen.dipToScreenRect(studio, d); } catch (_) {}
+    return [p.x, p.y, Math.max(1, p.width), Math.max(1, p.height)];
+  }
+  function rectPx(r) { return emb.method === 'overlay' ? screenPx(r) : dipToPx(r); }
   function dipToPx(r) { const dpr = r.dpr || 1; return [Math.round(r.x * dpr), Math.round(r.y * dpr), Math.max(1, Math.round(r.w * dpr)), Math.max(1, Math.round(r.h * dpr))]; }
   async function findGame() {
     const li = linkInfo() || {};
@@ -122,8 +137,9 @@ module.exports = function setupStudioWindow({ handle, store, dev, getGame, linkI
       const ok = await helper.start();
       if (!ok) throw new Error(helper.why() || 'PowerShell недоступен');
       const hwnd = await findGame();
-      const [x, y, w, h] = emb.rect ? dipToPx(emb.rect) : [0, 0, 640, 360];
-      await helper.cmd('embed', hwnd, studioHwnd(), x, y, w, h);
+      emb.method = embMethod();
+      const [x, y, w, h] = emb.rect ? rectPx(emb.rect) : emb.method === 'overlay' ? screenPx({ x: 60, y: 80, w: 960, h: 540 }) : [0, 0, 640, 360];
+      await helper.cmd(emb.method === 'overlay' ? 'overlay' : 'embed', hwnd, studioHwnd(), x, y, w, h);
       emb.hwnd = hwnd; emb.mode = 'embedded'; emb.hidden = false;
       if (emb.hold || (emb.rect && emb.rect.visible === false)) await helper.cmd('show', hwnd, 0).then(() => { emb.hidden = true; }).catch(() => {});
       emitEmb();
@@ -175,7 +191,7 @@ module.exports = function setupStudioWindow({ handle, store, dev, getGame, linkI
   async function setRect(r) {
     emb.rect = r && typeof r === 'object' ? { x: Number(r.x) || 0, y: Number(r.y) || 0, w: Number(r.w) || 1, h: Number(r.h) || 1, dpr: Number(r.dpr) || 1, visible: r.visible !== false } : null;
     if (emb.mode !== 'embedded' || !emb.hwnd || !emb.rect) return true;
-    const [x, y, w, h] = dipToPx(emb.rect);
+    const [x, y, w, h] = rectPx(emb.rect);
     const hide = emb.hold || !emb.rect.visible;
     try {
       if (hide !== emb.hidden) { await helper.cmd('show', emb.hwnd, hide ? 0 : 1); emb.hidden = hide; }
@@ -200,6 +216,13 @@ module.exports = function setupStudioWindow({ handle, store, dev, getGame, linkI
     throw new Error('Неизвестный режим окна игры: ' + mode);
   });
   handle('studio:embedRect', (r) => setRect(r));
+  // переключить способ встраивания (поверх / дочернее окно); если игра уже встроена — перевстроить
+  handle('studio:embedMethod', async (m) => {
+    store.set({ studioEmbedMode: m === 'child' ? 'child' : 'overlay' });
+    if (emb.mode === 'embedded') { await undock(); return embed(); }
+    emitEmb();
+    return embState();
+  });
   // меню/окна Студии поверх видового окна: на это время прячем встроенную игру (окно другой программы всегда сверху)
   handle('studio:embedHold', async (on) => {
     emb.hold = !!on;
