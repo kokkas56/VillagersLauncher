@@ -413,6 +413,8 @@ async function publish({ title, text, noNews, early: isEarly, freeAt }, progress
     await gh('DELETE', `/repos/${R}/releases/${rel.id}`, token).catch(() => {});
     throw e;
   }
+  // ранний выпуск: сайт и лаунчеры узнают, что поддержавшие уже играют в него (без файлов и ссылок)
+  if (isEarly) { try { await early.setConfig({ latest: { version, title: noNews ? '' : title, freeAt: freeAt || null } }); } catch (_) {} }
   // новость: без новости — прячем запись; с новостью — снимаем старые пометки с этого номера (если номер повторился)
   let newsWarn = null;
   if (!isEarly) try {
@@ -505,6 +507,7 @@ async function openEarly(tag, progress = () => {}) {
   await gh('PATCH', `/repos/${pub}/releases/${pr.id}`, token, { draft: false, make_latest: 'true' });
   // в закрытом остаётся (у поддержавших ссылки продолжают работать), но помечаем открытым
   await gh('PATCH', `/repos/${ecfg.repo}/releases/${rel.id}`, token, { prerelease: true, body: (rel.body || '') + '\nopened: ' + new Date().toISOString().slice(0, 10) }).catch(() => {});
+  if (ecfg.latest && ecfg.latest.version <= rel.version) { try { await early.setConfig({ latest: null }); } catch (_) {} }
   return true;
 }
 

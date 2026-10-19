@@ -63,7 +63,26 @@
     });
   }
 
+  // ранний доступ: что уже есть у поддержавших (настройки сборки: early.json, без файлов и ссылок)
+  async function loadEarly() {
+    let cfg = null;
+    try { const d = await gh(PACK + '/contents/early.json'); cfg = JSON.parse(decodeURIComponent(escape(atob((d.content || '').replace(/\s/g, ''))))); } catch (_) { return; }
+    if (!cfg) return;
+    if (cfg.boosty) { const a = document.getElementById('boosty-link'); if (a) a.href = cfg.boosty; }
+    const box = document.getElementById('early-banner');
+    if (!box || !cfg.latest || !cfg.latest.version) return;
+    box.textContent = '';
+    const title = el('div', 'early-title', '★ Ранний доступ: сборка #' + cfg.latest.version + (cfg.latest.title ? ' — ' + cfg.latest.title : ''));
+    box.appendChild(title);
+    box.appendChild(el('p', null, 'Поддержавшие на Boosty уже играют в неё.' + (cfg.latest.freeAt ? ' Для всех она откроется ' + fmtDate(cfg.latest.freeAt) + '.' : ' Для всех она откроется позже.')));
+    const a = el('a', 'btn-donate sm', 'Как получить раньше');
+    a.href = '#donate';
+    box.appendChild(a);
+    box.hidden = false;
+  }
+
   async function load() {
+    loadEarly();
     try {
       let nj = null;
       try { nj = await gh(PACK + '/contents/news.json'); nj = JSON.parse(decodeURIComponent(escape(atob((nj.content || '').replace(/\s/g, ''))))); } catch (_) { nj = null; }

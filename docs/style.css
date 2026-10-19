@@ -120,3 +120,8 @@ footer > * { background: rgba(14, 10, 7, .6); padding: 6px 12px; border-radius: 
 
 .dl-other { font-size: 12px; opacity: .9; }
 .dl-other a { color: inherit; }
+
+.early-banner { margin: 0 0 14px; padding: 16px 20px; border-radius: 14px; background: linear-gradient(135deg, rgba(241, 196, 15, .12), rgba(0, 0, 0, .25)); border: 1px solid rgba(241, 196, 15, .45); }
+.early-banner .early-title { font-weight: 700; color: var(--gold-2); }
+.early-banner p { margin: 6px 0 10px; color: #e5d8c4; }
+.btn-donate.sm { padding: 8px 14px; font-size: 13px; }
