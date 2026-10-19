@@ -375,6 +375,8 @@ export default {
             // провал
             tr.gap = clamp(Math.round(v * (0.26 + 0.1 * dif) / STEP + rand()), 2, 6);
             if (rand() < 0.5) addObj(2, x + STEP * (tr.gap + 1) / 2, tr.y - 30, rand() < 0.25 ? 2 : 1);
+            // дальше — связки: сразу за провалом летит мышь
+            if (rand() < dif * 0.5) addObj(1, x + STEP * tr.gap + v * 0.9 + 30, 0, 0);
             space += tr.gap * STEP;
             tr.hill = Math.max(tr.hill, 2); tr.ty = tr.y;
           } else if (r < 0.42) {
@@ -422,6 +424,7 @@ export default {
     };
     const startOutro = () => {
       phase = 'outro'; pt = 0;
+      if (cart.crash) { outroK = 0; startFix(); return; }
       if (!cart.rider) {
         // ещё не сел в вагонетку — просто возвращается к работе
         carrier.hidden = 0; carrier.run = 0; carrier.pause = 0.5;
@@ -429,7 +432,7 @@ export default {
         toIdle();
         return;
       }
-      if (cart.crash) { outroK = 0; startFix(); } else beginCalm();
+      beginCalm();
     };
     // поднять вагонетку и поставить её к шахтёру (после аварии)
     const startFix = () => {
@@ -463,7 +466,7 @@ export default {
       tr.calm = 1;
       tr.flatFrom = tr.start + tr.i * STEP + STEP * 6;
       for (const o of objs) if (o.on && o.k === 1) o.flee = 1;
-      cart.v = Math.max(cart.v, 175);
+      cart.v = Math.max(cart.v, 220);
       cart.crash = 0; cart.tip = 0; rider.m = 0;
     };
     const toIdle = () => {
@@ -661,7 +664,7 @@ export default {
           const stop = sceneX2() + STATION;
           const left = stop - cart.x;
           if (left < 110) {
-            cart.v = Math.max(18, Math.min(cart.v, Math.sqrt(Math.max(0, left) * 2 * 150)));
+            cart.v = Math.max(18, Math.min(cart.v, Math.sqrt(Math.max(0, left) * 2 * 210)));
             if (rand() < 0.8) { spawnP(parts, cart.x - 5, cart.y, -10 - rand() * 40, -15 - rand() * 25, 0.3, P.spark, 220); spawnP(parts, cart.x + 4, cart.y, -10 - rand() * 40, -15 - rand() * 25, 0.3, P.spark2, 220); }
             if (rand() < dt * 6) api.sfx('step');
           }
@@ -675,7 +678,7 @@ export default {
         } else {
           // шахтёр вылезает и берёт кирку
           rider.t += dt * fast;
-          if (rider.t >= 0.5) {
+          if (rider.t >= 0.4) {
             carrier.hidden = 0; carrier.run = 0; carrier.x = STATION - 14; carrier.dir = -1; carrier.pause = 1.2;
             cart.pause = 2; cart.target = 230; cart.load = 0;
             resetIdleAfterRide();
@@ -1010,7 +1013,7 @@ export default {
       if (cart.rider && rider.m === 0) drawRiderIn(cx, cart.y, cart.duck, t);
       drawCart(cx, cart.y, cart.tip, cart.load && !cart.rider);
       if (phase === 'outro' && outroK === 2) {
-        const u = clamp(rider.t / 0.5, 0, 1);
+        const u = clamp(rider.t / 0.4, 0, 1);
         miner(Math.round(cx - 14 * u), Math.round(FLOOR + 1 - Math.sin(u * Math.PI) * 10 - (1 - u) * 6), -1, 1, P.robeC, P.robeC2);
       }
       if (rider.m === 1 || rider.m === 3) {

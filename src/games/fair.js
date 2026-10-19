@@ -11,8 +11,8 @@ import { drawNumber, drawText, textWidth, drawIcon } from './pixfont.js';
 const W = 320;
 const H = 180;
 const ROUND = 75; // секунд на раунд
-const START_ARROWS = 15;
-const MAX_ARROWS = 20;
+const START_ARROWS = 20;
+const MAX_ARROWS = 25;
 const LIVES = 3;
 
 let C = null;
@@ -108,8 +108,8 @@ function drawSpr(sp, x, y, clipY, sc = 1) {
 // виды мишеней: спрайт, очки, стрелы за попадание
 const KINDS = [
   { sp: ringTarget(8, ['#f2d14a', '#d83a3a', '#f4ecdc', '#d83a3a', '#f4ecdc', '#d83a3a', '#f4ecdc', '#6a4424']), pts: 10, refill: 1, rad: 9 },  // 0 обычная
-  { sp: ringTarget(4, ['#d83a3a', '#f4ecdc', '#d83a3a', '#2a4a8a']), pts: 25, refill: 1, rad: 5 },                                   // 1 мелкая быстрая
-  { sp: ringTarget(6, ['#fff6b0', '#f2c230', '#c08a10', '#f2c230', '#ffe070', '#8a5e14']), pts: 50, refill: 2, rad: 7 },              // 2 золотая
+  { sp: ringTarget(4, ['#d83a3a', '#f4ecdc', '#d83a3a', '#2a4a8a']), pts: 25, refill: 2, rad: 5 },                                   // 1 мелкая быстрая
+  { sp: ringTarget(6, ['#fff6b0', '#f2c230', '#c08a10', '#f2c230', '#ffe070', '#8a5e14']), pts: 50, refill: 3, rad: 7 },              // 2 золотая
   { sp: sprite({ a: '#6a4424', s: '#e0b08a', n: '#c08060', e: '#2a2020', r: '#7a5a9a', k: '#5a3e78', h: '#4a3020' }, [
     '..hhhhh..',
     '.ahhhhha.',
@@ -440,7 +440,7 @@ export default {
         return;
       }
       phase = 'outro'; pt = 0;
-      lastPrize = g.score >= 600 ? 2 : g.score >= 250 ? 1 : g.score > 0 ? 0 : -1;
+      lastPrize = g.score >= 4000 ? 2 : g.score >= 1500 ? 1 : g.score > 0 ? 0 : -1;
       if (hero.st !== H_READY) { hero.st = H_READY; hero.x = HX; hero.dir = 1; }
       setCursor();
     };
@@ -541,7 +541,7 @@ export default {
           const bull = dx * dx + dy * dy <= 2 ? 2 : 1;
           const v = k.pts * g.mult * bull;
           g.score += v;
-          g.arrows = Math.min(MAX_ARROWS, g.arrows + k.refill);
+          g.arrows = Math.min(MAX_ARROWS, g.arrows + k.refill + (bull > 1 ? 1 : 0));
           popup(best.x, ty - 10, v, 0);
           api.sfx(best.kind === 2 || bull > 1 ? 'win' : 'coin');
           if (best.kind === 2) keeper.wave = 1.2;
