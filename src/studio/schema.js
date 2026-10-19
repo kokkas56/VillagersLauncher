@@ -21,7 +21,9 @@ export const SUGGEST = {
   items: ['minecraft:lantern', 'minecraft:torch', 'minecraft:iron_sword', 'minecraft:book', 'minecraft:bread', 'minecraft:emerald', 'minecraft:wooden_hoe', 'minecraft:fishing_rod', 'minecraft:shield'],
   storyFx: ['vortex', 'glow', 'sparkles', 'rift'],
   entities: ['minecraft:villager', 'minecraft:wandering_trader', 'minecraft:iron_golem', 'minecraft:cat', 'minecraft:wolf', 'minecraft:horse', 'minecraft:zombie', 'minecraft:pillager'],
-  dims: ['minecraft:overworld', 'minecraft:the_nether', 'minecraft:the_end']
+  dims: ['minecraft:overworld', 'minecraft:the_nether', 'minecraft:the_end'],
+  effects: ['minecraft:speed', 'minecraft:slowness', 'minecraft:strength', 'minecraft:jump_boost', 'minecraft:regeneration', 'minecraft:resistance', 'minecraft:night_vision', 'minecraft:invisibility', 'minecraft:blindness', 'minecraft:darkness', 'minecraft:glowing', 'minecraft:levitation', 'minecraft:slow_falling', 'minecraft:fire_resistance', 'minecraft:water_breathing', 'minecraft:saturation', 'minecraft:hunger', 'minecraft:nausea', 'minecraft:weakness', 'minecraft:poison'],
+  blocks: ['minecraft:air', 'minecraft:stone', 'minecraft:cobblestone', 'minecraft:oak_planks', 'minecraft:oak_log', 'minecraft:spruce_planks', 'minecraft:stone_bricks', 'minecraft:bricks', 'minecraft:glass', 'minecraft:dirt', 'minecraft:grass_block', 'minecraft:sand', 'minecraft:gravel', 'minecraft:water', 'minecraft:lava', 'minecraft:torch', 'minecraft:lantern', 'minecraft:oak_door[open=true]', 'minecraft:oak_fence', 'minecraft:hay_block', 'minecraft:white_wool', 'minecraft:fire']
 };
 
 const F = {

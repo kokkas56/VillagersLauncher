@@ -9,10 +9,10 @@
 // (ключи берутся у активной по «Монтажу» камеры) и события света/звука/клонеров. Сгенерированное помечено gen:true.
 import { clonerPlacements } from './mograph.js';
 
-export const OBJ_TYPES = ['camera', 'actor', 'light', 'sound', 'marker', 'path', 'group', 'cloner', 'effector', 'block', 'template'];
+export const OBJ_TYPES = ['camera', 'actor', 'light', 'sound', 'marker', 'path', 'group', 'cloner', 'effector', 'block', 'template', 'structure'];
 export const OBJ_LABEL = {
   camera: 'Камера', actor: 'Актёр', light: 'Свет', sound: 'Звук', marker: 'Метка', path: 'Путь', group: 'Группа',
-  cloner: 'Клонер', effector: 'Эффектор', block: 'Блок', template: 'Шаблон'
+  cloner: 'Клонер', effector: 'Эффектор', block: 'Блок', template: 'Шаблон', structure: 'Постройка'
 };
 export const INTERPS = ['bezier', 'linear', 'step'];
 export const INTERP_LABEL = { bezier: 'Безье (плавно)', linear: 'Линейно', step: 'Ступенька' };
@@ -27,6 +27,7 @@ export const CHANNELS = {
   group: ['pos.x', 'pos.y', 'pos.z'],
   cloner: ['pos.x', 'pos.y', 'pos.z'],
   effector: ['strength'],
+  structure: ['pos.x', 'pos.y', 'pos.z'],
   actor: [], block: [], template: []
 };
 // каналы-«переключатели»: всегда ступенькой
@@ -58,6 +59,8 @@ export function defaultProps(type) {
     case 'effector': return { kind: 'random', strength: 1, pos: [0, 0, 0], rot: 0, scale: 0, seed: 1, every: 2, chance: 0.5, invert: false, amp: 3, freq: 0.1 };
     case 'block': return { block: 'minecraft:oak_log', state: '' };
     case 'template': return { template: '' };
+    // постройка из библиотеки (studio/structures/<id>.nbt): ставится целиком, поворот по 90°, отражение по X
+    case 'structure': return { pos: [0, 64, 0], structure: '', rot: 0, mirror: false, preview: true, appearAt: null, removeAtEnd: true };
     default: return {};
   }
 }
@@ -379,8 +382,23 @@ export function compileSounds(scene) {
 }
 // клонер «появляется в момент t»: событие мира «bake» (игра ставит блоки сама, по тикам; removeAtEnd — вернуть в конце)
 export const SCENE_CLONE_MAX = 20000;
+// постройка-объект → одно размещение шаблона (как у клонера): { pos, rot, template, mirror? }
+export function structurePlacements(scene, o, t) {
+  const p = propsAt(o, t || 0);
+  if (!p.structure) return [];
+  const wp = worldPos(scene, o, t || 0) || [0, 64, 0];
+  const pl = { pos: wp.map((v) => Math.floor(v)), rot: [0, 90, 180, 270].includes(p.rot) ? p.rot : 0, template: p.structure };
+  if (p.mirror) pl.mirror = true;
+  return [pl];
+}
 export function compileCloners(scene) {
   const ev = [];
+  for (const o of (scene.objects || []).filter((x) => x.type === 'structure' && isActive(scene, x))) {
+    const at = o.props && o.props.appearAt;
+    if (!isNum(at) || at < 0) continue;
+    const pl = structurePlacements(scene, o, at);
+    if (pl.length) ev.push({ t: Math.round(at), do: 'bake', id: o.id, placements: pl, removeAtEnd: o.props.removeAtEnd !== false, gen: true, src: o.id });
+  }
   for (const o of (scene.objects || []).filter((x) => x.type === 'cloner' && isActive(scene, x))) {
     const at = o.props && o.props.appearAt;
     if (!isNum(at) || at < 0) continue;
@@ -480,6 +498,7 @@ export function gameObject(scene, o, t, selected) {
     case 'marker': props.label = p.label || o.name; break;
     case 'sound': props.sound = p.id; if (!isP3(p.pos)) delete props.pos; break;
     case 'cloner': props.mode = p.mode; break;
+    case 'structure': props.structure = p.structure || ''; props.rot = p.rot || 0; props.mirror = !!p.mirror; if (props.pos) props.pos = props.pos.map((v) => Math.floor(v)); break;
     case 'effector': props.kind = p.kind; { const cl = o.parent && objById(scene, o.parent); const cp = cl && worldPos(scene, cl, t); if (!props.pos && cp) props.pos = cp.map(r3); } break;
     case 'actor': {
       const ap = actorPosAt(scene, o.actor, t);
@@ -596,6 +615,12 @@ export function validateObjects(scene, add, E, W) {
     if ((o.type === 'block' || o.type === 'template' || o.type === 'effector') && !(o.parent && (objById(scene, o.parent) || {}).type === 'cloner')) {
       const linked = o.type === 'effector' && objs.some((c) => c && c.type === 'cloner' && ((c.props || {}).effectors || []).includes(o.id));
       if (!linked) add(W, OBJ_LABEL[o.type] + ' ' + nm + ': работает только внутри клонера — перетащи его в клонер', sel);
+    }
+    if (o.type === 'structure') {
+      if (!p.structure) add(W, 'Постройка ' + nm + ': не выбрана постройка из библиотеки — ничего не появится', sel);
+      else if (!/^[a-z0-9_-]{1,64}$/.test(p.structure) && !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(p.structure)) add(E, 'Постройка ' + nm + ': id постройки — латиница, цифры, _ и -', sel);
+      if (p.rot !== undefined && ![0, 90, 180, 270].includes(p.rot)) add(E, 'Постройка ' + nm + ': поворот — 0, 90, 180 или 270', sel);
+      if (isNum(p.appearAt) && isNum(len) && p.appearAt > len) add(W, 'Постройка ' + nm + ': появляется после конца сцены', sel);
     }
     if (o.type === 'cloner') {
       const m = p.mode;

@@ -1,13 +1,23 @@
-// Граф диалога (SVG): узлы-карточки, стрелки от выходов к узлам.
+// Граф диалога или схемы (SVG): узлы-карточки, стрелки от выходов к узлам.
 // Тяни карточку — двигать; тяни от кружка справа — провести стрелку; колесо — масштаб; тяни фон — сдвиг;
 // правый клик по фону — добавить узел; правый клик по узлу — меню узла.
+// kit — что за граф (виды узлов, размеры, выходы): по умолчанию диалог; «Схемы» передают свой (schemeKit.js).
+// trace — { id узла: { ok, n } }: подсветка узлов, которые только что выполнила игра (как отладка блюпринтов UE).
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Icon from '../components/Icon.jsx';
 import { NODE_DEFS, PALETTE, nodeBox, HEAD, isEndRef, nodeOutputs, getOut } from './dialog.js';
 
 const GRID = 10;
+export const DIALOG_KIT = {
+  NODE_DEFS, nodeBox, isEndRef, nodeOutputs, getOut,
+  hasInput: () => true, isComment: () => false,
+  palette: () => PALETTE.map((t) => ({ type: t, label: NODE_DEFS[t].label, color: NODE_DEFS[t].color, hint: NODE_DEFS[t].hint })),
+  nodeMenu: null, empty: 'Пусто. Правый клик — добавить первый узел.', what: 'диалог'
+};
 
-export default function Graph({ dialog, refs, sel, onSelect, edit, gesture, hp, issueNodes, onAdd, onLink, onDelete, onDuplicate, onStart, onLayout, onReadFrom, focus }) {
+export default function Graph({ dialog, refs, sel, onSelect, edit, gesture, hp, issueNodes, onAdd, onLink, onDelete, onDuplicate, onStart, onLayout, onReadFrom, focus, kit, trace, bar }) {
+  const K = kit || DIALOG_KIT;
+  const KN = K.NODE_DEFS;
   const wrapRef = useRef(null);
   const svgRef = useRef(null);
   const [size, setSize] = useState({ w: 600, h: 400 });
@@ -28,9 +38,9 @@ export default function Graph({ dialog, refs, sel, onSelect, edit, gesture, hp, 
 
   const boxes = useMemo(() => {
     const m = {};
-    for (const [id, n] of Object.entries(nodes)) m[id] = nodeBox(n, refs);
+    for (const [id, n] of Object.entries(nodes)) m[id] = K.nodeBox(n, refs);
     return m;
-  }, [nodes, refs]);
+  }, [nodes, refs, K]);
 
   const latest = useRef(null);
   latest.current = { nodes, boxes, size };
@@ -115,6 +125,19 @@ export default function Graph({ dialog, refs, sel, onSelect, edit, gesture, hp, 
       edit((d) => ({ ...d, nodes: { ...d.nodes, [id]: { ...d.nodes[id], x: sn(x0 + dx), y: sn(y0 + dy) } } }), { silent: true });
     });
   };
+  const startResize = (e, id) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const sx = e.clientX, sy = e.clientY;
+    const n0 = nodes[id];
+    const w0 = n0.w || 220, h0 = n0.h || 80, k = viewRef.current.k;
+    let moved = false;
+    dragWin((ev) => {
+      if (!moved) { moved = true; gesture(); }
+      const w = Math.max(120, Math.round((w0 + (ev.clientX - sx) / k) / GRID) * GRID), h = Math.max(50, Math.round((h0 + (ev.clientY - sy) / k) / GRID) * GRID);
+      edit((d) => ({ ...d, nodes: { ...d.nodes, [id]: { ...d.nodes[id], w, h } } }), { silent: true });
+    });
+  };
   const startPort = (e, from, key) => {
     if (e.button !== 0) return;
     e.stopPropagation();
@@ -138,19 +161,19 @@ export default function Graph({ dialog, refs, sel, onSelect, edit, gesture, hp, 
     const y = Math.min(cy - r.top, r.height - Math.min(330, 40 + items.length * 34));
     setMenu({ x: Math.max(4, x), y: Math.max(4, y), items, title });
   };
-  const paletteItems = (pos, from) => PALETTE.map((t) => ({ label: NODE_DEFS[t].label, color: NODE_DEFS[t].color, hint: NODE_DEFS[t].hint, run: () => onAdd(t, pos, from) }));
+  const paletteItems = (pos, from) => K.palette(from).map((it) => (it.head ? it : { label: it.label, color: it.color, hint: it.hint, run: () => onAdd(it.type, pos, from, it.preset) }));
   const onCtx = (e) => {
     e.preventDefault();
     const g = e.target.closest && e.target.closest('[data-node]');
     if (g) {
       const id = g.getAttribute('data-node');
       onSelect({ node: id });
-      openMenu(e.clientX, e.clientY, [
+      openMenu(e.clientX, e.clientY, K.nodeMenu ? K.nodeMenu(id, nodes[id]) : [
         { label: 'Сделать стартом', hint: 'Диалог начнётся с этого узла.', disabled: dialog.start === id || nodes[id].type === 'end', run: () => onStart(id) },
         { label: 'Прочитать отсюда', hint: 'Открыть «Прочитать как игрок» с этого узла.', run: () => onReadFrom(id) },
         { label: 'Копия рядом', hint: 'Сделать копию узла (стрелки не копируются). Ctrl+D', run: () => onDuplicate(id) },
         { label: 'Удалить', hint: 'Удалить узел и стрелки, ведущие в него. Delete', run: () => onDelete(id) }
-      ], (NODE_DEFS[nodes[id].type] || {}).label + ' «' + id + '»');
+      ], (KN[nodes[id].type] || {}).label + ' «' + id + '»');
       return;
     }
     const w = toWorld(e.clientX, e.clientY);
@@ -169,14 +192,15 @@ export default function Graph({ dialog, refs, sel, onSelect, edit, gesture, hp, 
   const edges = [];
   for (const [id, n] of Object.entries(nodes)) {
     const b = boxes[id];
-    for (const o of nodeOutputs(n)) {
-      const t = getOut(n, o.key);
+    for (const o of K.nodeOutputs(n)) {
+      const t = K.getOut(n, o.key);
       if (!t) continue;
       const py = b.single != null ? b.single : (b.rows.find((r) => r.key === o.key) || {}).y;
       const x1 = (n.x || 0) + b.w, y1 = (n.y || 0) + py;
       let x2, y2, stub = false, broken = false;
-      if (nodes[t]) { x2 = nodes[t].x || 0; y2 = (nodes[t].y || 0) + (nodes[t].type === 'end' ? 15 : HEAD / 2); } else if (isEndRef(t, nodes)) { x2 = x1 + 46; y2 = y1; stub = true; } else { x2 = x1 + 46; y2 = y1; broken = true; }
-      edges.push({ id: id + '>' + o.key, from: id, key: o.key, x1, y1, x2, y2, stub, broken, color: (NODE_DEFS[n.type] || {}).color, label: o.label, t });
+      if (nodes[t]) { x2 = nodes[t].x || 0; y2 = (nodes[t].y || 0) + (nodes[t].type === 'end' ? 15 : HEAD / 2); } else if (K.isEndRef(t, nodes)) { x2 = x1 + 46; y2 = y1; stub = true; } else { x2 = x1 + 46; y2 = y1; broken = true; }
+      const hotE = trace && trace[id] && trace[t] && trace[t].n > trace[id].n;
+      edges.push({ id: id + '>' + o.key, from: id, key: o.key, x1, y1, x2, y2, stub, broken, color: (KN[n.type] || {}).color, label: o.label, t, traced: hotE });
     }
   }
   const curve = (x1, y1, x2, y2) => {
@@ -197,13 +221,14 @@ export default function Graph({ dialog, refs, sel, onSelect, edit, gesture, hp, 
         <button className="btn sm primary" onClick={(e) => { const b = e.currentTarget.getBoundingClientRect(); const c = toWorld(svgRef.current.getBoundingClientRect().left + size.w / 2, svgRef.current.getBoundingClientRect().top + size.h / 2); openMenu(b.left, b.bottom + 4, paletteItems({ x: c.x - 110, y: c.y - 30 }), 'Добавить узел'); }} {...hp('Добавить узел в середину экрана. Быстрее: правый клик по пустому месту — узел встанет прямо туда; или тяни стрелку от кружка в пустоту.')}>
           <Icon name="plus" size={11} /> Узел
         </button>
-        <button className="btn sm" onClick={() => { onLayout(); setTimeout(fit, 30); }} {...hp('Разложить узлы аккуратно слева направо: от старта по стрелкам. Отменяется Ctrl+Z.')}><Icon name="grid" size={11} /> Разложить</button>
+        <button className="btn sm" onClick={() => { onLayout(); setTimeout(fit, 30); }} {...hp('Разложить узлы аккуратно слева направо: от ' + (K.what === 'схема' ? 'событий' : 'старта') + ' по стрелкам. Отменяется Ctrl+Z.')}><Icon name="grid" size={11} /> Разложить</button>
+        {bar}
         <div className="grow" />
         <span className="muted small tl-tip">тяни от ● — стрелка · правый клик — меню · колесо — масштаб</span>
         <button className="btn sm ghost icon-btn" onClick={() => setView((v) => ({ ...v, k: Math.max(0.25, v.k / 1.25), x: size.w / 2 - (size.w / 2 - v.x) / 1.25, y: size.h / 2 - (size.h / 2 - v.y) / 1.25 }))} {...hp('Отдалить (или колесо мыши вниз).')}>−</button>
         <span className="gr-zoom mono small" {...hp('Масштаб графа.')}>{Math.round(view.k * 100)}%</span>
         <button className="btn sm ghost icon-btn" onClick={() => setView((v) => ({ ...v, k: Math.min(2, v.k * 1.25), x: size.w / 2 - (size.w / 2 - v.x) * 1.25, y: size.h / 2 - (size.h / 2 - v.y) * 1.25 }))} {...hp('Приблизить (или колесо мыши вверх).')}>+</button>
-        <button className="btn sm ghost" onClick={() => fit(true)} {...hp('Показать весь диалог целиком.')}>Всё видно</button>
+        <button className="btn sm ghost" onClick={() => fit(true)} {...hp('Показать ' + (K.what === 'схема' ? 'всю схему' : 'весь диалог') + ' целиком.')}>Всё видно</button>
       </div>
       <div className="gr-wrap" ref={wrapRef}>
         <svg ref={svgRef} className="gr-svg" width={size.w} height={size.h} onPointerDown={startBg} onContextMenu={onCtx}>
@@ -221,7 +246,7 @@ export default function Graph({ dialog, refs, sel, onSelect, edit, gesture, hp, 
               const hot = selNode && (selNode === ed.from || selNode === ed.t);
               const d = curve(ed.x1, ed.y1, ed.x2, ed.y2);
               return (
-                <g key={ed.id} className={'gr-edge' + (isSel ? ' sel' : '') + (hot ? ' hot' : '') + (ed.broken ? ' broken' : '')}
+                <g key={ed.id} className={'gr-edge' + (isSel ? ' sel' : '') + (hot ? ' hot' : '') + (ed.broken ? ' broken' : '') + (ed.traced ? ' traced' : '')}
                   onPointerDown={(e) => { if (e.button !== 0) return; e.stopPropagation(); onSelect({ edge: { from: ed.from, key: ed.key } }); }}
                   onMouseEnter={hp('Стрелка «' + ed.label + '» → ' + ed.t + '. Щёлкни, чтобы выбрать; Delete — убрать стрелку. Перетяни кружок заново — переведётся на другой узел.').onMouseEnter}>
                   <path d={d} className="gr-hit" />
@@ -236,22 +261,23 @@ export default function Graph({ dialog, refs, sel, onSelect, edit, gesture, hp, 
               const py = b.single != null ? b.single : (b.rows.find((r) => r.key === link.key) || {}).y;
               return <path d={curve((n.x || 0) + b.w, (n.y || 0) + py, link.x, link.y)} className="gr-temp" />;
             })()}
-            {Object.entries(nodes).map(([id, n]) => (
+            {Object.entries(nodes).sort((a, b) => (K.isComment(b[1]) ? 1 : 0) - (K.isComment(a[1]) ? 1 : 0)).map(([id, n]) => (
               <Node key={id} id={id} n={n} b={boxes[id]} start={dialog.start === id} sel={selNode === id} bad={issueNodes && issueNodes[id]}
-                onDown={startNode} onPort={startPort} hp={hp} linking={!!link && link.from !== id} />
+                onDown={startNode} onPort={startPort} hp={hp} linking={!!link && link.from !== id} K={K} tr={trace && trace[id]}
+                onResize={K.isComment(n) ? (e) => startResize(e, id) : null} />
             ))}
           </g>
         </svg>
-        {!Object.keys(nodes).length && <div className="gr-empty muted">Пусто. Правый клик — добавить первый узел.</div>}
+        {!Object.keys(nodes).length && <div className="gr-empty muted">{K.empty}</div>}
         {menu && (
           <div className="tl-menu" style={{ left: menu.x, top: menu.y }}>
             {menu.title && <div className="tl-menu-title">{menu.title}</div>}
             <div className="tl-menu-list">
-              {menu.items.map((it, i) => (
+              {menu.items.map((it, i) => (it.head ? <div key={i} className="tl-menu-head">{it.head}</div> : (
                 <button key={i} className="tl-menu-item gr-menu-item" disabled={it.disabled} {...hp(it.hint)} onClick={() => { setMenu(null); it.run(); }}>
                   <span className="row">{it.color && <span className="tl-dot" style={{ background: it.color, marginTop: 0 }} />}{it.label}</span>
                 </button>
-              ))}
+              )))}
             </div>
           </div>
         )}
@@ -260,11 +286,23 @@ export default function Graph({ dialog, refs, sel, onSelect, edit, gesture, hp, 
   );
 }
 
-const Node = React.memo(function Node({ id, n, b, start, sel, bad, onDown, onPort, hp, linking }) {
-  const def = NODE_DEFS[n.type] || { label: n.type, color: '#999', hint: '' };
+const Node = React.memo(function Node({ id, n, b, start, sel, bad, onDown, onPort, hp, linking, K, tr, onResize }) {
+  const def = (K || DIALOG_KIT).NODE_DEFS[n.type] || { label: n.type, color: '#999', hint: '' };
   const x = n.x || 0, y = n.y || 0;
-  const cls = 'gn t-' + n.type + (sel ? ' sel' : '') + (bad ? ' bad-' + (bad === 'ошибка' ? 'e' : 'w') : '') + (linking ? ' drop' : '');
-  const tip = def.label + ' «' + id + '» — ' + def.hint + (bad ? ' (есть ' + bad + ' — смотри справа)' : '');
+  const cls = 'gn t-' + n.type + (sel ? ' sel' : '') + (bad ? ' bad-' + (bad === 'ошибка' ? 'e' : 'w') : '') + (linking ? ' drop' : '') + (tr ? ' traced ' + (tr.ok === false ? 'tr-no' : 'tr-ok') + (tr.last ? ' tr-last' : '') : '');
+  const tip = (b.title || def.label) + ' «' + id + '» — ' + (b.hint || def.hint) + (bad ? ' (есть ' + bad + ' — смотри справа)' : '');
+  if (K && K.isComment(n)) {
+    return (
+      <g transform={`translate(${x},${y})`} data-node={id} className={cls + ' gn-comment'} onPointerDown={(e) => onDown(e, id)} onMouseEnter={hp(tip).onMouseEnter}>
+        <rect width={b.w} height={b.h} rx={6} className="gn-cbox" />
+        <text x={10} y={16} className="gn-ctitle">✎ Комментарий</text>
+        {b.lines.map((l, i) => <text key={i} x={10} y={34 + i * 15} className="gn-ctxt">{l.t}</text>)}
+        <path d={`M${b.w - 12},${b.h - 3} L${b.w - 3},${b.h - 12} M${b.w - 7},${b.h - 3} L${b.w - 3},${b.h - 7}`} className="gn-grip" onPointerDown={onResize} />
+        <rect x={b.w - 14} y={b.h - 14} width={14} height={14} fill="transparent" style={{ cursor: 'nwse-resize' }} onPointerDown={onResize}><title>Тяни — изменить размер</title></rect>
+      </g>
+    );
+  }
+  const hasIn = !K || K.hasInput(n);
   if (n.type === 'end') {
     return (
       <g transform={`translate(${x},${y})`} data-node={id} className={cls} onPointerDown={(e) => onDown(e, id)} onMouseEnter={hp(tip).onMouseEnter}>
@@ -282,8 +320,9 @@ const Node = React.memo(function Node({ id, n, b, start, sel, bad, onDown, onPor
         <g className="gn-start"><rect x={0} y={-17} width={52} height={15} rx={4} /><text x={26} y={-6} textAnchor="middle">СТАРТ</text></g>
       )}
       <rect width={b.w} height={b.h} rx={9} className="gn-box" />
+      {tr && <rect x={-4} y={-4} width={b.w + 8} height={b.h + 8} rx={12} className="gn-glow" />}
       <path d={`M0,9 a9,9 0 0 1 9,-9 h${b.w - 18} a9,9 0 0 1 9,9 v${HEAD - 9} h-${b.w} z`} style={{ fill: def.color }} className="gn-head" />
-      <text x={11} y={17.5} className="gn-type" style={{ fill: def.color }}>{def.label}</text>
+      <text x={11} y={17.5} className="gn-type" style={{ fill: def.color }}>{b.title || def.label}</text>
       <text x={b.w - (b.single != null ? 16 : 10)} y={17.5} textAnchor="end" className="gn-id">{id}</text>
       {b.lines.map((l, i) => <text key={i} x={11} y={HEAD + 4 + (i + 1) * 15 - 3} className={'gn-txt ' + l.cls}>{l.t}</text>)}
       {b.rows.map((r, i) => (
@@ -292,9 +331,10 @@ const Node = React.memo(function Node({ id, n, b, start, sel, bad, onDown, onPor
           {n.type === 'choice' && <text x={11} y={r.y + 4} className="gn-num">{i + 1}.</text>}
           {r.cond && <g><circle cx={b.w - 22} cy={r.y} r={6} className="gn-qc" /><text x={b.w - 22} y={r.y + 3.5} textAnchor="middle" className="gn-q">?</text><title>У варианта есть условие</title></g>}
           {r.act && <g><circle cx={b.w - (r.cond ? 37 : 22)} cy={r.y} r={6} className="gn-ac" /><text x={b.w - (r.cond ? 37 : 22)} y={r.y + 3.5} textAnchor="middle" className="gn-a">⚙</text><title>При выборе выполняются действия</title></g>}
-          <text x={n.type === 'choice' ? 26 : 11} y={r.y + 4} className={'gn-opt' + (n.type === 'cond' ? (r.key === 'then' ? ' yes' : ' no') : '')}>{n.type === 'cond' ? (r.key === 'then' ? '✓ да' : '✕ нет') : r.label}</text>
-          <circle cx={b.w} cy={r.y} r={5.5} className="gn-port" data-port={r.key} onPointerDown={(e) => onPort(e, id, r.key)} style={{ fill: def.color }}>
-            <title>Тяни отсюда стрелку к следующему узлу</title>
+          <text x={n.type === 'choice' ? 26 : 11} y={r.y + 4} className={'gn-opt' + (n.type === 'cond' ? (r.key === 'then' ? ' yes' : ' no') : '') + (r.add ? ' add' : '')}>{n.type === 'cond' ? (r.key === 'then' ? '✓ да' : '✕ нет') : r.label}</text>
+          {r.extra && <text x={b.w - 14} y={r.y + 4} textAnchor="end" className="gn-id">{r.extra}</text>}
+          <circle cx={b.w} cy={r.y} r={r.add ? 4.5 : 5.5} className={'gn-port' + (r.add ? ' add' : '')} data-port={r.key} onPointerDown={(e) => onPort(e, id, r.key)} style={{ fill: r.add ? 'transparent' : def.color, stroke: r.add ? def.color : undefined }}>
+            <title>{r.add ? 'Тяни отсюда — новый выход' : 'Тяни отсюда стрелку к следующему узлу'}</title>
           </circle>
         </g>
       ))}
@@ -303,7 +343,7 @@ const Node = React.memo(function Node({ id, n, b, start, sel, bad, onDown, onPor
           <title>Тяни отсюда стрелку к следующему узлу</title>
         </circle>
       )}
-      <circle cx={0} cy={HEAD / 2} r={4.5} className="gn-in" />
+      {hasIn && <circle cx={0} cy={HEAD / 2} r={4.5} className="gn-in" />}
     </g>
   );
 });

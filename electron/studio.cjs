@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const net = require('net');
 const V = require('./studio-validate.cjs');
+const NBT = require('./nbt.cjs');
 
 const SAFE_ID = /^[a-z0-9_-]{1,64}$/;
 const DEFAULT_PORT = 47311;
@@ -16,7 +17,8 @@ module.exports = function setupStudio({ handle, send, store }) {
   const KINDS = {
     scenes: { dir: 'scenes', what: 'Сцена', whatGen: 'сцены', clean: (d) => V.cleanScene(d), norm: (d) => V.normalizeScene(d) },
     dialogs: { dir: 'dialogs', what: 'Диалог', whatGen: 'диалога', clean: (d) => V.cleanDoc(d), norm: (d) => V.normalizeDialog(d) },
-    quests: { dir: 'quests', what: 'Задание', whatGen: 'задания', clean: (d) => V.cleanDoc(d), norm: (d) => V.normalizeQuest(d) }
+    quests: { dir: 'quests', what: 'Задание', whatGen: 'задания', clean: (d) => V.cleanDoc(d), norm: (d) => V.normalizeQuest(d) },
+    schemes: { dir: 'schemes', what: 'Схема', whatGen: 'схемы', clean: (d) => V.cleanDoc(d), norm: (d) => V.normalizeScheme(d) }
   };
   function kindOf(k) { const d = KINDS[k]; if (!d) throw new Error('Неизвестный вид файлов Студии: ' + k); return d; }
   const kindDir = (k) => path.join(root(), kindOf(k).dir);
@@ -40,8 +42,10 @@ module.exports = function setupStudio({ handle, send, store }) {
     fs.renameSync(tmp, file);
   }
   function readJson(file) { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')); }
+  const structDir = () => path.join(root(), 'structures');
   function ensure() {
     for (const k of Object.keys(KINDS)) fs.mkdirSync(kindDir(k), { recursive: true });
+    fs.mkdirSync(structDir(), { recursive: true });
     if (!fs.existsSync(projectFile())) writeJson(projectFile(), V.defaultProject());
   }
   function readProject() {
@@ -78,6 +82,7 @@ module.exports = function setupStudio({ handle, send, store }) {
         const it = { id, title: d.title || id, mtime };
         if (k === 'dialogs') { it.nodes = d.nodes && typeof d.nodes === 'object' ? Object.keys(d.nodes) : []; it.speaker = d.speaker || 'any'; }
         if (k === 'quests') it.steps = Array.isArray(d.steps) ? d.steps.map((s) => ({ id: s && s.id, title: s && s.title })) : [];
+        if (k === 'schemes') { const ns = d.nodes && typeof d.nodes === 'object' ? Object.values(d.nodes) : []; it.nodes = Object.keys(d.nodes || {}); it.enabled = d.enabled !== false; it.events = ns.filter((n) => n && n.type === 'event').map((n) => n.event); const sg = V.schemeSignals(d); it.raised = sg.raised; it.listened = sg.listened; }
         return it;
       } catch (e) { return { id, title: id, mtime, broken: e.message, nodes: [], steps: [] }; }
     }).sort((a, b) => String(a.title).localeCompare(String(b.title), 'ru'));
@@ -126,12 +131,13 @@ module.exports = function setupStudio({ handle, send, store }) {
       return o;
     },
     scenes: (from, to) => (o) => (o.scene === from ? { ...o, scene: to } : o),
-    quests: (from, to) => (o) => (o.quest === from ? { ...o, quest: to } : o)
+    quests: (from, to) => (o) => (o.quest === from ? { ...o, quest: to } : o),
+    schemes: (from, to) => (o) => (o.scheme === from ? { ...o, scheme: to } : o)
   };
 
   handle('studio:open', () => {
     ensure();
-    return { dir: root(), out: outDir(), dev: devOn(), project: readProject(), scenes: list(), dialogs: listDocs('dialogs'), quests: listDocs('quests'), link: status() };
+    return { dir: root(), out: outDir(), dev: devOn(), project: readProject(), scenes: list(), dialogs: listDocs('dialogs'), quests: listDocs('quests'), schemes: listDocs('schemes'), structures: structList(), link: status() };
   });
   // ---- диалоги и задания (и сцены тем же путём): kind = 'scenes' | 'dialogs' | 'quests' ----
   handle('studio:docList', (k) => listDocs(k));
@@ -192,6 +198,7 @@ module.exports = function setupStudio({ handle, send, store }) {
       if (c.set === from) c = { ...c, set: to };
       if (c.add === from && typeof c.add === 'string') c = { ...c, add: to };
       if (c.do === 'var' && c.name === from) c = { ...c, name: to };
+      if (c.type === 'event' && c.event === 'var' && c.name === from) c = { ...c, name: to };
       return c;
     }, (s) => (s.includes('{var:' + from + '}') ? s.replace(re, '{var:' + to + '}') : s)) };
   });
@@ -206,6 +213,7 @@ module.exports = function setupStudio({ handle, send, store }) {
           if (typeof o.set === 'string') note(o.set, k, d);
           if (typeof o.add === 'string') note(o.add, k, d);
           if (o.do === 'var') note(o.name, k, d);
+          if (o.type === 'event' && o.event === 'var') note(o.name, k, d);
           return o;
         });
         walkStr(d, (s) => { for (const m of s.matchAll(/\{var:([^}]+)\}/g)) note(m[1], k, d); return s; });
@@ -269,7 +277,7 @@ module.exports = function setupStudio({ handle, send, store }) {
   });
   handle('studio:build', () => {
     const project = readProject();
-    const docs = { dialogs: [], quests: [] };
+    const docs = { dialogs: [], quests: [], schemes: [] };
     const scenes = [];
     const issues = [];
     for (const it of list()) {
@@ -281,19 +289,29 @@ module.exports = function setupStudio({ handle, send, store }) {
         scenes.push(s);
       } catch (e) { issues.push({ sev: V.ERR, scene: it.id, sel: null, msg: 'Файл сцены не читается: ' + e.message }); }
     }
-    for (const k of ['dialogs', 'quests']) {
+    const KIND1 = { dialogs: 'dialog', quests: 'quest', schemes: 'scheme' };
+    for (const k of ['dialogs', 'quests', 'schemes']) {
       for (const it of listDocs(k)) {
         try {
           const d = readJson(docFile(k, it.id));
-          if (d.id && d.id !== it.id) issues.push({ sev: V.WARN, kind: k === 'dialogs' ? 'dialog' : 'quest', doc: it.id, sel: null, msg: 'Файл ' + it.id + '.json, а внутри id «' + d.id + '» — при сборке берётся имя файла' });
+          if (d.id && d.id !== it.id) issues.push({ sev: V.WARN, kind: KIND1[k], doc: it.id, sel: null, msg: 'Файл ' + it.id + '.json, а внутри id «' + d.id + '» — при сборке берётся имя файла' });
           d.id = it.id;
           docs[k].push(d);
-        } catch (e) { issues.push({ sev: V.ERR, kind: k === 'dialogs' ? 'dialog' : 'quest', doc: it.id, sel: null, msg: 'Файл не читается: ' + e.message }); }
+        } catch (e) { issues.push({ sev: V.ERR, kind: KIND1[k], doc: it.id, sel: null, msg: 'Файл не читается: ' + e.message }); }
       }
     }
-    issues.push(...V.validateProject(project, scenes, docs));
+    issues.push(...V.validateProject(project, scenes, { dialogs: docs.dialogs, quests: docs.quests }));
+    // схемы: ссылки на сцены/диалоги/задания/постройки и сигналы между схемами
+    const structs = structList();
+    const sigs = { raised: new Set(), listened: new Set() };
+    for (const d of docs.schemes) { const sg = V.schemeSignals(d); sg.raised.forEach((x) => sigs.raised.add(x)); sg.listened.forEach((x) => sigs.listened.add(x)); }
+    const sctx = {
+      project, ids: docs.schemes.map((d) => d.id), scenes: scenes.map((s) => s.id), schemes: docs.schemes.map((d) => d.id), structures: structs.map((x) => x.id), signals: sigs,
+      dialogs: docs.dialogs.map((d) => ({ id: d.id, nodes: Object.keys(d.nodes || {}) })), quests: docs.quests.map((q) => ({ id: q.id, steps: (q.steps || []).map((x) => x && x.id) }))
+    };
+    for (const d of docs.schemes) issues.push(...V.validateScheme(d, sctx));
     const errors = issues.filter((i) => i.sev === V.ERR).length;
-    if (errors) return { ok: false, issues, errors, count: 0, dialogs: 0, quests: 0, dir: outDir() };
+    if (errors) return { ok: false, issues, errors, count: 0, dialogs: 0, quests: 0, schemes: 0, structures: 0, dir: outDir() };
     const out = outDir();
     const outScenes = path.join(out, 'scenes');
     fs.mkdirSync(outScenes, { recursive: true });
@@ -303,15 +321,28 @@ module.exports = function setupStudio({ handle, send, store }) {
     // убрать из сборки сцены, которых больше нет в проекте
     let removed = 0;
     for (const f of fs.readdirSync(outScenes)) if (f.endsWith('.json') && !keep.has(f)) { fs.unlinkSync(path.join(outScenes, f)); removed++; }
-    for (const k of ['dialogs', 'quests']) {
+    for (const k of ['dialogs', 'quests', 'schemes']) {
       const dir = path.join(out, k);
       fs.mkdirSync(dir, { recursive: true });
       const keepK = new Set();
       for (const d of docs[k]) { writeJson(path.join(dir, d.id + '.json'), KINDS[k].norm(d)); keepK.add(d.id + '.json'); }
       for (const f of fs.readdirSync(dir)) if (f.endsWith('.json') && !keepK.has(f)) { fs.unlinkSync(path.join(dir, f)); removed++; }
     }
-    writeJson(path.join(out, 'index.json'), { v: 2, built: new Date().toISOString(), scenes: scenes.map((s) => s.id), dialogs: docs.dialogs.map((d) => d.id), quests: docs.quests.map((d) => d.id) });
-    return { ok: true, issues, errors: 0, count: scenes.length, dialogs: docs.dialogs.length, quests: docs.quests.length, removed, dir: out };
+    // постройки: .nbt (+ .json с описанием) как есть
+    const sOut = path.join(out, 'structures');
+    fs.mkdirSync(sOut, { recursive: true });
+    const keepS = new Set();
+    for (const st of structs) {
+      for (const ext of ['.nbt', '.json']) {
+        const src = path.join(structDir(), st.id + ext);
+        if (!fs.existsSync(src)) continue;
+        fs.copyFileSync(src, path.join(sOut, st.id + ext));
+        keepS.add(st.id + ext);
+      }
+    }
+    for (const f of fs.readdirSync(sOut)) if (/\.(nbt|json)$/.test(f) && !keepS.has(f)) { fs.unlinkSync(path.join(sOut, f)); removed++; }
+    writeJson(path.join(out, 'index.json'), { v: 3, built: new Date().toISOString(), scenes: scenes.map((s) => s.id), dialogs: docs.dialogs.map((d) => d.id), quests: docs.quests.map((d) => d.id), schemes: docs.schemes.map((d) => d.id), structures: structs.map((x) => x.id) });
+    return { ok: true, issues, errors: 0, count: scenes.length, dialogs: docs.dialogs.length, quests: docs.quests.length, schemes: docs.schemes.length, structures: structs.length, removed, dir: out };
   });
 
   // ---------- живая связь с игрой ----------
@@ -454,6 +485,93 @@ module.exports = function setupStudio({ handle, send, store }) {
     if (!V.isVarName(name)) throw new Error('Имя переменной — латиница, цифры, _ . -');
     return write({ t: 'setVar', name, value });
   });
+
+  // ---------- фаза 4: «Схемы» ----------
+  handle('studio:scheme', (scheme) => write({ t: 'scheme', scheme: V.normalizeScheme(scheme) }));
+  // запустить событие вручную: { id, node?, ctx? } — игра шлёт {t:'trace', …} по шагам, если трассировка включена
+  handle('studio:schemeFire', ({ id, node, ctx }) => { const m = { t: 'schemeFire', id: String(id) }; if (node) m.node = String(node); if (ctx && typeof ctx === 'object') m.ctx = ctx; return write(m); });
+  handle('studio:schemeTrace', ({ on, id }) => { const m = { t: 'schemeTrace', on: !!on }; if (id) m.id = String(id); return write(m); });
+  // ---------- фаза 4: «Строительство» ----------
+  // палитра блоков игры: {t:'blocks', ids:[…], colors:{id:[r,g,b]}, flags?:{id:'tge'}} — первый раз считается долго
+  handle('studio:blocks', () => request({ t: 'blocks' }, 'blocks', 30000));
+  // библиотека построек: studio/structures/<id>.nbt (+ <id>.json описание, <id>.png картинка сверху)
+  function structList() {
+    const dir = structDir();
+    if (!fs.existsSync(dir)) return [];
+    const out = [];
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.nbt')) continue;
+      const id = f.slice(0, -4);
+      if (!SAFE_ID.test(id)) continue;
+      let meta = {};
+      try { meta = readJson(path.join(dir, id + '.json')); } catch (_) {}
+      let mtime = 0;
+      try { mtime = fs.statSync(path.join(dir, f)).mtimeMs; } catch (_) {}
+      out.push({ ...meta, id, name: meta.name || id, mtime, png: fs.existsSync(path.join(dir, id + '.png')) });
+    }
+    return out.sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru'));
+  }
+  handle('studio:structList', () => { ensure(); return structList(); });
+  handle('studio:structPng', (id) => {
+    if (!SAFE_ID.test(String(id || ''))) return null;
+    const f = path.join(structDir(), id + '.png');
+    return fs.existsSync(f) ? 'data:image/png;base64,' + fs.readFileSync(f).toString('base64') : null;
+  });
+  // сохранить постройку из Студии (3D-модель → блоки): { id, name, size, palette, blocks:[x,y,z,p,…], png?, source?, counts? }
+  handle('studio:structSave', ({ id, name, size, palette, blocks, png, source, counts, overwrite }) => {
+    ensure();
+    if (!SAFE_ID.test(String(id || ''))) throw new Error('Имя постройки: только маленькие латинские буквы, цифры, _ и -');
+    if (!Array.isArray(size) || size.length !== 3 || size.some((v) => !(v > 0 && v <= 512))) throw new Error('Размер постройки — от 1 до 512 по каждой оси');
+    if (!Array.isArray(palette) || !palette.length) throw new Error('Пустая палитра');
+    const arr = blocks && blocks.length !== undefined ? blocks : [];
+    const f = path.join(structDir(), id + '.nbt');
+    if (!overwrite && fs.existsSync(f)) throw new Error('Постройка «' + id + '» уже есть — выбери другое имя');
+    fs.writeFileSync(f, NBT.structureNbt({ size, palette, blocks: arr }));
+    const cnt = {};
+    if (counts && typeof counts === 'object') Object.assign(cnt, counts);
+    else for (let i = 3; i < arr.length; i += 4) { const b = palette[arr[i]]; cnt[b] = (cnt[b] || 0) + 1; }
+    writeJson(path.join(structDir(), id + '.json'), { v: 1, id, name: String(name || id).slice(0, 80), size, blocks: Math.floor(arr.length / 4), palette: cnt, source: source || 'studio', created: new Date().toISOString() });
+    if (typeof png === 'string' && png.startsWith('data:image/png;base64,')) fs.writeFileSync(path.join(structDir(), id + '.png'), Buffer.from(png.slice(22), 'base64'));
+    return { id, file: f };
+  });
+  handle('studio:structDelete', (id) => {
+    if (!SAFE_ID.test(String(id || ''))) throw new Error('Неверное имя постройки');
+    const trash = path.join(root(), '.trash', 'structures');
+    fs.mkdirSync(trash, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    for (const ext of ['.nbt', '.json', '.png']) { const f = path.join(structDir(), id + ext); if (fs.existsSync(f)) fs.renameSync(f, path.join(trash, id + '-' + stamp + ext)); }
+    return true;
+  });
+  handle('studio:structRename', ({ id, name }) => {
+    if (!SAFE_ID.test(String(id || ''))) throw new Error('Неверное имя постройки');
+    const f = path.join(structDir(), id + '.json');
+    let meta = { v: 1, id };
+    try { meta = readJson(f); } catch (_) {}
+    writeJson(f, { ...meta, name: String(name || id).slice(0, 80) });
+    return true;
+  });
+  // Большие объёмы блоков (3D-модели, сотни тысяч): шлём частями. Компактный формат части:
+  // { t:'ghostChunk', id, part, parts, origin:[x,y,z], palette:[блоки], blocks:[dx,dy,dz,p, …] } — до CHUNK блоков в части.
+  // part 0 очищает старый призрак с этим id; последняя часть (part === parts-1) — «можно рисовать». Пустой blocks в одной части — убрать.
+  // «Запечь» так же: { t:'bakeChunk', id, undoId, part, parts, origin, palette, blocks, replace? } — игра копит части и начинает ставить
+  // после последней; прогресс и итог — обычные {t:'bake', undoId, state, done, total}; отмена — {t:'undo', undoId}.
+  const CHUNK = 16384;
+  function stream(kind, { id, origin, palette, blocks, undoId, replace }) {
+    const arr = blocks && blocks.length !== undefined ? blocks : [];
+    const n = Math.floor(arr.length / 4);
+    const parts = Math.max(1, Math.ceil(n / CHUNK));
+    const u = kind === 'bakeChunk' ? String(undoId || ('bake_' + Date.now().toString(36))) : null;
+    for (let p = 0; p < parts; p++) {
+      const slice = Array.prototype.slice.call(arr, p * CHUNK * 4, Math.min(n, (p + 1) * CHUNK) * 4);
+      const m = { t: kind, id: String(id || ''), part: p, parts, origin: (origin || [0, 0, 0]).map((v) => Math.floor(v)), palette, blocks: slice };
+      if (u) m.undoId = u;
+      if (kind === 'bakeChunk' && replace === false) m.replace = false;
+      write(m);
+    }
+    return { sent: true, parts, count: n, undoId: u };
+  }
+  handle('studio:ghostStream', (a) => stream('ghostChunk', a || {}));
+  handle('studio:bakeStream', (a) => stream('bakeChunk', a || {}));
 
   return { info: () => info, status, write: (m) => write(m) };
 };
