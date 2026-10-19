@@ -108,7 +108,7 @@ export function DocList({ kind, list, cur, open, create, reload, flush, onRename
       {adding != null && (
         <form className="st-mini-form" onSubmit={(e) => { e.preventDefault(); if (!adding.trim()) return; create(adding.trim()); setAdding(null); }}>
           <input className="input sm" autoFocus placeholder={L.placeholder} value={adding} onChange={(e) => setAdding(e.target.value)} />
-          <div className="row"><span className="muted small mono grow">{adding.trim() ? uniqueId(slug(adding, kind === 'quests' ? 'quest' : 'dialog'), list.map((x) => x.id)) + '.json' : ''}</span><button className="btn sm primary">Создать</button></div>
+          <div className="row"><span className="muted small mono grow">{adding.trim() ? uniqueId(slug(adding, kind === 'quests' ? 'quest' : kind === 'schemes' ? 'scheme' : 'dialog'), list.map((x) => x.id)) + '.json' : ''}</span><button className="btn sm primary">Создать</button></div>
         </form>
       )}
       {list.length > 7 && <input className="input sm" placeholder="Найти…" value={q} onChange={(e) => setQ(e.target.value)} {...hp('Поиск по названию и id.')} />}
@@ -151,7 +151,7 @@ export function IssuesMini({ list, max = 4 }) {
   );
 }
 
-const KIND_RU = { scene: 'сцена', dialog: 'диалог', quest: 'задание', vars: 'переменные', project: 'проект' };
+const KIND_RU = { scene: 'сцена', dialog: 'диалог', quest: 'задание', scheme: 'схема', vars: 'переменные', project: 'проект' };
 // список ошибок/предупреждений; щёлкнешь — выберется место
 export function IssueRows({ issues, onPick, showDoc }) {
   if (!issues.length) return <p className="muted"><Icon name="check" size={12} /> Ошибок и предупреждений нет.</p>;

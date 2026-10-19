@@ -1,10 +1,10 @@
-// Делает electron/studio-validate.cjs из src/studio/{mograph,scene3d,validate}.js
+// Делает electron/studio-validate.cjs из src/studio/{mograph,scene3d,validate,scheme}.js
 // (одна логика проверки и сборки сцен в окне и при «Собрать»). Каждый файл — в своей области видимости,
 // наружу выходят только export-имена; import разрешён лишь между этими файлами.
 const fs = require('fs');
 const path = require('path');
 const root = path.join(__dirname, '..');
-const FILES = ['mograph.js', 'scene3d.js', 'validate.js'];
+const FILES = ['mograph.js', 'scene3d.js', 'validate.js', 'scheme.js'];
 const all = [];
 let out = '// АВТОГЕНЕРАЦИЯ из src/studio/' + FILES.join(', ') + ' (node scripts/sync-studio.cjs) — не править руками.\n\'use strict\';\n';
 for (const f of FILES) {

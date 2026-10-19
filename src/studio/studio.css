@@ -457,3 +457,19 @@ form.sim-row { grid-template-columns: minmax(0, 1fr) auto; }
 .st-classic-wrap { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
 .st-classic-wrap > .studio { flex: 1; min-height: 0; }
 .st-classic-bar { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); }
+
+/* ---------- фаза 4: графы схем (общие классы графа) ---------- */
+.gn-glow { fill: none; stroke-width: 3; pointer-events: none; }
+.gn.traced.tr-ok .gn-glow { stroke: #5fe08a; filter: drop-shadow(0 0 6px rgba(95, 224, 138, 0.9)); }
+.gn.traced.tr-no .gn-glow { stroke: #ff6b5c; filter: drop-shadow(0 0 6px rgba(255, 107, 92, 0.9)); }
+.gn.traced.tr-last .gn-glow { animation: gn-pulse 0.9s ease-in-out infinite; }
+@keyframes gn-pulse { 50% { stroke-width: 5; opacity: 0.6; } }
+.gr-edge.traced .gr-line { stroke: #5fe08a !important; opacity: 1; stroke-width: 3; stroke-dasharray: 8 5; animation: gr-flow 0.6s linear infinite; }
+@keyframes gr-flow { to { stroke-dashoffset: -13; } }
+.gn-cbox { fill: rgba(154, 154, 120, 0.10); stroke: rgba(200, 200, 150, 0.35); stroke-dasharray: 5 4; }
+.gn-comment.sel .gn-cbox { stroke: #fff; stroke-dasharray: none; }
+.gn-ctitle { font-size: 10.5px; font-weight: 700; fill: #c9c99a; font-family: var(--font); pointer-events: none; }
+.gn-ctxt { font-size: 11.5px; fill: #d8d8c0; font-family: var(--font); pointer-events: none; }
+.gn-grip { stroke: #c9c99a; stroke-width: 1.4; cursor: nwse-resize; }
+.gn-opt.add { fill: var(--muted); font-style: italic; font-weight: 500; }
+.gn-port.add { stroke-width: 1.6; stroke-dasharray: 2 1.5; }

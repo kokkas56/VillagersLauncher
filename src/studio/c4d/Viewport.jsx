@@ -165,12 +165,20 @@ function Schematic() {
         it.pos = worldPos(scene, o, time);
         const p = propsAt(o, time);
         it.lit = !!p.on; it.extra = (p.positions || []);
+      } else if (o.type === 'structure') {
+        it.pos = worldPos(scene, o, time);
+        const p = propsAt(o, time);
+        const st = (core.structures || []).find((x) => x.id === p.structure);
+        if (st && Array.isArray(st.size)) {
+          const w = p.rot === 90 || p.rot === 270 ? st.size[2] : st.size[0], d = p.rot === 90 || p.rot === 270 ? st.size[0] : st.size[2];
+          it.foot = p.anchor === 'center' ? [-Math.floor(w / 2), -Math.floor(d / 2), w, d] : [0, 0, w, d];
+        }
       } else if (['block', 'template', 'effector'].includes(o.type)) continue;
       else it.pos = worldPos(scene, o, time);
       if (it.pos || it.points) out.push(it);
     }
     return out;
-  }, [scene, time]);
+  }, [scene, time, core.structures]); // eslint-disable-line
 
   // вписать всё при открытии сцены
   useEffect(() => {
@@ -260,7 +268,7 @@ function Schematic() {
         }
         const np = [r2(p[0] + dx), p[1], r2(p[2] + dz)];
         if (ob.type === 'actor') return { ...acc, actors: acc.actors.map((a) => (a.id === ob.actor ? { ...a, spawn: { ...(a.spawn || {}), pos: np } } : a)) };
-        if (ob.type === 'path' || ob.type === 'group' || ob.type === 'cloner' || ob.type === 'light' || ob.type === 'marker' || ob.type === 'sound' || ob.type === 'camera') {
+        if (ob.type === 'path' || ob.type === 'structure' || ob.type === 'group' || ob.type === 'cloner' || ob.type === 'light' || ob.type === 'marker' || ob.type === 'sound' || ob.type === 'camera') {
           let x = setChan(acc, ob.id, 'pos.x', t, np[0], autoKey);
           x = setChan(x, ob.id, 'pos.z', t, np[2], autoKey);
           return x;
@@ -343,6 +351,16 @@ function Schematic() {
           );
         }
         const x = SX(it.pos[0]), z = SZ(it.pos[2]);
+        if (o.type === 'structure') {
+          const f = it.foot;
+          return (
+            <g key={o.id} opacity={op}>
+              {f && <rect x={SX(Math.floor(it.pos[0]) + f[0])} y={SZ(Math.floor(it.pos[2]) + f[1])} width={f[2] * view.k} height={f[3] * view.k} fill="rgba(231,169,106,0.16)" stroke={col} strokeWidth={sl ? 1.8 : 1.1} strokeDasharray={o.props.preview ? '' : '4 3'} />}
+              <rect x={x - 5} y={z - 5} width={10} height={10} fill={col} />
+              {lbl(x, z)}
+            </g>
+          );
+        }
         if (o.type === 'cloner') return <g key={o.id} opacity={op}><rect x={x - 5} y={z - 5} width={10} height={10} fill="none" stroke={col} strokeWidth="1.6" transform={`rotate(45 ${x} ${z})`} />{lbl(x, z)}</g>;
         if (o.type === 'group') return <g key={o.id} opacity={op}><circle cx={x} cy={z} r={5} fill="none" stroke={col} strokeDasharray="2 2" />{lbl(x, z)}</g>;
         return <g key={o.id} opacity={op}><path d={`M${x} ${z - 6} L${x + 5} ${z} L${x} ${z + 6} L${x - 5} ${z}z`} fill={col} />{lbl(x, z)}</g>;

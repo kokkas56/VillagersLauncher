@@ -2,12 +2,13 @@
 import React, { useEffect, useState } from 'react';
 import { call, on } from '../../lib/api.js';
 import { Toasts } from '../../components/ui.jsx';
-import StudioApp, { TitleBar, Soon, LAYOUTS } from './StudioApp.jsx';
+import StudioApp, { TitleBar, LAYOUTS } from './StudioApp.jsx';
 import { useStudioCore, StudioProvider } from './core.jsx';
 import { Datalists } from '../fields.jsx';
 import DialogTab from '../DialogTab.jsx';
 import QuestTab from '../QuestTab.jsx';
 import VarsTab from '../VarsTab.jsx';
+import SchemeTab from '../SchemeTab.jsx';
 import { LinkCard, ProjectActors } from '../../pages/Studio.jsx';
 import './c4d.css';
 import '../studio.css';
@@ -33,10 +34,10 @@ function PopOut({ tab }) {
     tabs: <span className="dim" style={{ padding: '0 6px' }}>{label}</span>,
     linkCard: <LinkCard link={core.link} boot={core.boot || {}} setBoot={core.setBoot} hp={hp} toast={toast} setLink={core.setLink} />,
     hintBox: <div className="st-card" style={{ minHeight: 70 }}><b style={{ fontSize: 12 }}>Подсказка</b><div className="muted small" style={{ lineHeight: 1.45 }}>{core.hint}</div></div>,
-    buildBtn: <button className="btn sm" onClick={async () => { try { await core.flush(); const r = await call('studio:build'); toast(r.ok ? 'Собрано: сцен ' + r.count + ', диалогов ' + r.dialogs + ', заданий ' + r.quests : 'Не собрано: ошибок ' + r.errors, r.ok ? 'ok' : 'error', 6000); } catch (e) { toast(e.message, 'error'); } }}>Собрать</button>,
+    buildBtn: <button className="btn sm" onClick={async () => { try { await core.flush(); const r = await call('studio:build'); toast(r.ok ? 'Собрано: сцен ' + r.count + ', диалогов ' + r.dialogs + ', заданий ' + r.quests + ', схем ' + (r.schemes || 0) + ', построек ' + (r.structures || 0) : 'Не собрано: ошибок ' + r.errors, r.ok ? 'ok' : 'error', 6000); } catch (e) { toast(e.message, 'error'); } }}>Собрать</button>,
     actorsCard: <ProjectActors project={core.project} save={core.saveProject} hp={hp} toast={toast} sceneIds={null} addToScene={() => {}} />,
     toast, hp, api: core.api, link: core.link, project: core.project, saveProject: core.saveProject,
-    lists: { scenes: core.list, dialogs: core.dialogs, quests: core.quests }, reloadList: core.reloadAny, patchList: core.patchList, baseRefs: core.baseRefs,
+    lists: { scenes: core.list, dialogs: core.dialogs, quests: core.quests, schemes: core.schemes, structures: core.structures }, reloadList: core.reloadAny, patchList: core.patchList, baseRefs: core.baseRefs,
     addLog: core.addLog, gameVars: core.gameVars, setGameVars: core.setGameVars, setGameVarsState: core.setGameVarsState, questStates: core.questStates,
     openDoc: () => call('studio:focusMain')
   };
@@ -48,13 +49,13 @@ function PopOut({ tab }) {
         <TitleBar max={max} title={'Студия Кокка — ' + label} />
         {core.bootErr ? <div className="c4-soon"><div className="c4-soon-card"><h3>Не открылось</h3><p>{core.bootErr}</p></div></div>
           : !core.boot ? <div className="c4-soon"><span className="dim">Открываю…</span></div>
-            : tab === 'schemes' ? <Soon />
-              : (
+            : (
                 <div className="c4-docwrap">
                   <div className="studio" style={{ flex: 1 }}>
                     {tab === 'dialogs' && <DialogTab shared={shared} goto={goto} />}
                     {tab === 'quests' && <QuestTab shared={shared} goto={goto} />}
                     {tab === 'vars' && <VarsTab shared={shared} goto={goto} />}
+                    {tab === 'schemes' && <SchemeTab shared={shared} goto={goto} />}
                   </div>
                 </div>
               )}

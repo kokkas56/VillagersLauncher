@@ -5,7 +5,7 @@ import {
 } from '../scene3d.js';
 import { uniqueId } from '../model.js';
 
-export const ID_BASE = { camera: 'cam', light: 'light', sound: 'snd', marker: 'mark', path: 'path', group: 'grp', cloner: 'clon', effector: 'eff', block: 'blk', template: 'tpl', actor: 'a_' };
+export const ID_BASE = { camera: 'cam', light: 'light', sound: 'snd', marker: 'mark', path: 'path', group: 'grp', cloner: 'clon', effector: 'eff', block: 'blk', template: 'tpl', structure: 'str', actor: 'a_' };
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
 export function nameFor(scene, type, base) {

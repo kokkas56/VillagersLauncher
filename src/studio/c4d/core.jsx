@@ -10,6 +10,11 @@ import {
   isActive, CHANNELS
 } from '../scene3d.js';
 import { MAX_SEND, placementsBox } from '../mograph.js';
+import { structurePlacements } from '../scene3d.js';
+import { blocksFromGame } from '../voxel.js';
+
+const isP3 = (p) => Array.isArray(p) && p.length === 3 && p.every((v) => typeof v === 'number' && isFinite(v));
+export const REGION_RU = { fill: 'Заполнить', replace: 'Заменить', clear: 'Очистить', copy: 'Копировать', cut: 'Вырезать', paste: 'Вставить', rotate: 'Повернуть', mirror: 'Отразить', capture: 'Сохранить как шаблон', structure: 'Постройка', brush: 'Кисть', bake: 'Запекание' };
 import { selToPos } from '../fields.jsx';
 import { addObject, patchObj, setChan, keyAllSelected } from './ops.js';
 
@@ -33,6 +38,11 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
   const [list, setList] = useState([]);
   const [dialogs, setDialogs] = useState([]);
   const [quests, setQuests] = useState([]);
+  const [schemes, setSchemes] = useState([]);
+  const [structures, setStructures] = useState([]);
+  const [gameBlocks, setGameBlocks] = useState(null); // палитра игры: [{ id, rgb, flags }] — после {t:'blocks'}
+  const [buildSel, setBuildSelState] = useState(() => lsGet('buildSel', { from: null, to: null })); // выделение «Строительства»
+  const [buildOps, setBuildOps] = useState(() => lsGet('buildOps', [])); // что сделано в мире (для отмены): [{ undoId, op, at, n }]
   const [scene, setSceneState] = useState(null);
   const [sel, setSelState] = useState({ objs: [], ev: null, stage: null });
   const [selKeys, setSelKeys] = useState([]); // [{ obj, ch, t }] — выбранные ключи на таймлайне / в кривых
@@ -56,6 +66,9 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
   const [gameVars, setGameVarsState] = useState(null);
   const [questStates, setQuestStates] = useState({});
   const [camStep] = useState(() => lsGet('camStep', 40));
+  const [brushOn, setBrushOn] = useState(false);
+  const [brushState, setBrushState] = useState(null); // что сообщила игра о кисти (размер после Ctrl+колеса)
+  const [clipboard, setClipboard] = useState(null); // буфер копии в игре: { size, blocks, entities }
   const [, force] = useState(0);
 
   const sceneRef = useRef(null);
@@ -149,13 +162,14 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
   const reloadList = useCallback(async () => { const l = (await call('studio:list')) || []; setList(l); return l; }, []);
   const reloadAny = useCallback(async (kind) => {
     if (kind === 'scenes') return reloadList();
+    if (kind === 'structures') { const s = (await call('studio:structList')) || []; setStructures(s); return s; }
     const l = (await call('studio:docList', kind)) || [];
-    if (kind === 'dialogs') setDialogs(l); else setQuests(l);
+    if (kind === 'dialogs') setDialogs(l); else if (kind === 'schemes') setSchemes(l); else setQuests(l);
     return l;
   }, [reloadList]);
   const patchList = useCallback((kind, item) => {
     const f = (l) => (l.some((x) => x.id === item.id) ? l.map((x) => (x.id === item.id ? { ...x, ...item } : x)) : [...l, item]);
-    if (kind === 'dialogs') setDialogs(f); else setQuests(f);
+    if (kind === 'dialogs') setDialogs(f); else if (kind === 'schemes') setSchemes(f); else setQuests(f);
   }, []);
   const createScene = useCallback(async (title) => {
     const id = uniqueId(slug(title), list.map((x) => x.id));
@@ -188,7 +202,7 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
       try {
         const b = await call('studio:open');
         if (!alive) return;
-        setBoot(b); setProject(b.project || { actors: [] }); setList(b.scenes || []); setDialogs(b.dialogs || []); setQuests(b.quests || []);
+        setBoot(b); setProject(b.project || { actors: [] }); setList(b.scenes || []); setDialogs(b.dialogs || []); setQuests(b.quests || []); setSchemes(b.schemes || []); setStructures(b.structures || []);
         if (b.link) setLink(b.link);
         if (withScene) {
           const last = lsGet('last', null);
@@ -239,6 +253,13 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
       case 'ghost': if (m.cut) addLog('warn', 'Призрак «' + m.id + '»: не поместилось ' + m.cut + ' блоков (предел ' + (m.max || 20000) + ')'); break;
       case 'bake': case 'undo': {
         const kind = m.t;
+        // правки «Строительства» (fill/replace/clear/cut/paste/rotate/mirror/structure/brush) приходят как bake с op
+        if (kind === 'bake' && m.op && m.op !== 'bake') {
+          if (m.state === 'error') { addLog('error', (REGION_RU[m.op] || m.op) + ': не вышло — ' + (m.error || '?')); toast((REGION_RU[m.op] || m.op) + ': ' + (m.error || 'не вышло'), 'error', 6000); setBakeJob(null); break; }
+          if (m.state === 'progress') { setBakeJob({ kind, undoId: m.undoId, id: m.id, done: m.done || 0, total: m.total || 0, state: 'progress', op: m.op }); break; }
+          if (m.state === 'done') { setBakeJob(null); if (m.undoId) noteBuildOp({ undoId: m.undoId, op: m.op, n: m.placed != null ? m.placed : m.done || m.total || 0 }); addLog('ok', (REGION_RU[m.op] || m.op) + ': ' + (m.placed != null ? m.placed : m.done || 0) + ' блоков'); }
+          break;
+        }
         if (m.state === 'progress') setBakeJob({ kind, undoId: m.undoId, id: m.id, done: m.done || 0, total: m.total || 0, state: 'progress' });
         else {
           setBakeJob(null);
@@ -251,6 +272,16 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
         break;
       }
       case 'undoList': addLog('info', 'В игре можно отменить запечек: ' + ((m.items || []).length)); break;
+      // ---- фаза 4: Строительство ----
+      case 'blocks': { const b = blocksFromGame(m); if (b && b.length) { setGameBlocks(b); addLog('ok', 'Палитра блоков из игры: ' + b.length); } break; }
+      // рамка в игре (B / Shift+ЛКМ в Камере Студии): {t:'box', from, to, size, volume}
+      case 'box': setBuildSel({ from: isP3(m.from) ? m.from.map(Math.floor) : null, to: isP3(m.to) ? m.to.map(Math.floor) : null }, true); break;
+      case 'structure':
+        if (m.op !== 'saved') break;
+        if (m.ok === false) { addLog('error', 'Шаблон не сохранился: ' + (m.error || '?')); toast('Шаблон не сохранился: ' + (m.error || '?'), 'error', 7000); } else { const mt = m.meta || {}; addLog('ok', 'Шаблон сохранён: ' + m.id + (Array.isArray(mt.size) ? ' (' + mt.size.join('×') + ')' : '')); toast('Шаблон «' + (mt.name || m.id) + '» сохранён в библиотеку', 'ok'); reloadAny('structures'); }
+        break;
+      case 'clipboard': setClipboard(m.size ? m : null); break;
+      case 'brush': if (m.shape) setBrushState((b) => ({ ...b, ...m })); break;
       case 'shaders': setGame((g) => ({ ...g, shaders: m.on == null ? g.shaders : !!m.on, shadersAvail: m.available == null ? g.shadersAvail : !!m.available })); break;
       case 'baked': addLog(m.ok === false ? 'error' : 'ok', m.ok === false ? 'Запекание не удалось: ' + (m.error || '?') : 'Запечено в мир: ' + (m.count || 0) + ' блоков'); break;
       case 'undone': addLog(m.ok === false ? 'error' : 'ok', m.ok === false ? 'Отмена запекания не удалась: ' + (m.error || '?') : 'Запекание отменено'); break;
@@ -387,6 +418,32 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
   };
 
   // ---------- проверка ----------
+  // ---------- «Строительство»: выделение, кисть, операции в мире ----------
+  const setBuildSel = useCallback((v, fromGame) => {
+    setBuildSelState(v); lsSet('buildSel', v);
+    if (!fromGame && linkRef.current.connected) call('studio:send', isP3(v.from) && isP3(v.to) ? { t: 'box', from: v.from, to: v.to } : { t: 'box', clear: true }).catch(() => {});
+  }, []);
+  // правка рамки: fill / replace / clear / copy / paste / rotate / mirror / capture — сообщения игры фазы 4.
+  // Без углов в Студии игра берёт свою рамку. Ответ — {t:'bake', op, undoId, state…} (отмена — по undoId из ответа).
+  const regionOp = useCallback(async (op, extra) => {
+    const sl = buildSelRef.current;
+    if (!linkRef.current.connected) { toast('Нет связи с игрой', 'warn'); return null; }
+    const box = isP3(sl.from) && isP3(sl.to) ? { from: sl.from, to: sl.to } : {};
+    const msg = { t: op, ...(op === 'paste' ? {} : box), ...extra };
+    try {
+      await call('studio:send', msg);
+      addLog('info', (REGION_RU[op] || op) + ' → игра' + (op !== 'paste' && !box.from ? ' (рамка из игры)' : ''));
+      return true;
+    } catch (e) { toast(e.message, 'error'); return null; }
+  }, [toast, addLog]);
+  const undoBuild = useCallback(async (undoId) => {
+    try { await call('studio:undoBake', undoId); setBuildOps((l) => { const n = l.filter((x) => x.undoId !== undoId); lsSet('buildOps', n); return n; }); toast('Отменяю — игра возвращает блоки как были', 'ok', 2500); } catch (e) { toast(e.message, 'error'); }
+  }, [toast]);
+  const noteBuildOp = useCallback((rec) => setBuildOps((l) => { const n = [...l.filter((x) => !rec.undoId || x.undoId !== rec.undoId), { at: Date.now(), ...rec }].slice(-30); lsSet('buildOps', n); return n; }), []);
+  useEffect(() => { if (link.connected) call('studio:send', { t: 'getBox' }).catch(() => {}); }, [link.connected]);
+  const buildSelRef = useRef(buildSel);
+  buildSelRef.current = buildSel;
+
   const lazyScene = useDeferredValue(scene);
   const issues = useMemo(() => (lazyScene ? validateScene(lazyScene, { project, ids: list.map((x) => x.id), dialogIds: dialogs.map((x) => x.id) }) : []), [lazyScene, project, list, dialogs]);
   const nErr = issues.filter((x) => x.sev === ERR).length;
@@ -449,10 +506,10 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
     const tm = setTimeout(() => {
       const want = new Set();
       for (const o of scene.objects || []) {
-        if (o.type !== 'cloner' || !o.props.preview || o.visible === false || !isActive(scene, o)) continue;
+        if (!['cloner', 'structure'].includes(o.type) || !o.props.preview || o.visible === false || !isActive(scene, o)) continue;
         want.add(o.id);
         let pl = [];
-        try { pl = clonerOutput(scene, o, timeRef.current).slice(0, MAX_SEND); } catch (_) {}
+        try { pl = (o.type === 'structure' ? structurePlacements(scene, o, timeRef.current) : clonerOutput(scene, o, timeRef.current)).slice(0, MAX_SEND); } catch (_) {}
         call('studio:ghost', { id: o.id, placements: pl }).catch(() => {});
       }
       for (const id of ghostSent.current) if (!want.has(id)) call('studio:ghost', { id, placements: [] }).catch(() => {});
@@ -484,6 +541,7 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
         if (!o) continue;
         if (o.type === 'cloner') { try { const b = placementsBox(clonerOutput(s, o, timeRef.current)); if (b) { pts.push(b.lo, b.hi); continue; } } catch (_) {} }
         if (o.type === 'actor') { const p = actorPosAt(s, o.actor, timeRef.current); if (p) pts.push(p.pos); continue; }
+        if (o.type === 'structure') { const st = structures.find((x) => x.id === o.props.structure); const wp = worldPos(s, o, timeRef.current); if (wp && st && Array.isArray(st.size)) { pts.push(wp, wp.map((v, i) => v + st.size[i])); continue; } }
         if (o.type === 'path') { const wp = worldPos(s, o, timeRef.current) || [0, 0, 0]; for (const q of o.props.points || []) pts.push(q.map((v, i) => v + wp[i])); continue; }
         const wp = worldPos(s, o, timeRef.current);
         if (wp) pts.push(wp);
@@ -499,16 +557,17 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
       edit((s) => keyAllSelected(s, ids, timeRef.current));
       toast('Ключи на ' + ids.length + ' объект(а): ' + fmtTicks(timeRef.current), 'ok', 1800);
     }
-  }), [send, toast, edit]);
+  }), [send, toast, edit, structures]);
 
   const embedCmd = useCallback(async (mode) => {
     try { const st = await call('studio:embed', mode); if (st) setEmbed(st); } catch (e) { toast(e.message, 'error', 7000); }
   }, [toast]);
 
-  const baseRefs = useMemo(() => ({ actors: project.actors || [], vars: project.vars || [], scenes: list, dialogs, quests, addVar, talkPriority: project.talkPriority || 0 }), [project, list, dialogs, quests, addVar]);
+  const baseRefs = useMemo(() => ({ actors: project.actors || [], vars: project.vars || [], scenes: list, dialogs, quests, schemes, structures, addVar, talkPriority: project.talkPriority || 0 }), [project, list, dialogs, quests, schemes, structures, addVar]);
 
   return {
-    boot, setBoot, bootErr, project, saveProject, list, setList, dialogs, quests, reloadList, reloadAny, patchList, baseRefs, addVar,
+    boot, setBoot, bootErr, project, saveProject, list, setList, dialogs, quests, schemes, structures, reloadList, reloadAny, patchList, baseRefs, addVar,
+    gameBlocks, setGameBlocks, buildSel, setBuildSel, regionOp, buildOps, undoBuild, noteBuildOp, brushOn, setBrushOn, brushState, clipboard,
     scene, sceneRef, edit, gesture, undo, redo, canUndo: hist.current.past.length > 0, canRedo: hist.current.future.length > 0, flush, saveState,
     openScene, createScene, setScene: (s) => { setScene(s); }, markDirty,
     sel, setSel, selRef, selKeys, setSelKeys, time, setTime, timeRef, playing, setPlaying, autoKey, setAutoKey,

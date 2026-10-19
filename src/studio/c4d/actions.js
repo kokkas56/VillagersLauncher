@@ -1,6 +1,6 @@
 // Команды окна Студии (меню, клавиши, панели вызывают одно и то же).
 import { call } from '../../lib/api.js';
-import { objById, isAnimated, OBJ_LABEL, clonerOutput } from '../scene3d.js';
+import { objById, isAnimated, OBJ_LABEL, clonerOutput, structurePlacements } from '../scene3d.js';
 import { CLONER_MODE_LABEL, EFFECTOR_LABEL, CLONER_MODES, EFFECTOR_KINDS } from '../mograph.js';
 import { selToPos } from '../fields.jsx';
 import { uniqueId } from '../model.js';
@@ -19,7 +19,8 @@ export const TYPE_HINT = {
   cloner: 'Клонер: раскладывает копии того, что внутри (блок, шаблон, актёр, свет) — линией, сеткой, по кругу, по пути или случайно. Эффекторы меняют копии.',
   effector: 'Эффектор: меняет копии клонера — сдвиг, шаг, случайность, шум (рельеф), маска. Положи внутрь клонера или добавь в его список.',
   block: 'Блок: что клонирует клонер. Лежит внутри клонера. Можно задать состояние (axis=y, facing=north…).',
-  template: 'Шаблон постройки: сохранённая область (появится в фазе «Строительство»). Внутри клонера — расставит копии постройки.'
+  template: 'Шаблон постройки внутри клонера: клонер расставит копии постройки из библиотеки.',
+  structure: 'Постройка из библиотеки «Строительство» (studio/structures): ставится целиком, поворот по 90°, отражение. Призрак в игре, «Запечь в мир», может появляться во время сцены.'
 };
 
 async function placeHere(core) {
@@ -125,7 +126,8 @@ export function makeActions(core) {
       if (!o) return;
       if (!core.link.connected) { toast('Нет связи с игрой — запекать некуда', 'warn'); return; }
       let pl = [];
-      try { pl = clonerOutput(s, o, timeRef.current); } catch (e) { toast(e.message, 'error'); return; }
+      try { pl = o.type === 'structure' ? structurePlacements(s, o, timeRef.current) : clonerOutput(s, o, timeRef.current); } catch (e) { toast(e.message, 'error'); return; }
+      if (!pl.length) { toast('Нечего запекать — выбери постройку из библиотеки', 'warn'); return; }
       if (pl.length > 20000 && !window.confirm('Копий ' + pl.length + ' — запекутся только первые 20000. Продолжить?')) return;
       const undoId = 'bake_' + o.id + '_' + Date.now().toString(36);
       try {
@@ -176,7 +178,8 @@ export function createItems(core, act) {
     { label: 'Клонер', icon: 'cloner', hint: TYPE_HINT.cloner, sub: CLONER_MODES.map((m) => ({ label: CLONER_MODE_LABEL[m], icon: 'cloner', hint: TYPE_HINT.cloner, run: () => act.create('cloner', { props: { mode: m } }) })) },
     { label: 'Эффектор', icon: 'effector', hint: TYPE_HINT.effector, sub: EFFECTOR_KINDS.map((k) => ({ label: EFFECTOR_LABEL[k], icon: 'effector', hint: TYPE_HINT.effector, run: () => act.create('effector', { props: { kind: k }, name: EFFECTOR_LABEL[k] }) })) },
     { label: 'Блок (для клонера)', icon: 'block', hint: TYPE_HINT.block, run: () => act.create('block') },
-    { label: 'Шаблон постройки', icon: 'template', hint: TYPE_HINT.template, run: () => act.create('template') }
+    { label: 'Шаблон постройки (в клонер)', icon: 'template', hint: TYPE_HINT.template, run: () => act.create('template') },
+    { label: 'Постройка из библиотеки', icon: 'structure', hint: TYPE_HINT.structure, sub: (core.structures || []).length ? core.structures.map((st) => ({ label: st.name || st.id, icon: 'structure', hint: (st.size ? st.size.join('×') + ' · ' : '') + st.id, run: () => act.create('structure', { props: { structure: st.id }, name: st.name || st.id }) })) : [{ label: 'Библиотека пуста — «Строительство» → «Постройки»', disabled: true }] }
   ];
 }
 

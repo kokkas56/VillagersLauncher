@@ -89,20 +89,37 @@ function Tree({ act }) {
       { label: 'Показать в игре', icon: 'frame', kb: 'H', hint: 'Камера Студии в игре подлетит к объекту.', run: () => core.gameCmd.frame() },
       isCam && { label: 'Смотреть через камеру', icon: 'look', checked: core.game.lookThrough === o.id, hint: 'Камера Студии в игре встанет на место этой камеры и будет ехать с ней при прокрутке таймлайна.', run: () => core.gameCmd.lookThrough(core.game.lookThrough === o.id ? null : o.id) },
       isCam && { label: 'В «Монтаж» с текущего кадра', icon: 'stage', hint: 'С момента бегунка сцену снимает эта камера (как Stage в C4D).', run: () => act.stageCut(o.id) },
-      o.type === 'cloner' && { sep: true },
-      o.type === 'cloner' && { label: 'Запечь в мир', icon: 'bake', hint: 'Поставить блоки клонера в мир по-настоящему (можно отменить).', disabled: !core.link.connected, run: () => act.bake(o.id) },
-      o.type === 'cloner' && { label: 'Отменить запекание', icon: 'unbake', disabled: !core.link.connected || !(scene.bakes || []).some((b) => b.obj === o.id), run: () => act.unbake(o.id) }
+      (o.type === 'cloner' || o.type === 'structure') && { sep: true },
+      (o.type === 'cloner' || o.type === 'structure') && { label: 'Запечь в мир', icon: 'bake', hint: 'Поставить блоки в мир по-настоящему (можно отменить).', disabled: !core.link.connected, run: () => act.bake(o.id) },
+      (o.type === 'cloner' || o.type === 'structure') && { label: 'Отменить запекание', icon: 'unbake', disabled: !core.link.connected || !(scene.bakes || []).some((b) => b.obj === o.id), run: () => act.unbake(o.id) }
     ] : createItems(core, act);
     openMenu(e, items);
   };
   const onDragOver = (e, o) => {
     e.preventDefault();
+    if (e.dataTransfer.types.includes('text/c4block')) { setDrop(o && (o.type === 'block' || o.type === 'cloner') ? { id: o.id, mode: 'into' } : null); return; }
+    if (e.dataTransfer.types.includes('text/c4struct')) { setDrop({ id: o && o.type === 'group' ? o.id : null, mode: 'root' }); return; }
     const r = e.currentTarget.getBoundingClientRect();
     const y = (e.clientY - r.top) / r.height;
     setDrop({ id: o ? o.id : null, mode: !o ? 'root' : y < 0.28 ? 'before' : y > 0.72 ? 'after' : 'into' });
   };
   const onDrop = (e) => {
     e.preventDefault();
+    // блок из палитры «Строительства» → в блок или клонер; постройка из библиотеки → объект «Постройка»
+    const blk = e.dataTransfer.getData('text/c4block');
+    if (blk) {
+      const t = drop && drop.id && objById(scene, drop.id);
+      setDrop(null);
+      if (!t) { core.toast('Брось блок на «Блок» или на клонер в дереве', 'warn'); return; }
+      const m = /^([^[]+)(?:\[(.*)\])?$/.exec(blk);
+      const target = t.type === 'block' ? t : childrenOf(scene, t.id).find((c) => c.type === 'block');
+      if (target) edit((s) => ({ ...s, objects: s.objects.map((x) => (x.id === target.id ? { ...x, props: { ...x.props, block: m[1], state: m[2] || '' } } : x)) }));
+      else act.create('block', { parent: t.id, props: { block: m[1], state: m[2] || '' } });
+      core.toast('Блок ' + blk.replace('minecraft:', '') + ' → «' + (target || t).name + '»', 'ok', 1800);
+      return;
+    }
+    const sid = e.dataTransfer.getData('text/c4struct');
+    if (sid) { setDrop(null); const st = core.structures.find((x) => x.id === sid); act.create('structure', { props: { structure: sid }, name: (st && st.name) || sid }); return; }
     const id = e.dataTransfer.getData('text/c4obj');
     const d = drop;
     setDrop(null);
