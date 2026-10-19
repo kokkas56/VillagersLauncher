@@ -65,6 +65,8 @@ const UPG_ICON = [
 ];
 // подсказки снастей в две строки
 const HINTS = UPGRADES.map((u) => { const i = u.hint.indexOf(' '); return i > 0 ? [u.hint.slice(0, i), u.hint.slice(i + 1)] : [u.hint, '']; });
+const DIGIT_RE = /^(Digit|Numpad)[0-9]$/;
+const DAILY_LABEL = ['РЫБЫ', '', 'РЕДКИЕ', 'МОНЕТЫ', 'ПОДРЯД', 'НОЧЬЮ', ''];
 const DAILY_ICON = [IC.fish, IC.fish, IC.star, IC.coin, IC.chain, IC.moon, IC.pin];
 
 // палитры неба: день -> закат -> ночь (s = 0..2)
@@ -333,7 +335,7 @@ export default {
         return;
       }
       if (g.panel) {
-        if (c.startsWith('Digit') || c.startsWith('Numpad')) {
+        if (DIGIT_RE.test(c)) {
           const n = c.charCodeAt(c.length - 1) - 49;
           e.preventDefault();
           if (e.repeat || n < 0 || n > 8) return;
@@ -525,8 +527,8 @@ export default {
           let w = TIERS[t].w;
           if (t === 4) { if (!legendOk(s, td)) continue; } else w *= s.sp[scene.spot] * s.tod[td] * s.wx[g.wx];
           w *= t === 0 ? 1.2 - 0.5 * d : t === 1 ? 0.8 + 0.4 * d : 0.5 + d;
-          if (t >= 2) w *= 1 + 0.18 * up[3];
-          else if (t === 1) w *= 1 + 0.08 * up[3];
+          if (t >= 2) w *= 1 + 0.13 * up[3];
+          else if (t === 1) w *= 1 + 0.06 * up[3];
           if (g.goldCast && t >= 2) w *= 2;
           if (auth) w = t === 4 ? 30 : 30; // автор: все виды поровну, чтобы быстро проверить альбом
           acc += w;
@@ -649,9 +651,9 @@ export default {
       const R = g.R;
       R.speed = c === BOOT ? 0.22 : c === CHEST ? 0.45 : T.speed;
       R.jumpy = c === BOOT ? 0.25 : c === CHEST ? 0.5 : T.jumpy;
-      R.zone = clamp((c === BOOT ? 0.36 : T.zone) + 0.025 * up[0], 0.12, 0.5);
-      R.gain = (c === BOOT ? 0.34 : T.gain) * (1 + 0.1 * up[2]);
-      R.drain = (c === BOOT ? 0.16 : T.drain) * (1 - 0.09 * up[1]);
+      R.zone = clamp((c === BOOT ? 0.36 : T.zone) + 0.018 * up[0], 0.12, 0.5);
+      R.gain = (c === BOOT ? 0.34 : T.gain) * (1 + 0.08 * up[2]);
+      R.drain = (c === BOOT ? 0.16 : T.drain) * (1 - 0.07 * up[1]);
       g.beh = c.beh === 'blink' ? 1 : c.beh === 'dash' ? 2 : c.beh === 'ghost' ? 3 : c.beh === 'heavy' ? 4 : 0;
       g.behT = 1.5;
       g.dashT = 0;
@@ -735,7 +737,7 @@ export default {
           break;
         }
         case 'fly': {
-          const bk = (1 - 0.06 * P.p.up[3]) * (P.author ? 0.35 : 1);
+          const bk = (1 - 0.045 * P.p.up[3]) * (P.author ? 0.35 : 1);
           stepFly(dt, 1.2 * bk, 3.2 * bk);
           break;
         }
@@ -1660,11 +1662,11 @@ export default {
         const pop = Math.min(1, age * 5);
         const cx = 150, cy = 40 - Math.round((1 - pop) * 10);
         const t = tierOf(c);
-        box(cx - 52, cy - 16, 104, 62, 0.65);
+        box(cx - 52, cy - 17, 104, 58, 0.85);
         ctx.fillStyle = t >= 0 ? TIERS[t].col : '#a08060';
-        ctx.fillRect(cx - 52, cy - 16, 104, 1);
-        ctx.fillRect(cx - 52, cy + 45, 104, 1);
-        drawSprite(ctx, sp, cx - Math.round(sp.w * sc / 2), cy - 6 + Math.round(Math.sin(age * 6) * 1) - Math.round(sp.h * sc / 2) + 6, sc);
+        ctx.fillRect(cx - 52, cy - 17, 104, 1);
+        ctx.fillRect(cx - 52, cy + 40, 104, 1);
+        drawSprite(ctx, sp, cx - Math.round(sp.w * sc / 2), cy + 3 + Math.round(Math.sin(age * 6) * 1) - Math.round(sp.h * sc / 2), sc);
         if (t >= 2 || c === CHEST) {
           ctx.fillStyle = '#fff6b0';
           const kk = Math.floor(age * 10) % 4;
@@ -1672,23 +1674,23 @@ export default {
           ctx.fillRect(cx - 35 + kk * 20, cy - 9 + (kk % 2) * 22, 3, 1);
         }
         const nw = labelWidth(c.name);
-        shadowLabel(c.name, cx - (nw >> 1), cy + 20, t >= 0 ? TIERS[t].col : '#e0d0b0');
+        shadowLabel(c.name, cx - (nw >> 1), cy + 18, t >= 0 ? TIERS[t].col : '#e0d0b0');
         if (g.showSize > 0) {
-          drawInt(ctx, g.showSize, cx - 40, cy + 30, '#e8e2d4');
-          drawLabel(ctx, 'СМ', cx - 40 + intWidth(g.showSize) + 3, cy + 30, '#a89a88');
+          drawInt(ctx, g.showSize, cx - 46, cy + 30, '#e8e2d4');
+          drawLabel(ctx, 'СМ', cx - 46 + intWidth(g.showSize) + 3, cy + 30, '#a89a88');
         }
         if (g.showCoins > 0) {
           const cw = intWidth(g.showCoins) + 9;
-          drawSprite(ctx, IC.coin, cx + 40 - cw, cy + 30);
-          drawText(ctx, '+', cx + 40 - cw - 4, cy + 30, '#ffe070');
-          drawInt(ctx, g.showCoins, cx + 46 - cw, cy + 30, '#ffe070');
+          drawText(ctx, '+', cx + 44 - cw - 4, cy + 30, '#ffe070');
+          drawSprite(ctx, IC.coin, cx + 44 - cw, cy + 30);
+          drawInt(ctx, g.showCoins, cx + 51 - cw, cy + 30, '#ffe070');
         }
         if (g.showNew && Math.floor(age * 4) % 2 === 0) {
           const w2 = labelWidth('НОВЫЙ ВИД!');
-          shadowLabel('НОВЫЙ ВИД!', cx - (w2 >> 1), cy - 13, '#ffe070');
+          shadowLabel('НОВЫЙ ВИД!', cx - (w2 >> 1), cy - 14, '#ffe070');
         } else if (t >= 0) {
           const w2 = labelWidth(TIERS[t].name);
-          drawLabel(ctx, TIERS[t].name, cx - (w2 >> 1), cy - 13, TIERS[t].col);
+          drawLabel(ctx, TIERS[t].name, cx - (w2 >> 1), cy - 14, TIERS[t].col);
         }
       }
       if (inPlay && g.st === 'miss') {
@@ -1747,22 +1749,24 @@ export default {
       // ---- задания дня ----
       if (!(inPlay && g.st === 'reel') && pr.d) {
         const d = pr.d;
-        const x0 = W - 52;
-        box(x0 - 2, 27, 52, 25, 0.45);
+        const x0 = W - 104;
+        box(x0 - 2, 27, 104, 26, 0.5);
         for (let i = 0; i < 3; i++) {
           const tk = d.l[i];
           if (!tk) continue;
           const y = 29 + i * 8;
+          const done = d.c[i];
           drawSprite(ctx, DAILY_ICON[tk[0]] || IC.fish, x0, y + (tk[0] === 4 ? 1 : 0));
-          if (d.c[i]) {
-            drawSprite(ctx, IC.check, x0 + 8, y + 1);
-            drawLabel(ctx, 'ГОТОВО', x0 + 15, y, '#60e070');
-          } else {
-            let x = x0 + 8;
+          let x = x0 + 8;
+          if (done) { drawSprite(ctx, IC.check, x, y + 1); x += 7; }
+          else {
             x += drawInt(ctx, tk[3], x, y, '#e8e2d4') + 1;
             x += drawText(ctx, '/', x, y, '#8a7a70') + 1;
-            drawInt(ctx, tk[2], x, y, '#c8b890');
+            x += drawInt(ctx, tk[2], x, y, '#c8b890') + 4;
           }
+          const ty = tk[0];
+          const lbl = ty === 1 ? (SPECIES[tk[1]] ? SPECIES[tk[1]].name : '') : ty === 6 ? SPOT_NAMES[tk[1]] : DAILY_LABEL[ty];
+          drawLabel(ctx, lbl, x, y, done ? '#60e070' : '#a8b8c8');
         }
       }
       // ---- кнопки ----

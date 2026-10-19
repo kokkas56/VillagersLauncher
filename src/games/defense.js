@@ -3,13 +3,21 @@
 // Фон (idle): сумерки/ночь по реальным часам, жители ходят, болтают, носят ящики, копаются
 // в огороде, окна гаснут и зажигаются, дым из трубы, светлячки, падающие звёзды; часовой на
 // помосте. Изредка одинокий зомби бредёт к внешним воротам и застревает — часовой его снимает.
-// Вступление: орда сбегается к внешним воротам, жители прячутся, ворота трещат и ломаются,
-// зомби валят на поле — волна 1. Игра: клик по зомби, лавка между волнами (стрелок, забор, лечение).
+// Облик деревни растёт вместе с улучшениями игрока (каменный частокол, башня, флаги, ловушки).
+// Вступление: орда сбегается к внешним воротам, жители прячутся, ворота ломаются — волна.
+// Игра — бесконечные волны с рубежами каждые 5 волн (следующий забег начинается с рубежа),
+// 9 видов зомби и 3 босса (каждые 10 волн), улучшения деревни за изумруды (навсегда), альбом,
+// 3 задания дня, награды лаунчера. Клик по зомби — удар мечом; между волнами — лавка.
 // Выход: бьёт колокол, стражник и жители с факелами выходят, зомби бегут, ворота чинят — покой.
 // Поражение: ворота частокола выбиты, зомби замирают у пролома (спокойная сцена под карточкой).
-// Счёт = убийства + волна * 20. Всё рисуется целочисленными fillRect, цвета из кэша.
+// Счёт = волна * 20 + убийства за забег. Всё рисуется целочисленными fillRect, цвета из кэша.
 
-import { drawNumber, drawText, textWidth, drawIcon, rgbStr, rgbMix } from './pixfont.js';
+import { drawText, drawIcon, rgbStr, rgbMix, drawLabel, labelWidth, drawInt, intWidth } from './pixfont.js';
+import {
+  TYPES, TYPE_IDS, MOB_IDS, bossFor, bossFirstWave, waveCount, waveWindow, hpMul, spdMul, dmgMul, gemMul, typeWeight,
+  UPGRADES, villageLevel, wallMax, archerCount, arrowDmg, arrowCd, fenceCount, spikeDps, clickDmg, bellHeal, ckptOf
+} from './defense/data.js';
+import { createProgress, upgradePrice } from './defense/progress.js';
 
 const W = 320;
 const H = 180;
@@ -17,20 +25,19 @@ const GROUND = 136;
 const LANE_TOP = 142;
 const LANE_H = 26;
 const WALL_X = 248; // передняя грань частокола
-const MAX_HP = 100;
-const MAX_GUARDS = 4;
-const MAX_FENCES = 3;
+const MAX_SLOTS = 6;
 const FENCE_X = [206, 166, 126];
-const GUARD_SLOTS = [262, 274, 286, 298];
+const GUARD_SLOTS = [262, 271, 280, 289, 298, 307];
 const PLATFORM_Y = 106;
 const OUTER_X = 116; // внешние ворота на дороге
-const GATE_Y0 = 136; // ворота частокола (по глубине)
+const GATE_Y0 = 136;
 const GATE_Y1 = 166;
 const GIN_X = 264, GOUT_X = 238, GATE_Y = 151;
 const DOORS_X = [274, 305];
 const DOOR_Y = 142;
 const CRATE_X = 313, CRATE_Y = 165;
-const OFF_R = 326; // за правым краем помоста
+const OFF_R = 326;
+const SHOP_T = 15;
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -63,30 +70,32 @@ function drawSprite(ctx, sp, x, y, s = 1) {
   }
 }
 
-const BOW = sprite({ a: '#a8723e', b: '#e8e2d4', c: '#c8d0dc', d: '#7a4e2a' }, [
-  '..ab...', '.a.b...', 'a..b...', 'dcccccc', 'a..b...', '.a.b...', '..ab...'
-]);
-const FENCE = sprite({ a: '#b0804a', b: '#6a4424' }, [
-  'a..a..a', 'a..a..a', 'bbbbbbb', 'a..a..a', 'bbbbbbb', 'a..a..a'
-]);
-const FLAG = sprite({ a: '#7a4e2a', b: '#e04848', c: '#ff8a8a' }, [
-  'abbb.', 'acbbb', 'abbb.', 'a....', 'a....', 'a....'
-]);
-const NEXT = sprite({ a: '#ffffff' }, [
-  'a...a....', 'aa..aa...', 'aaa.aaa..', 'aaaaaaaa.', 'aaa.aaa..', 'aa..aa...', 'a...a....'
-]);
+const FLAG = sprite({ a: '#7a4e2a', b: '#e04848', c: '#ff8a8a' }, ['abbb.', 'acbbb', 'abbb.', 'a....', 'a....', 'a....']);
+const NEXT = sprite({ a: '#ffffff' }, ['a...a....', 'aa..aa...', 'aaa.aaa..', 'aaaaaaaa.', 'aaa.aaa..', 'aa..aa...', 'a...a....']);
+const BOOK = sprite({ a: '#8a4a2a', b: '#e8dcc0', c: '#5a2a18' }, ['aaaaaaa', 'abbcbba', 'abbcbba', 'abbcbba', 'abbcbba', 'aaaaaaa']);
+const CHECK = sprite({ a: '#60e070' }, ['....a', '...a.', 'a.a..', '.a...']);
+const LOCK = sprite({ a: '#8a8070', b: '#5a5048' }, ['.aa.', 'a..a', 'bbbb', 'bbbb']);
+const UPG_ICON = [
+  sprite({ a: '#b0804a', b: '#6a4424', c: '#9aa0a8' }, ['a.a.a.a', 'aaaaaaa', 'abababa', 'aaaaaaa', 'abababa', 'ccccccc']),
+  sprite({ a: '#a8723e', b: '#e8e2d4', c: '#c8d0dc', d: '#7a4e2a' }, ['..ab...', '.a.b...', 'a..b...', 'dcccccc', 'a..b...', '.a.b...', '..ab...']),
+  sprite({ a: '#e8e2d4', b: '#c8d0dc', c: '#e04848' }, ['......b', '.....ab', '....a..', '...a...', '..a....', 'ca.....', 'cc.....']),
+  sprite({ a: '#b0804a', b: '#c8d0dc' }, ['.b.b.b.', '.b.b.b.', 'aaaaaaa', '.a.a.a.', 'aaaaaaa', '.a.a.a.']),
+  sprite({ a: '#e8eef4', b: '#9aa8b8', c: '#7a4e2a', d: '#e0b84a' }, ['......a', '.....ab', '....ab.', '.d.ab..', '..db...', '.cdd...', 'c......']),
+  sprite({ a: '#c8a040', b: '#8a6420', c: '#5a3a20' }, ['..c..', '.aaa.', '.aaa.', 'aaaaa', 'bbbbb', '..b..'])
+];
+const HEAL_ICON = 'heart';
+// иконки заданий дня
+const D_ICON = [
+  sprite({ a: '#e8e2d4', b: '#2a2420' }, ['.aaa.', 'abab.', 'aaaa.', '.a.a.']),
+  sprite({ a: '#5f8a4e', b: '#c02020' }, ['aaa.', 'aba.', 'aaa.', '.a..']),
+  sprite({ a: '#7a4e2a', b: '#e04848' }, ['abbb', 'abb.', 'a...', 'a...']),
+  sprite({ a: '#9aa4b0', b: '#ffffff' }, ['aaaaa', 'abbba', '.aba.', '..a..']),
+  sprite({ a: '#ffd34a', b: '#c8901e' }, ['a.a.a', 'aaaaa', 'abbba', 'aaaaa']),
+  sprite({ a: '#2fd36a', b: '#b8ffd0' }, ['.a.', 'aba', 'aaa', '.a.']),
+  sprite({ a: '#e8eef4', b: '#7a4e2a' }, ['...a', '..a.', 'ba..', 'b...'])
+];
 
-// типы зомби
-const TYPES = {
-  normal: { hp: 3, spd: 10, dps: 4, gem: 2, s: 1 },
-  fast: { hp: 2, spd: 21, dps: 3, gem: 2, s: 1 },
-  big: { hp: 4, spd: 6, dps: 8, gem: 4, s: 2 }
-};
-const BOX = {
-  normal: { l: -2, r: 5, t: -13 },
-  fast: { l: -2, r: 4, t: -10 },
-  big: { l: -4, r: 10, t: -25 }
-};
+const D_LABEL = ['ЗОМБИ', '', 'ВОЛНЫ', 'БЕЗ УРОНА', 'БОСС', 'ИЗУМРУДЫ', 'МЕЧОМ'];
 const PAD = 3;
 
 // цвета
@@ -108,10 +117,22 @@ const ROOF0 = [150, 60, 44], ROOF1 = [30, 18, 26];
 const WIN0 = [120, 160, 190], WIN1 = [30, 34, 50];
 const WOOD0 = [150, 108, 66], WOOD1 = [40, 30, 30];
 const STAKE0 = [130, 92, 56], STAKE1 = [36, 28, 28];
+const STONE0 = [140, 140, 136], STONE1 = [40, 40, 48];
 const GATEW0 = [112, 78, 46];
 const IRON = [90, 92, 100];
 const PUMPKIN = [220, 120, 40], LEAF = [70, 120, 50];
 const Z_LEG = [42, 52, 80], Z_SHIRT = [74, 106, 138], Z_SHIRTD = [46, 62, 90], Z_SKIN = [95, 138, 78], Z_SKIND = [75, 110, 61], Z_FSHIRT = [84, 110, 140];
+const Z_BROWN = [110, 80, 50], Z_BROWND = [80, 56, 36];
+const Z_PALE = [200, 220, 230], Z_PALED = [150, 176, 196], Z_PALES = [170, 200, 210];
+const Z_ROBE = [60, 40, 80], Z_ROBED = [40, 26, 56];
+const Z_WITCH = [110, 50, 120], Z_WITCHD = [70, 30, 80];
+const Z_GSKIN = [80, 120, 70], Z_GSKIND = [60, 96, 52];
+const Z_RED = [192, 32, 32];
+const PLATE = [150, 156, 168], PLATED = [100, 106, 118];
+const BARREL = [130, 84, 44], BARRELD = [70, 44, 24];
+const SHIELDC = [150, 108, 66], SHIELDD = [96, 66, 40];
+const GOLD = [230, 190, 60];
+const POTION = [80, 220, 120];
 const G_LEG = [60, 44, 34], G_BODY = [120, 80, 50], G_BELT = [90, 60, 40], SKIN = [232, 190, 150], EYE = [40, 30, 30], HELM = [150, 156, 168], BOWC = [168, 114, 62];
 const NOSE = [200, 150, 116];
 const ROBES = [[140, 100, 60], [222, 214, 196], [70, 70, 80], [130, 80, 150], [120, 80, 50]];
@@ -120,13 +141,20 @@ const HATS = [[214, 180, 96], [200, 196, 180], [40, 40, 44], [110, 62, 130], [15
 const CRATE0 = [168, 120, 70], CRATE1 = [110, 76, 44];
 const SPEAR = [200, 206, 216];
 const BELL = [200, 160, 60];
+const BANNER = [190, 50, 50];
+
+// окна лавки / альбома
+const CARD_Y = 72, CARD_W = 36, CARD_H = 76;
+const cardX = (i) => 12 + i * 37;
+const BOOK_X = 80, BOOK_Y = 14;
+const AX = 12, AY = 22, AW = 296, AH = 140;
 
 export default {
   id: 'defense',
   title: 'Защита деревни',
   sceneTitle: 'Нашествие',
-  desc: 'Отбивайся от волн зомби кликами, нанимай стрелков и строй заборы.',
-  controls: 'Мышь: клик по зомби · в лавке: клик / 1 2 3, Пробел — следующая волна',
+  desc: 'Бесконечные волны зомби с рубежами, боссы, улучшения деревни, альбом и задания дня.',
+  controls: 'Мышь: клик по зомби · в лавке: клик / 1–8, Пробел — следующая волна · Tab — альбом',
   mount(canvas, api) {
     canvas.width = W;
     canvas.height = H;
@@ -136,8 +164,10 @@ export default {
     const prevCursor = canvas.style.cursor;
     const prevTouch = canvas.style.touchAction;
     canvas.style.touchAction = 'none';
+    const variant = typeof api.variant === 'number' && api.variant > 0 ? api.variant : 0;
 
     const getMode = () => {
+      if (variant) return 'idle';
       if (typeof api.mode === 'function') return api.mode();
       if (typeof api.auto === 'function') return api.auto() ? 'idle' : 'play';
       return 'play';
@@ -148,6 +178,11 @@ export default {
       return e && typeof e.dark === 'number' ? clamp(e.dark, 0, 1) : 0.5;
     };
     const idleDark = () => 0.3 + 0.6 * envDark();
+
+    // ---------- прогресс ----------
+    const P = createProgress(api);
+    P.load();
+    const UP = () => P.p.up;
 
     // ---------- мир ----------
     const stars = [];
@@ -166,19 +201,22 @@ export default {
 
     // пулы
     const zombies = [];
-    for (let i = 0; i < 48; i++) zombies.push({ zz: 1, on: false, isZ: true, type: 'normal', mode: 'play', x: 0.5, y: 0.5, hp: 0, max: 0, spd: 0.5, flash: 0.5, kb: 0.5, atk: false, phase: 0.5, dir: 1, hx: 0.5, hs: 0.5, give: 0.5 });
+    for (let i = 0; i < 64; i++) zombies.push({ zz: 1, on: false, isZ: true, type: 'normal', T: TYPES.normal, mode: 'play', x: 0.5, y: 0.5, hp: 0.5, max: 0.5, spd: 0.5, flash: 0.5, kb: 0.5, atk: false, phase: 0.5, dir: 1, hx: 0.5, hs: 0.5, give: 0.5, act: 0.5, act2: 0.5, hop: 0.5, ghost: false, stopX: 0.5, summon: false });
     const parts = [];
-    for (let i = 0; i < 110; i++) parts.push({ dp: 1, on: false, gem: false, x: 0.5, y: 0.5, vx: 0.5, vy: 0.5, life: 0.5, c: '#fff' });
+    for (let i = 0; i < 140; i++) parts.push({ dp: 1, on: false, gem: false, x: 0.5, y: 0.5, vx: 0.5, vy: 0.5, life: 0.5, c: '#fff' });
     const arrows = [];
-    for (let i = 0; i < 30; i++) arrows.push({ da: 1, on: false, x: 0.5, y: 0.5, vx: 0.5, vy: 0.5 });
+    for (let i = 0; i < 40; i++) arrows.push({ da: 1, on: false, x: 0.5, y: 0.5, vx: 0.5, vy: 0.5, dmg: 1 });
+    const bolts = []; // зелья ведьм
+    for (let i = 0; i < 10; i++) bolts.push({ db: 1, on: false, x: 0.5, y: 0.5, vx: 0.5, vy: 0.5, dmg: 1 });
     const slashes = [];
     for (let i = 0; i < 6; i++) slashes.push({ ds: 1, on: false, x: 0, y: 0, life: 0.5, d: 1 });
     const smoke = [];
     for (let i = 0; i < 12; i++) smoke.push({ dm: 1, on: false, x: 0.5, y: 0.5, life: 0.5 });
     const order = [];
+    const guards = [];
+    for (let i = 0; i < MAX_SLOTS; i++) guards.push({ gd: 1, on: false, x: OFF_R + 0.5, tx: GUARD_SLOTS[i], cd: 1.5, rec: 0.5, leave: false, step: 0.5 });
 
     // ---------- жители ----------
-    // kind: 0 житель, 1 стражник с копьём (у ворот), 2 часовой с луком (на помосте)
     const mkActor = (kind, robe, home) => ({
       ac: 1, isZ: false, kind, robe, home, on: true, x: 0.5, y: 0.5, dir: -1, spd: 22.5, state: 'idle', timer: 1 + rand() * 3, next: 'idle',
       carry: 0, torch: false, step: 0.5, emote: 0, emoteT: 0.5, path: new Float32Array(6), pl: 0, pi: 0, partner: null, cd: 1.5, rec: 0.5, delay: 0.5
@@ -200,23 +238,21 @@ export default {
       pt: 0, hold: 1.3, sawOver: false,
       mode: 'play', // внутри игры: play | shop
       t: 0,
-      hp: MAX_HP, gems: 0, kills: 0, wave: 0,
-      toSpawn: 0, spawnT: 0, spawnInt: 2, spdMul: 1,
+      hp: 100, maxHp: 100, kills: 0, wave: 0, startWave: 1, perfect: true,
+      toSpawn: 0, spawnT: 0, spawnInt: 2, spdMul: 1, hpMul: 1, dmgMul: 1, bossDue: null, bossAt: 0, boss: null,
       shopT: 0, banner: 0, shake: 0, hurtSnd: 0, hurtFlash: 0,
-      guards: [], fences: 0,
       overSent: false,
       dark: idleDark(), hud: 0,
       gate: 0, gateReq: false, gdmg: 0, gbroken: false,
       og: 1, bell: 0, lone: 8 + rand() * 10,
       ssT: 12 + rand() * 20, ssX: 0, ssY: 0, ssA: -1,
       smokeT: 0, lit: [true, true, false, true], litT: 4,
-      doorT: [0, 0], introTp: 1.6, introOg: true, hordeN: 0, ev: 0
+      doorT: [0, 0], introTp: 1.6, introOg: true, hordeN: 0, ev: 0,
+      panel: null, sel: 0, toast: null, toastT: 0, spikeT: 0
     };
     const score = () => g.kills + g.wave * 20;
-
-    const priceGuard = () => 25 + g.guards.length * 20;
-    const priceFence = () => 12 + g.fences * 10;
     const priceHeal = () => 10 + g.wave * 3;
+    const healAmt = () => Math.round(g.maxHp * 0.2);
 
     const addPart = (x, y, vx, vy, life, c, gem = false) => {
       for (let i1 = 0; i1 < parts.length; i1++) { const p = parts[i1];
@@ -232,6 +268,9 @@ export default {
     const C_SPARK = ['#ffe070', '#ffffff', '#ffb040'];
     const C_DIRT = ['#c8b890'];
     const C_ARROWHIT = ['#8a6a40'];
+    const C_FIRE = ['#ffe070', '#ff9030', '#e04020', '#5a5050'];
+    const C_POT = ['#60e080', '#b0ffc0', '#40a060'];
+    const C_GHOST = ['#d0e8f0', '#a0c0d8'];
     const burst = (x, y, n, colors, sp = 30) => {
       for (let i = 0; i < n; i++) addPart(x, y, (rand() - 0.5) * sp * 2, -rand() * sp - 10, 0.35 + rand() * 0.4, colors[i % colors.length]);
     };
@@ -243,73 +282,125 @@ export default {
     };
     const zInit = (z, type, x, y, mode) => {
       const T = TYPES[type];
-      z.on = true; z.type = type; z.mode = mode;
+      z.on = true; z.type = type; z.T = T; z.mode = mode;
       z.x = x; z.y = y;
       z.hp = T.hp; z.max = T.hp;
       z.spd = T.spd * (0.9 + rand() * 0.2);
       z.flash = 0; z.kb = 0; z.atk = false; z.phase = rand() * 6; z.dir = 1; z.give = 999; z.hx = x; z.hs = 0;
+      z.act = 1 + rand() * 2; z.act2 = 2 + rand() * 2; z.hop = 0; z.ghost = false; z.stopX = 140 + rand() * 50; z.summon = false;
     };
 
     const startWave = () => {
       g.wave++;
       g.mode = 'play';
-      g.toSpawn = 3 + 5 * g.wave;
-      g.spawnInt = Math.max(7, 19 - 1.7 * g.wave) / g.toSpawn;
+      g.panel = null;
+      const w = g.wave;
+      const boss = bossFor(w);
+      g.toSpawn = boss ? Math.round(waveCount(w) * 0.6) : waveCount(w);
+      g.spawnInt = waveWindow(g.toSpawn) / Math.max(1, g.toSpawn);
       g.spawnT = 1.2;
-      g.spdMul = 1 + 0.15 * (g.wave - 1);
-      g.banner = 1.8;
+      g.spdMul = spdMul(w);
+      g.hpMul = hpMul(w);
+      g.dmgMul = dmgMul(w);
+      g.bossDue = boss;
+      g.bossAt = Math.floor(g.toSpawn / 2);
+      g.perfect = true;
+      g.banner = boss ? 2.6 : 1.8;
+      P.reachWave(w);
       api.sfx('click');
     };
 
-    const spawn = () => {
-      const n = g.wave;
-      const pFast = Math.min(0.4, 0.1 * (n - 1));
-      const pBig = n >= 3 ? Math.min(0.35, 0.09 * (n - 2)) : 0;
-      const r = rand();
-      const type = r < pBig ? 'big' : r < pBig + pFast ? 'fast' : 'normal';
+    const pickType = () => {
+      const w = g.wave;
+      let sum = 0;
+      for (let i = 0; i < MOB_IDS.length; i++) sum += typeWeight(MOB_IDS[i], w);
+      let r = rand() * sum;
+      for (let i = 0; i < MOB_IDS.length; i++) { r -= typeWeight(MOB_IDS[i], w); if (r <= 0) return MOB_IDS[i]; }
+      return 'normal';
+    };
+    const spawnAs = (type, x, y) => {
       const z = zFree();
-      if (!z) return;
-      zInit(z, type, -12 - rand() * 6, LANE_TOP + Math.floor(rand() * LANE_H), 'play');
+      if (!z) return null;
+      zInit(z, type, x, y, 'play');
+      z.hp = z.max = TYPES[type].hp * g.hpMul;
       z.spd = TYPES[type].spd * g.spdMul * (0.9 + rand() * 0.2);
+      return z;
+    };
+    const spawn = () => spawnAs(pickType(), -12 - rand() * 6, LANE_TOP + Math.floor(rand() * LANE_H));
+    const spawnBoss = (id) => {
+      const z = spawnAs(id, -24, LANE_TOP + 10 + Math.floor(rand() * 8));
+      if (!z) return;
+      // боссы крепнут с каждым кругом
+      const lap = Math.floor((g.wave - bossFirstWave(id)) / 30);
+      z.hp = z.max = TYPES[id].hp * g.hpMul * (1 + lap * 0.5);
+      z.spd = TYPES[id].spd * (1 + Math.min(0.3, lap * 0.1));
+      g.boss = z;
+      g.banner = 2.6;
+      g.shake = 0.3;
+      api.sfx('lose');
     };
 
-    const killZombie = (z) => {
+    const killZombie = (z, sword) => {
       z.on = false;
-      const T = TYPES[z.type];
+      const T = z.T;
       const cy = z.y - 6 * T.s;
-      burst(z.x + 1, cy, 10, C_SMOKE, 26);
+      burst(z.x + 1, cy, 10 + T.s * 4, z.type === 'ghost' ? C_GHOST : C_SMOKE, 26);
+      if (z === g.boss) g.boss = null;
+      if (z.type === 'bomber') explode(z, false);
       if (g.phase === 'play') {
         g.kills++;
-        g.gems += T.gem;
-        for (let i = 0; i < T.gem; i++) addPart(z.x + 1, cy, (rand() - 0.5) * 40, -30 - rand() * 20, 1.4, '#2fd36a', true);
+        const gems = Math.max(1, Math.round(T.gem * gemMul(g.wave))) * P.mul();
+        P.kill(z.type, sword, gems);
+        if (P.author) { P.p.kills += AUTH_KILL_EXTRA; }
+        const n = Math.min(6, T.gem);
+        for (let i = 0; i < n; i++) addPart(z.x + 1, cy, (rand() - 0.5) * 40, -30 - rand() * 20, 1.4, '#2fd36a', true);
         api.sfx('coin');
       }
     };
+    const AUTH_KILL_EXTRA = 39; // автор: в 40 раз быстрее копятся убийства (для плаща)
 
-    const damage = (z, amount, kb) => {
-      z.hp -= amount;
-      z.flash = 0.1;
-      z.kb = kb / TYPES[z.type].s;
-      const T = TYPES[z.type];
-      burst(z.x + 1, z.y - 7 * T.s, 3, C_GREEN, 18);
-      if (z.hp <= 0) killZombie(z);
+    // бочка взрывается: у стены — урон стене, в поле — урон соседям
+    const explode = (z, atWall) => {
+      burst(z.x + 2, z.y - 10, 18, C_FIRE, 46);
+      g.shake = 0.3;
+      api.sfx('hit');
+      if (atWall) {
+        if (g.phase === 'play') hurtWall(25 * g.dmgMul);
+      } else {
+        const dmg = 8 * g.hpMul * 0.5;
+        for (let i = 0; i < zombies.length; i++) { const o = zombies[i];
+          if (!o.on || o === z || o.mode !== 'play') continue;
+          if (Math.abs(o.x - z.x) < 22 && Math.abs(o.y - z.y) < 14) { o.hp -= dmg; o.flash = 0.1; if (o.hp <= 0) killZombie(o, false); }
+        }
+      }
     };
 
-    const hitTest = (x, y, pad) => {
+    const damage = (z, amount, kb, sword) => {
+      if (z.ghost) { burst(z.x + 1, z.y - 8, 2, C_GHOST, 10); return; }
+      z.hp -= amount;
+      z.flash = 0.1;
+      z.kb = z.T.boss ? 0 : kb / z.T.s;
+      burst(z.x + 1, z.y - 7 * z.T.s, 3, C_GREEN, 18);
+      if (z.hp <= 0) killZombie(z, sword);
+    };
+
+    const hitTest = (x, y, pad, forArrow) => {
       let best = null;
       for (let i3 = 0; i3 < zombies.length; i3++) { const z = zombies[i3];
         if (!z.on) continue;
-        const b = BOX[z.type];
+        if (forArrow && z.ghost) continue;
+        const b = z.T.box;
         const l = z.dir > 0 ? b.l : -b.r, r = z.dir > 0 ? b.r : -b.l;
-        if (x >= z.x + l - pad && x <= z.x + r + pad && y >= z.y + b.t - pad && y <= z.y + 1 + pad) {
+        const zy = z.y - z.hop;
+        if (x >= z.x + l - pad && x <= z.x + r + pad && y >= zy + b.t - pad && y <= zy + 1 + pad) {
           if (!best || z.x > best.x) best = z;
         }
       }
       return best;
     };
 
-    const shoot = (sx, sy, target) => {
-      const T = TYPES[target.type];
+    const shoot = (sx, sy, target, dmg) => {
+      const T = target.T;
       const dist = Math.abs(target.x - sx);
       const ft = clamp(dist / 150, 0.35, 1.3);
       const moving = target.mode === 'play' ? !target.atk : target.mode === 'walk' || target.mode === 'flee' || target.mode === 'leave';
@@ -317,63 +408,94 @@ export default {
       const ty = target.y - 6 * T.s;
       for (let i4 = 0; i4 < arrows.length; i4++) { const a = arrows[i4];
         if (a.on) continue;
-        a.on = true; a.x = sx; a.y = sy;
+        a.on = true; a.x = sx; a.y = sy; a.dmg = dmg;
         a.vx = (tx - sx) / ft;
         a.vy = (ty - sy) / ft - 0.5 * 140 * ft;
         return;
       }
     };
+    const throwPotion = (z) => {
+      for (let i = 0; i < bolts.length; i++) { const b = bolts[i];
+        if (b.on) continue;
+        const ft = clamp((WALL_X - z.x) / 110, 0.6, 1.6);
+        b.on = true; b.x = z.x + 3; b.y = z.y - 12; b.dmg = 6 * g.dmgMul;
+        b.vx = (WALL_X - 1 - b.x) / ft;
+        b.vy = (z.y - 10 - b.y) / ft - 0.5 * 140 * ft;
+        return;
+      }
+    };
+    const hurtWall = (amt) => {
+      g.hp -= amt;
+      g.perfect = false;
+      g.shake = Math.max(g.shake, 0.15);
+      g.hurtFlash = 0.2;
+    };
 
     // ---------- лавка ----------
-    const CARD_Y = 62, CARD_W = 40, CARD_H = 52;
-    const cardX = (i) => 70 + i * 46;
     const canBuy = (i) => {
-      if (i === 0) return g.guards.length < MAX_GUARDS && g.gems >= priceGuard();
-      if (i === 1) return g.fences < MAX_FENCES && g.gems >= priceFence();
-      if (i === 2) return g.hp < MAX_HP && g.gems >= priceHeal();
+      if (i < 6) { const pr = upgradePrice(P.p, i); return pr >= 0 && P.p.em >= pr; }
+      if (i === 6) return g.hp < g.maxHp && P.p.em >= priceHeal();
       return true;
-    };
-    const activeGuards = () => {
-      let n = 0;
-      for (let i5 = 0; i5 < g.guards.length; i5++) { const gd = g.guards[i5]; if (!gd.leave) n++; }
-      return n;
     };
     const buy = (i) => {
       if (g.phase !== 'play' || g.mode !== 'shop') return;
-      if (i === 3) { startWave(); return; }
+      if (i === 7) { startWave(); return; }
       if (!canBuy(i)) { api.sfx('hit'); return; }
-      if (i === 0) {
-        g.gems -= priceGuard();
-        // новый стрелок поднимается на помост справа и идёт на своё место
-        g.guards.push({ gd: 1, x: OFF_R + 0.5, tx: GUARD_SLOTS[g.guards.length], cd: 0.6 + rand() * 0.6, rec: 0.5, leave: false, step: 0.5 });
-      } else if (i === 1) {
-        g.gems -= priceFence();
-        g.fences++;
-      } else if (i === 2) {
-        g.gems -= priceHeal();
-        g.hp = Math.min(MAX_HP, g.hp + 20);
+      if (i < 6) {
+        P.buy(i);
+        applyUpgrades(true);
+      } else if (i === 6) {
+        P.p.em -= priceHeal();
+        g.hp = Math.min(g.maxHp, g.hp + healAmt());
+        P.save();
       }
       api.sfx('coin');
     };
+    const applyUpgrades = (live) => {
+      const up = UP();
+      const m = wallMax(up);
+      if (live && m > g.maxHp) g.hp += m - g.maxHp;
+      g.maxHp = m;
+      if (live) callArchers();
+    };
+    const callArchers = () => {
+      const n = archerCount(UP());
+      for (let i = 0; i < MAX_SLOTS; i++) {
+        const gd = guards[i];
+        if (i < n && (!gd.on || gd.leave)) {
+          if (!gd.on) { gd.x = OFF_R + i * 6 + 0.5; gd.on = true; }
+          gd.leave = false; gd.tx = GUARD_SLOTS[i]; gd.cd = 0.6 + rand() * 0.6; gd.rec = 0; gd.step = 0;
+        }
+      }
+    };
 
-    // ---------- ввод (только в игре) ----------
+    // ---------- ввод ----------
+    const PT = { pt: 1, x: 0.5, y: 0.5 };
     const toLocal = (e) => {
       const r = canvas.getBoundingClientRect();
       PT.x = ((e.clientX - r.left) / Math.max(1, r.width)) * W;
       PT.y = ((e.clientY - r.top) / Math.max(1, r.height)) * H;
       return PT;
     };
-    const PT = { pt: 1, x: 0.5, y: 0.5 };
+    const inR = (p, x, y, w, h) => p.x >= x && p.x < x + w && p.y >= y && p.y < y + h;
+    const togglePanel = () => {
+      if (g.phase !== 'play') return;
+      g.panel = g.panel ? null : 'album';
+      api.sfx('click');
+    };
     const onPointerDown = (e) => {
       if (g.phase !== 'play') return;
       e.preventDefault();
       if (api.paused && api.paused()) return;
       const p = toLocal(e);
+      if (inR(p, BOOK_X - 1, BOOK_Y - 1, 13, 12)) { togglePanel(); return; }
+      if (g.panel) {
+        if (inR(p, AX + AW - 12, AY + 2, 10, 10) || !inR(p, AX, AY, AW, AH)) { g.panel = null; api.sfx('click'); return; }
+        for (let i = 0; i < TYPE_IDS.length; i++) if (inR(p, AX + 6 + (i % 6) * 48, AY + 15 + Math.floor(i / 6) * 52, 46, 50)) { g.sel = i; api.sfx('click'); return; }
+        return;
+      }
       if (g.mode === 'shop') {
-        for (let i = 0; i < 4; i++) {
-          const x = cardX(i);
-          if (p.x >= x && p.x <= x + CARD_W && p.y >= CARD_Y && p.y <= CARD_Y + CARD_H) { buy(i); return; }
-        }
+        for (let i = 0; i < 8; i++) if (inR(p, cardX(i), CARD_Y, CARD_W, CARD_H)) { buy(i); return; }
         return;
       }
       for (let i6 = 0; i6 < slashes.length; i6++) { const s = slashes[i6];
@@ -381,9 +503,9 @@ export default {
         s.on = true; s.x = Math.round(p.x); s.y = Math.round(p.y); s.life = 0.14; s.d = rand() > 0.5 ? 1 : -1;
         break;
       }
-      const z = hitTest(p.x, p.y, PAD);
+      const z = hitTest(p.x, p.y, PAD, false);
       if (z) {
-        damage(z, 1, 5);
+        damage(z, clickDmg(UP()), 5, true);
         if (z.on) api.sfx('hit');
       } else {
         burst(p.x, p.y, 2, C_DIRT, 10);
@@ -393,19 +515,49 @@ export default {
     const onKeyDown = (e) => {
       if (g.phase !== 'play') return;
       const c = e.code;
+      if (c === 'Tab' || c === 'KeyI') { e.preventDefault(); if (!e.repeat) togglePanel(); return; }
+      if (P.author && (c === 'BracketRight' || c === 'BracketLeft')) {
+        e.preventDefault();
+        if (!e.repeat) authorSkip(c === 'BracketRight' ? 1 : -1);
+        return;
+      }
+      if (g.panel) {
+        if (c === 'ArrowLeft' || c === 'ArrowRight' || c === 'ArrowUp' || c === 'ArrowDown') {
+          e.preventDefault();
+          const d = c === 'ArrowLeft' ? -1 : c === 'ArrowRight' ? 1 : c === 'ArrowUp' ? -6 : 6;
+          g.sel = (g.sel + d + TYPE_IDS.length) % TYPE_IDS.length;
+        } else if (c === 'Space' || c === 'Enter' || c === 'Backspace') { e.preventDefault(); g.panel = null; }
+        return;
+      }
       if (c === 'Space' || c === 'Enter' || c === 'NumpadEnter') {
         e.preventDefault();
         if (e.repeat) return;
         if (g.mode === 'shop') startWave();
-      } else if (c === 'Digit1' || c === 'Digit2' || c === 'Digit3' || c === 'Numpad1' || c === 'Numpad2' || c === 'Numpad3') {
+      } else if ((c.startsWith('Digit') || c.startsWith('Numpad')) && c.length >= 6) {
+        const n = c.charCodeAt(c.length - 1) - 49;
+        if (n < 0 || n > 7) return;
         e.preventDefault();
         if (e.repeat) return;
-        buy(c.charCodeAt(c.length - 1) - 49);
+        buy(n);
       }
     };
     canvas.addEventListener('pointerdown', onPointerDown);
     canvas.addEventListener('contextmenu', onCtx);
     window.addEventListener('keydown', onKeyDown);
+
+    // автор: перескок на следующий / предыдущий рубеж
+    const authorSkip = (dir) => {
+      for (let i = 0; i < zombies.length; i++) { const z = zombies[i]; if (z.on && z.mode === 'play') { burst(z.x, z.y - 6, 4, C_SMOKE, 20); z.on = false; } }
+      g.boss = null;
+      const cur = Math.max(1, g.wave);
+      const target = dir > 0 ? ckptOf(cur) + 5 : Math.max(1, ckptOf(cur) - 5);
+      g.wave = target - 1;
+      if (target > P.p.ckpt) P.p.ckpt = ckptOf(target);
+      startWave();
+      P.save();
+      g.toast = { text: 'A: волна ' + target, color: '#ff9ad0', kind: 2 };
+      g.toastT = 1.6;
+    };
 
     // ---------- поведение жителей ----------
     const isOut = (x) => x < 252;
@@ -421,7 +573,7 @@ export default {
       p[a.pl * 2] = x; p[a.pl * 2 + 1] = y;
       a.pl++;
     };
-    const emote = (a, k, t) => { a.emote = k; a.emoteT = t; }; // 1 '!', 2 болтовня, 3 зевок
+    const emote = (a, k, t) => { a.emote = k; a.emoteT = t; };
     const insideX = () => 262 + rand() * 50;
     const insideY = () => 146 + rand() * 22;
     const threat = () => {
@@ -438,7 +590,6 @@ export default {
     const think = (a) => {
       a.spd = a.kind === 1 ? 18 : 20 + rand() * 6;
       if (a.kind === 1) {
-        // стражник: стоит у ворот, иногда прохаживается и зевает
         const r = rand();
         if (r < 0.4) setPath(a, 262 + rand() * 10, 152 + rand() * 12, 'post');
         else { a.state = 'post'; a.timer = 3 + rand() * 5; if (r > 0.8) emote(a, 3, 1.4); }
@@ -555,7 +706,6 @@ export default {
       }
     };
 
-    // часовой на помосте
     const updateSentry = (dt) => {
       if (!sentry.on) return;
       if (sentry.rec > 0) sentry.rec -= dt;
@@ -565,14 +715,14 @@ export default {
       if (!leaving && g.phase === 'idle') {
         for (let i9 = 0; i9 < zombies.length; i9++) { const z = zombies[i9]; if (z.on && (z.mode === 'walk' || z.mode === 'rattle') && z.x > OUTER_X - 46 && (!target || z.x > target.x)) target = z; }
       }
-      const dx = sentry.timer - sentry.x; // timer хранит цель по x
+      const dx = sentry.timer - sentry.x;
       if (target) {
         sentry.dir = -1;
         sentry.cd -= dt;
         if (sentry.cd <= 0) {
           sentry.cd = 1.7 + rand() * 0.5;
           sentry.rec = 0.2;
-          shoot(sentry.x - 3, PLATFORM_Y - 7, target);
+          shoot(sentry.x - 3, PLATFORM_Y - 7, target, 1);
         }
         return;
       }
@@ -595,10 +745,12 @@ export default {
       }
     };
 
-    // купленные стрелки
+    // лучники деревни (по уровню улучшения)
     const updateGuards = (dt, canShoot) => {
-      for (let i = g.guards.length - 1; i >= 0; i--) {
-        const gd = g.guards[i];
+      const up = UP();
+      for (let i = 0; i < MAX_SLOTS; i++) {
+        const gd = guards[i];
+        if (!gd.on) continue;
         if (gd.rec > 0) gd.rec -= dt;
         const dx = gd.tx - gd.x;
         if (Math.abs(dx) > 0.5) {
@@ -609,19 +761,19 @@ export default {
         }
         gd.x = gd.tx;
         gd.step = 0;
-        if (gd.leave) { g.guards.splice(i, 1); continue; }
+        if (gd.leave) { gd.on = false; continue; }
         if (!canShoot) continue;
         gd.cd -= dt;
         if (gd.cd > 0) continue;
         let target = null;
-        for (let i10 = 0; i10 < zombies.length; i10++) { const z = zombies[i10]; if (z.on && z.x > 4 && (!target || z.x > target.x)) target = z; }
+        for (let i10 = 0; i10 < zombies.length; i10++) { const z = zombies[i10]; if (z.on && z.mode === 'play' && z.x > 4 && !z.ghost && (!target || z.x > target.x)) target = z; }
         if (!target) { gd.cd = 0.2; continue; }
-        gd.cd = 2.2;
+        gd.cd = arrowCd(up) * (0.9 + rand() * 0.2);
         gd.rec = 0.2;
-        shoot(gd.x - 3, PLATFORM_Y - 7, target);
+        shoot(gd.x - 3, PLATFORM_Y - 7, target, arrowDmg(up));
       }
     };
-    const guardsLeave = () => { for (let i11 = 0; i11 < g.guards.length; i11++) { const gd = g.guards[i11]; gd.leave = true; gd.tx = OFF_R; } };
+    const guardsLeave = () => { for (let i = 0; i < MAX_SLOTS; i++) { const gd = guards[i]; if (gd.on) { gd.leave = true; gd.tx = OFF_R + i * 4; } } };
 
     // ---------- переходы ----------
     const startIntro = () => {
@@ -631,7 +783,8 @@ export default {
       g.ev = 0;
       g.mode = 'play';
       g.bell = 0;
-      // жители — по домам, бегом
+      g.panel = null;
+      if (from === 'idle') P.load();
       for (let i12 = 0; i12 < actors.length; i12++) { const a = actors[i12];
         a.partner = null;
         a.carry = 0;
@@ -640,13 +793,12 @@ export default {
       gardener = null;
       if (sentry.on) { emote(sentry, 1, 1.0); sentry.state = 'leave'; sentry.timer = OFF_R; }
       guardsLeave();
-      // орда: уже стоящие на поле зомби становятся её частью, недостающих добавляем слева
       g.introOg = g.og > 0.05;
       g.introTp = g.introOg ? 1.6 : 1.1;
       let n = 0;
       for (let i13 = 0; i13 < zombies.length; i13++) { const z = zombies[i13];
         if (!z.on) continue;
-        if (n >= 6) { z.mode = 'flee'; z.dir = -1; z.spd = 80; continue; }
+        if (n >= 6 || z.T.boss || z.type === 'witch') { z.mode = 'flee'; z.dir = -1; z.spd = 80; continue; }
         z.mode = 'horde';
         z.atk = false;
         z.kb = 0;
@@ -672,15 +824,17 @@ export default {
     const beginPlay = () => {
       g.phase = 'play';
       g.pt = 0;
-      g.hp = MAX_HP;
-      g.gems = 0;
+      applyUpgrades(false);
+      g.hp = g.maxHp;
       g.kills = 0;
-      g.wave = 0;
-      g.fences = 0;
+      g.startWave = P.p.ckpt;
+      g.wave = g.startWave - 1;
       g.overSent = false;
       g.sawOver = false;
       g.gdmg = 0;
       g.gbroken = false;
+      g.boss = null;
+      if (P.checkDay()) P.save();
       startWave();
       g.toSpawn = Math.max(0, g.toSpawn - g.hordeN);
       g.spawnT = 2.5;
@@ -688,25 +842,31 @@ export default {
         if (!z.on || z.mode === 'flee') continue;
         z.mode = 'play';
         z.dir = 1;
-        z.spd = TYPES[z.type].spd * g.spdMul * (0.9 + rand() * 0.2);
+        z.hp = z.max = z.T.hp * g.hpMul;
+        z.spd = z.T.spd * g.spdMul * (0.9 + rand() * 0.2);
       }
+      callArchers();
     };
 
     const startOutro = () => {
+      if (g.phase === 'play') P.endRun(score());
       g.phase = 'outro';
       g.pt = 0;
       g.ev = 0;
       g.bell = 1.8;
       g.mode = 'play';
+      g.panel = null;
+      g.boss = null;
       api.sfx('click');
-      // зомби вздрагивают и бегут прочь
+      for (let i = 0; i < bolts.length; i++) bolts[i].on = false;
       for (let i15 = 0; i15 < zombies.length; i15++) { const z = zombies[i15];
         if (!z.on) continue;
         z.mode = 'scared';
         z.atk = false;
+        z.ghost = false;
+        z.hop = 0;
         z.give = 0.3 + rand() * 0.4;
       }
-      // жители и стражник с факелами выходят
       let k = 0;
       for (let i16 = 0; i16 < actors.length; i16++) { const a = actors[i16];
         a.partner = null;
@@ -727,18 +887,18 @@ export default {
 
     // ---------- обновление ----------
     const updateZombie = (z, dt) => {
-      const T = TYPES[z.type];
       if (z.flash > 0) z.flash -= dt;
       if (z.kb > 0) {
         z.x -= z.kb * 14 * dt * (z.dir > 0 ? 1 : -1);
         z.kb -= dt * 30;
         if (z.kb < 0) z.kb = 0;
       }
+      if (z.hop > 0 && z.mode !== 'play') z.hop = Math.max(0, z.hop - dt * 20);
       switch (z.mode) {
         case 'walk': {
           z.give -= dt;
           if (z.give <= 0) { z.mode = 'leave'; z.dir = -1; z.spd *= 0.8; break; }
-          if (g.og > 0.3 && z.x + BOX[z.type].r >= OUTER_X - 3) { z.x = OUTER_X - 3 - BOX[z.type].r; z.mode = 'rattle'; z.atk = true; break; }
+          if (g.og > 0.3 && z.x + z.T.box.r >= OUTER_X - 3) { z.x = OUTER_X - 3 - z.T.box.r; z.mode = 'rattle'; z.atk = true; break; }
           if (z.kb <= 0) z.x += z.spd * dt;
           break;
         }
@@ -752,10 +912,9 @@ export default {
         case 'flee':
           if (z.kb <= 0) z.x -= z.spd * dt;
           z.dir = -1;
-          if (z.x < -16) z.on = false;
+          if (z.x < -30) { z.on = false; if (z === g.boss) g.boss = null; }
           break;
         case 'scared':
-          // на миг замирает, потом разворачивается и бежит
           z.give -= dt;
           z.atk = false;
           if (z.give <= 0) { z.mode = 'flee'; z.dir = -1; z.spd = 55 + rand() * 30; }
@@ -780,12 +939,11 @@ export default {
           break;
         }
         case 'stand':
-          // спокойная сцена после поражения: топчутся у пролома
           z.atk = false;
           z.give -= dt;
           if (z.give <= 0) {
             z.give = 2 + rand() * 4;
-            z.hx = clamp(z.x + (rand() - 0.6) * 8, 60, WALL_X - BOX[z.type].r);
+            z.hx = clamp(z.x + (rand() - 0.6) * 8, 60, WALL_X - z.T.box.r);
           }
           if (Math.abs(z.hx - z.x) > 0.5) { z.dir = z.hx > z.x ? 1 : -1; z.x += z.dir * 4 * dt; } else z.dir = 1;
           break;
@@ -793,7 +951,71 @@ export default {
       }
     };
 
+    // поведение зомби в бою (особые типы)
+    const playZombie = (z, dt) => {
+      const T = z.T;
+      if (z.flash > 0) z.flash -= dt;
+      if (z.kb > 0) {
+        z.x -= z.kb * 14 * dt;
+        z.kb -= dt * 30;
+        if (z.kb < 0) z.kb = 0;
+      }
+      let v = z.spd;
+      const front = T.box.r;
+      // особые
+      if (z.type === 'ghost') {
+        z.act -= dt;
+        if (z.act <= 0) { z.ghost = !z.ghost; z.act = z.ghost ? 1.4 : 2.6 + rand(); if (z.ghost) burst(z.x + 1, z.y - 8, 3, C_GHOST, 12); }
+      } else if (z.type === 'jumper') {
+        z.act += dt * (z.atk ? 0 : 2.2);
+        z.hop = z.atk ? 0 : Math.abs(Math.sin(z.act * Math.PI)) * 7;
+      } else if (z.type === 'witch') {
+        if (z.x >= z.stopX) {
+          z.atk = false;
+          z.act -= dt;
+          if (z.act <= 0) { z.act = 3.2 + rand() * 0.8; throwPotion(z); api.sfx('jump'); }
+          z.act2 -= dt;
+          if (z.act2 <= 0) {
+            z.act2 = 5;
+            for (let i = 0; i < zombies.length; i++) { const o = zombies[i];
+              if (!o.on || o === z || o.mode !== 'play' || o.T.boss) continue;
+              if (Math.abs(o.x - z.x) < 36 && o.hp < o.max) { o.hp = Math.min(o.max, o.hp + o.max * 0.25); burst(o.x + 1, o.y - 10, 3, C_POT, 12); }
+            }
+          }
+          return 0;
+        }
+      } else if (z.type === 'necro') {
+        z.act -= dt;
+        if (z.act <= 0 && g.phase === 'play') {
+          z.act = 6;
+          for (let k = 0; k < 2; k++) {
+            const m = spawnAs('normal', z.x - 8 - k * 8, clamp(z.y + (k ? 6 : -6), LANE_TOP, LANE_TOP + LANE_H - 1));
+            if (m) { m.summon = true; burst(m.x, m.y - 6, 6, C_POT, 18); }
+          }
+          api.sfx('hit');
+        }
+      } else if (z.type === 'ram') {
+        z.act -= dt;
+        if (z.act <= 0) { z.act = 4.5; z.act2 = 1.1; }
+        if (z.act2 > 0) { z.act2 -= dt; v *= 3.5; if (Math.floor(g.t * 20) % 3 === 0) addPart(z.x - 4, z.y, -20, -10, 0.3, '#c8b890'); }
+      }
+      if (z.x + front >= WALL_X) {
+        z.x = WALL_X - front;
+        if (z.type === 'bomber') { z.on = false; explode(z, true); return 0; }
+        z.atk = true;
+        z.hop = 0;
+        return T.dps * g.dmgMul;
+      }
+      z.atk = false;
+      const jump = z.type === 'jumper' || z.type === 'ghost';
+      const nf = fenceCount(UP());
+      if (!jump && !T.boss) for (let i = 0; i < nf; i++) if (Math.abs(z.x + 1 - FENCE_X[i]) < 8) v *= 0.5;
+      if (z.kb <= 0) z.x += v * dt;
+      return 0;
+    };
+
     const updatePlay = (dt) => {
+      if (g.panel) return; // альбом открыт — пауза боя
       if (g.mode === 'shop') {
         g.shopT -= dt;
         if (g.shopT <= 0) startWave();
@@ -804,63 +1026,60 @@ export default {
         if (g.spawnT <= 0) {
           spawn();
           g.toSpawn--;
+          if (g.bossDue && g.toSpawn <= g.bossAt) { spawnBoss(g.bossDue); g.bossDue = null; }
           if (g.wave >= 3 && g.toSpawn > 0 && rand() < Math.min(0.45, 0.05 * g.wave + 0.1)) { spawn(); g.toSpawn--; }
           g.spawnT = g.spawnInt * (0.7 + rand() * 0.6);
         }
       }
       let alive = 0;
       let dmg = 0;
+      // шипы ловушек
+      const sp = spikeDps(UP());
+      g.spikeT -= dt;
+      const spikeTick = sp > 0 && g.spikeT <= 0;
+      if (spikeTick) g.spikeT = 0.5;
+      const nf = fenceCount(UP());
       for (let i17 = 0; i17 < zombies.length; i17++) { const z = zombies[i17];
         if (!z.on) continue;
         if (z.mode !== 'play') { updateZombie(z, dt); continue; }
         alive++;
-        const T = TYPES[z.type];
-        if (z.flash > 0) z.flash -= dt;
-        if (z.kb > 0) {
-          z.x -= z.kb * 14 * dt;
-          z.kb -= dt * 30;
-          if (z.kb < 0) z.kb = 0;
-        }
-        const front = BOX[z.type].r;
-        if (z.x + front >= WALL_X) {
-          z.x = WALL_X - front;
-          z.atk = true;
-          dmg += T.dps * dt;
-        } else {
-          z.atk = false;
-          let v = z.spd;
-          for (let i = 0; i < g.fences; i++) if (Math.abs(z.x + 1 - FENCE_X[i]) < 8) v *= 0.5;
-          if (z.kb <= 0) z.x += v * dt;
+        dmg += playZombie(z, dt);
+        if (spikeTick && z.on && z.type !== 'jumper' && !z.ghost) {
+          for (let i = 0; i < nf; i++) if (Math.abs(z.x + 1 - FENCE_X[i]) < 8) { z.hp -= sp * 0.5 * g.hpMul * 0.35; z.flash = 0.05; if (z.hp <= 0) { killZombie(z, false); break; } }
         }
       }
+      if (g.bossDue && alive === 0 && g.toSpawn <= 0) { spawnBoss(g.bossDue); g.bossDue = null; alive++; }
       if (dmg > 0) {
-        g.hp -= dmg;
+        hurtWall(dmg * dt);
         g.shake = 0.15;
-        g.hurtFlash = 0.2;
         if (g.hurtSnd <= 0) {
           g.hurtSnd = 0.7;
           api.sfx('hit');
           burst(WALL_X, LANE_TOP + rand() * LANE_H - 8, 3, C_WOOD, 20);
         }
-        if (g.hp <= 0) {
-          // поражение: ворота частокола выбиты
-          g.hp = 0;
-          g.phase = 'lose';
-          g.pt = 0;
-          g.gbroken = true;
-          g.shake = 0.45;
-          burst(WALL_X + 4, 150, 16, C_PLANK, 40);
-          api.sfx('lose');
-          for (let i18 = 0; i18 < zombies.length; i18++) { const z = zombies[i18]; if (z.on) { z.mode = 'stand'; z.give = 1 + rand() * 2; z.hx = z.x; } }
-          return;
-        }
       }
-      g.gdmg = 1 - g.hp / MAX_HP;
+      if (g.hp <= 0) {
+        g.hp = 0;
+        g.phase = 'lose';
+        g.pt = 0;
+        g.gbroken = true;
+        g.shake = 0.45;
+        burst(WALL_X + 4, 150, 16, C_PLANK, 40);
+        api.sfx('lose');
+        for (let i = 0; i < bolts.length; i++) bolts[i].on = false;
+        for (let i18 = 0; i18 < zombies.length; i18++) { const z = zombies[i18]; if (z.on) { z.mode = 'stand'; z.give = 1 + rand() * 2; z.hx = z.x; z.ghost = false; z.hop = 0; } }
+        P.endRun(score());
+        return;
+      }
+      g.gdmg = 1 - g.hp / g.maxHp;
       updateGuards(dt, true);
-      if (g.toSpawn <= 0 && alive === 0) {
-        g.gems += 4 + g.wave;
+      if (g.toSpawn <= 0 && alive === 0 && !g.bossDue) {
+        const bonus = (2 + (g.wave >> 1)) * P.mul();
+        P.addGems(bonus);
+        g.hp = Math.min(g.maxHp, g.hp + g.maxHp * bellHeal(UP()));
+        P.waveCleared(g.wave, g.perfect);
         g.mode = 'shop';
-        g.shopT = 12;
+        g.shopT = SHOP_T;
         api.sfx('win');
       }
     };
@@ -868,7 +1087,6 @@ export default {
     const updateIntro = (dt) => {
       const t = g.pt;
       const tp = g.introTp;
-      // ремонт частокола (после поражения)
       if (g.gbroken || g.gdmg > 0) {
         g.gdmg = Math.max(0, g.gdmg - dt * 1.5);
         if (t > 0.3) g.gbroken = false;
@@ -891,13 +1109,6 @@ export default {
           api.sfx('hit');
         }
       } else if (g.ev === 0 && t >= tp) g.ev = 2;
-      // заборы прошлого забега топчут
-      if (g.ev === 2 && t >= tp + 0.2) {
-        g.ev = 3;
-        for (let i = 0; i < g.fences; i++) burst(FENCE_X[i], 154, 8, C_PLANK, 30);
-        if (g.fences) api.sfx('hit');
-        g.fences = 0;
-      }
       if (t >= 1.5) g.gateReq = false;
       if (t >= 1.7) {
         for (let i19 = 0; i19 < actors.length; i19++) { const a = actors[i19]; if (a.on && a.state === 'walk' && a.next === 'in' && (isOut(a.x) || a.x < 262)) { a.on = false; a.state = 'in'; a.timer = 5; } }
@@ -907,7 +1118,7 @@ export default {
 
     const updateOutro = (dt) => {
       const t = g.pt;
-      updateGuards(dt, t < 2.2);
+      updateGuards(dt, false);
       if (g.ev === 0 && t >= 2.2) { g.ev = 1; guardsLeave(); }
       if (g.ev === 1 && t >= 2.4) {
         g.ev = 2;
@@ -939,19 +1150,17 @@ export default {
         if (!any && g.og > 0.9) {
           const z = zFree();
           const r = rand();
-          zInit(z, r < 0.12 ? 'big' : r < 0.3 ? 'fast' : 'normal', -12, LANE_TOP + 3 + Math.floor(rand() * (LANE_H - 6)), 'walk');
+          zInit(z, r < 0.12 ? 'big' : r < 0.3 ? 'fast' : r < 0.4 && P.p.bestW >= 6 ? 'armor' : 'normal', -12, LANE_TOP + 3 + Math.floor(rand() * (LANE_H - 6)), 'walk');
           z.spd *= 0.6;
           z.give = rand() < 0.3 ? 6 + rand() * 8 : 999;
         }
       }
-      // окна гаснут и зажигаются
       g.litT -= dt;
       if (g.litT <= 0) {
         g.litT = 4 + rand() * 10;
         const i = Math.floor(rand() * 4);
         g.lit[i] = !g.lit[i];
       }
-      // падающая звезда
       g.ssT -= dt;
       if (g.ssT <= 0) {
         g.ssT = 25 + rand() * 40;
@@ -975,36 +1184,43 @@ export default {
       if (g.bell > 0) g.bell -= dt;
       for (let i = 0; i < 2; i++) if (g.doorT[i] > 0) g.doorT[i] -= dt;
       if (g.ssA >= 0) { g.ssA += dt; if (g.ssA > 0.7) g.ssA = -1; }
+      // всплывающие сообщения
+      if (g.toastT > 0) g.toastT -= dt;
+      else if (P.events.length && (g.phase === 'play' || g.phase === 'lose' || g.phase === 'wait')) {
+        g.toast = P.events.shift();
+        g.toastT = 2.2;
+        if (g.toast.kind >= 3) api.sfx('win');
+      }
 
-      // небо
       const ph = g.phase;
       const tgt = ph === 'play' || ph === 'lose' || ph === 'wait'
-        ? clamp(Math.max(0.2 + 0.1 * (Math.max(1, g.wave) - 1), idleDark() * 0.85), 0.2, 0.9)
+        ? clamp(Math.max(0.2 + 0.1 * (Math.max(1, g.wave) - g.startWave), idleDark() * 0.85), 0.2, 0.9)
         : ph === 'intro' ? Math.min(0.95, idleDark() + 0.08) : idleDark();
       const dr = 0.2 * dt;
       g.dark += clamp(tgt - g.dark, -dr, dr);
       const hudT = ph === 'play' || ph === 'lose' || ph === 'wait' ? 1 : 0;
       g.hud += clamp(hudT - g.hud, -dt * 3, dt * 3);
 
-      // частицы
-      for (let i22 = 0; i22 < parts.length; i22++) { const p = parts[i22];
-        if (!p.on) continue;
-        p.life -= dt;
-        if (p.gem) {
-          if (p.life > 1.0) p.vy += 160 * dt;
-          else {
-            const tx = 62, ty = 6;
-            p.vx = (tx - p.x) * 6;
-            p.vy = (ty - p.y) * 6;
-            if (Math.abs(tx - p.x) < 4 && Math.abs(ty - p.y) < 4) p.life = 0;
-          }
-        } else p.vy += 140 * dt;
-        p.x += p.vx * dt;
-        p.y += p.vy * dt;
-        if (p.life <= 0) p.on = false;
+      const frozen = ph === 'play' && g.panel;
+      if (!frozen) {
+        for (let i22 = 0; i22 < parts.length; i22++) { const p = parts[i22];
+          if (!p.on) continue;
+          p.life -= dt;
+          if (p.gem) {
+            if (p.life > 1.0) p.vy += 160 * dt;
+            else {
+              const tx = 62, ty = 6;
+              p.vx = (tx - p.x) * 6;
+              p.vy = (ty - p.y) * 6;
+              if (Math.abs(tx - p.x) < 4 && Math.abs(ty - p.y) < 4) p.life = 0;
+            }
+          } else p.vy += 140 * dt;
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          if (p.life <= 0) p.on = false;
+        }
+        tickSlashes(dt);
       }
-      tickSlashes(dt);
-      // дым из трубы
       g.smokeT -= dt;
       if (g.smokeT <= 0) {
         g.smokeT = 0.7 + rand() * 0.6;
@@ -1018,24 +1234,36 @@ export default {
         if (s.life > 6) s.on = false;
       }
 
-      // стрелы
-      for (let i26 = 0; i26 < arrows.length; i26++) { const a = arrows[i26];
-        if (!a.on) continue;
-        a.vy += 140 * dt;
-        a.x += a.vx * dt;
-        a.y += a.vy * dt;
-        if (a.y > H || a.x < -8) { a.on = false; continue; }
-        const z = hitTest(a.x, a.y, 1);
-        if (z) {
-          a.on = false;
-          damage(z, 1, 3);
-        } else if (a.y > LANE_TOP + LANE_H + 2) {
-          a.on = false;
-          burst(a.x, a.y, 2, C_ARROWHIT, 8);
+      if (!frozen) {
+        for (let i26 = 0; i26 < arrows.length; i26++) { const a = arrows[i26];
+          if (!a.on) continue;
+          a.vy += 140 * dt;
+          a.x += a.vx * dt;
+          a.y += a.vy * dt;
+          if (a.y > H || a.x < -8) { a.on = false; continue; }
+          const z = hitTest(a.x, a.y, 1, true);
+          if (z) {
+            a.on = false;
+            if (z.T.shield && z.mode === 'play') { burst(a.x, a.y, 3, C_WOOD, 14); continue; }
+            damage(z, a.dmg * (z.T.armor || 1), 3, false);
+          } else if (a.y > LANE_TOP + LANE_H + 2) {
+            a.on = false;
+            burst(a.x, a.y, 2, C_ARROWHIT, 8);
+          }
+        }
+        for (let i = 0; i < bolts.length; i++) { const b = bolts[i];
+          if (!b.on) continue;
+          b.vy += 140 * dt;
+          b.x += b.vx * dt;
+          b.y += b.vy * dt;
+          if (b.x >= WALL_X - 1) {
+            b.on = false;
+            burst(WALL_X, b.y, 8, C_POT, 22);
+            if (g.phase === 'play') hurtWall(b.dmg);
+          } else if (b.y > H) b.on = false;
         }
       }
 
-      // фазы
       if (ph === 'play') updatePlay(dt);
       else {
         for (let i27 = 0; i27 < zombies.length; i27++) { const z = zombies[i27]; if (z.on) updateZombie(z, dt); }
@@ -1054,7 +1282,6 @@ export default {
         }
       }
 
-      // жители и ворота частокола
       g.gateReq = false;
       for (let i28 = 0; i28 < actors.length; i28++) { const a = actors[i28]; updateActor(a, dt); }
       updateSentry(dt);
@@ -1080,29 +1307,32 @@ export default {
     };
 
     // ---------- отрисовка ----------
-    // зеркальный прямоугольник: dir 1 — как в оригинале (зомби смотрят вправо)
     let ZX = 0, ZD = 1;
     const zr = (ox, y, w, h) => ctx.fillRect(ZD > 0 ? ZX + ox : ZX - ox - w + 1, y, w, h);
 
-    let shK = 0, shFl = false;
-    const zc = (c) => (shFl ? '#ffffff' : rgbMix(c, NIGHTC, shK));
+    let shK = 0, shFl = false, silh = false;
+    const zc = (c) => (silh ? '#120c08' : shFl ? '#ffffff' : rgbMix(c, NIGHTC, shK));
 
     const drawZombie = (z, dark) => {
-      const T = TYPES[z.type];
+      const T = z.T;
       const s = T.s;
       ZX = Math.round(z.x);
       ZD = z.dir;
-      const y = Math.round(z.y);
+      const y = Math.round(z.y - z.hop);
       shFl = z.flash > 0;
       shK = dark * 0.45;
-      const moving = !z.atk && z.kb <= 0 && z.mode !== 'scared' && !(z.mode === 'stand' && Math.abs(z.hx - z.x) <= 0.5) && !(z.mode === 'horde' && Math.abs(z.hx - z.x) <= 0.6 && g.pt < g.introTp);
+      const ga = ctx.globalAlpha;
+      if (z.type === 'ghost' && !silh) ctx.globalAlpha = ga * (z.ghost ? 0.35 : 0.85);
+      const moving = !z.atk && z.kb <= 0 && z.mode !== 'scared' && !(z.mode === 'stand' && Math.abs(z.hx - z.x) <= 0.5) && !(z.mode === 'horde' && Math.abs(z.hx - z.x) <= 0.6 && g.pt < g.introTp) && !(z.type === 'witch' && z.mode === 'play' && z.x >= z.stopX);
       const step = moving ? Math.floor((g.t * (z.type === 'fast' || z.mode === 'flee' ? 9 : 4) + z.phase) % 2) : 0;
       const bob = z.atk ? Math.round(Math.sin(g.t * 10 + z.phase)) : z.mode === 'stand' ? Math.round(Math.sin(g.t * 1.5 + z.phase) * 0.6) : 0;
       const armsUp = z.mode === 'scared' || z.mode === 'flee';
-      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      if (!silh) {
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        ctx.fillRect(ZX - 3 * s, Math.round(z.y) + 1, 8 * s, 1);
+      }
       if (z.type === 'fast') {
         const y0 = y - 10;
-        zr(-2, y + 1, 6, 1);
         ctx.fillStyle = zc(Z_LEG);
         zr(-1 + step, y - 2, 1, 2);
         zr(1 - step, y - 2, 1, 2);
@@ -1113,50 +1343,132 @@ export default {
         if (armsUp) zr(1, y0 + 1, 1, 2); else zr(2, y0 + 4 + bob, 2, 1);
         ctx.fillStyle = zc(Z_SKIND);
         zr(0, y0 + 6, 1, 1);
-        ctx.fillStyle = shFl ? '#ffffff' : '#c02020';
+        ctx.fillStyle = silh ? '#120c08' : shFl ? '#ffffff' : '#c02020';
         zr(1, y0 + 1, 1, 1);
-      } else {
-        const y0 = y - 12 * s;
-        zr(-3 * s, y + 1, 8 * s, 1);
-        ctx.fillStyle = zc(Z_LEG);
-        zr(-s + (step ? s : 0), y0 + 10 * s, s, 2 * s);
-        zr(s - (step ? s : 0), y0 + 10 * s, s, 2 * s);
-        ctx.fillStyle = zc(Z_SHIRT);
-        zr(-2 * s, y0 + 4 * s, 5 * s, 7 * s);
-        ctx.fillStyle = zc(Z_SHIRTD);
-        zr(-2 * s, y0 + 9 * s, 5 * s, 2 * s);
+      } else if (z.type === 'witch') {
+        const y0 = y - 12;
+        ctx.fillStyle = zc(Z_WITCHD);
+        zr(-2, y0 + 5, 6, 7);
+        ctx.fillStyle = zc(Z_WITCH);
+        zr(-2, y0 + 4, 5, 6);
         ctx.fillStyle = zc(Z_SKIN);
-        zr(-s, y0 + 6 * s, s, s);
-        zr(s, y0 + 8 * s, s, s);
-        zr(-2 * s, y0 + 10 * s, s, s);
+        zr(-1, y0, 4, 4);
+        ctx.fillStyle = zc(Z_ROBED);
+        zr(-3, y0 - 1, 7, 1);
+        zr(-1, y0 - 3, 4, 2);
+        zr(0, y0 - 5, 2, 2);
+        // зелье в руке
+        const lift = z.mode === 'play' && z.x >= z.stopX && z.act < 0.5 ? -3 : 0;
+        ctx.fillStyle = zc(Z_SKIN);
+        zr(3, y0 + 5 + lift, 2, 1);
+        ctx.fillStyle = zc(POTION);
+        zr(4, y0 + 3 + lift, 2, 2);
+        ctx.fillStyle = silh ? '#120c08' : shFl ? '#ffffff' : '#ffe040';
+        zr(2, y0 + 1, 1, 1);
+      } else {
+        const big = s > 1;
+        const y0 = y - 12 * s;
+        let shirt = Z_SHIRT, shirtD = Z_SHIRTD, skin = Z_SKIN, skinD = Z_SKIND;
+        if (z.type === 'ghost') { shirt = Z_PALES; shirtD = Z_PALED; skin = Z_PALE; skinD = Z_PALED; }
+        else if (z.type === 'bomber' || z.type === 'giant') { shirt = Z_BROWN; shirtD = Z_BROWND; }
+        else if (z.type === 'necro') { shirt = Z_ROBE; shirtD = Z_ROBED; }
+        else if (z.type === 'jumper') shirt = Z_FSHIRT;
+        if (z.type === 'giant') { skin = Z_GSKIN; skinD = Z_GSKIND; }
+        ctx.fillStyle = zc(z.type === 'necro' ? Z_ROBED : Z_LEG);
+        const lb = z.type === 'jumper' && z.hop > 1 ? 1 : 0;
+        zr(-s + (step ? s : 0), y0 + 10 * s, s, 2 * s - lb);
+        zr(s - (step ? s : 0), y0 + 10 * s, s, 2 * s - lb);
+        ctx.fillStyle = zc(shirt);
+        zr(-2 * s, y0 + 4 * s, 5 * s, 7 * s);
+        ctx.fillStyle = zc(shirtD);
+        zr(-2 * s, y0 + 9 * s, 5 * s, 2 * s);
+        ctx.fillStyle = zc(skin);
+        if (z.type !== 'necro') {
+          zr(-s, y0 + 6 * s, s, s);
+          zr(s, y0 + 8 * s, s, s);
+        }
         if (armsUp) {
           zr(2 * s, y0 + s, s, 3 * s);
           zr(-2 * s, y0 + s, s, 3 * s);
-        } else {
+        } else if (z.type !== 'bomber') {
           zr(2 * s, y0 + 5 * s + bob * s, 3 * s, s);
-          ctx.fillStyle = zc(Z_SKIND);
+          ctx.fillStyle = zc(skinD);
           zr(2 * s, y0 + 6 * s + bob * s, 2 * s, s);
         }
-        ctx.fillStyle = zc(Z_SKIN);
+        ctx.fillStyle = zc(skin);
         zr(-s, y0, 4 * s, 4 * s);
-        ctx.fillStyle = zc(Z_SKIND);
+        ctx.fillStyle = zc(skinD);
         zr(-s, y0 + 3 * s, 4 * s, s);
         zr(-s, y0, s, s);
-        ctx.fillStyle = shFl ? '#ffffff' : '#c02020';
+        ctx.fillStyle = silh ? '#120c08' : shFl ? '#ffffff' : z.type === 'ghost' ? '#4080c0' : '#c02020';
         zr(2 * s, y0 + s, s, s);
+        // снаряжение
+        if (z.type === 'armor' || z.type === 'ram') {
+          ctx.fillStyle = zc(PLATE);
+          zr(-s - (big ? 1 : 0), y0 - s, 5 * s, s);
+          zr(-s, y0, s, 2 * s);
+          zr(-2 * s, y0 + 4 * s, 5 * s, 3 * s);
+          ctx.fillStyle = zc(PLATED);
+          zr(-2 * s, y0 + 6 * s, 5 * s, s);
+        }
+        if (z.type === 'bomber') {
+          // бочка над головой
+          ctx.fillStyle = zc(Z_SKIN);
+          zr(-2, y0 - 2, 1, 3);
+          zr(3, y0 - 2, 1, 3);
+          ctx.fillStyle = zc(BARREL);
+          zr(-2, y0 - 7, 6, 5);
+          ctx.fillStyle = zc(BARRELD);
+          zr(-2, y0 - 6, 6, 1);
+          zr(-2, y0 - 4, 6, 1);
+          if (!silh && Math.floor(g.t * 10 + z.phase) % 2) { ctx.fillStyle = '#ffd040'; zr(1, y0 - 9, 1, 2); }
+        }
+        if (z.type === 'shield') {
+          ctx.fillStyle = zc(SHIELDD);
+          zr(4, y0 + 3, 3, 9);
+          ctx.fillStyle = zc(SHIELDC);
+          zr(5, y0 + 4, 2, 7);
+          ctx.fillStyle = zc(PLATE);
+          zr(5, y0 + 7, 2, 1);
+        }
+        if (z.type === 'giant') {
+          // дубина
+          ctx.fillStyle = zc(BARRELD);
+          const up = z.atk ? Math.round(Math.sin(g.t * 6) * 3) : 0;
+          zr(5 * s, y0 + 2 * s - up, 2, 4 * s);
+          zr(5 * s - 1, y0 + s - up, 4, 4);
+        }
+        if (z.type === 'necro') {
+          ctx.fillStyle = zc(GOLD);
+          zr(-s, y0 - s, 4 * s, s);
+          zr(-s, y0 - 2 * s, 1, s);
+          zr(s, y0 - 2 * s, 1, s);
+          zr(3 * s - 1, y0 - 2 * s, 1, s);
+          ctx.fillStyle = zc(BARRELD);
+          zr(5 * s, y0 - 2 * s, 1, 14 * s);
+          ctx.fillStyle = silh ? '#120c08' : rgbStr(90, 230, 130, 0.7 + 0.3 * Math.sin(g.t * 5));
+          zr(5 * s - 1, y0 - 4 * s, 3, 3);
+        }
+        if (z.type === 'ram') {
+          // таран-бревно
+          ctx.fillStyle = zc(BARREL);
+          zr(3 * s, y0 + 5 * s, 9 * s, 2 * s);
+          ctx.fillStyle = zc(IRON);
+          zr(12 * s - 2, y0 + 5 * s, 2, 2 * s);
+        }
       }
-      if (z.hp < z.max && z.mode === 'play') {
-        const bw = z.max * 2 + 1;
-        const bx = ZX - Math.floor(bw / 2) + 1;
-        const by = y + BOX[z.type].t - 3;
+      ctx.globalAlpha = ga;
+      if (!silh && z.hp < z.max && z.mode === 'play' && !z.T.boss) {
+        const bw = 12;
+        const bx = ZX - 5;
+        const by = y + T.box.t - 3;
         ctx.fillStyle = 'rgba(20,10,10,0.8)';
         ctx.fillRect(bx, by, bw, 3);
         ctx.fillStyle = '#e04848';
-        for (let i = 0; i < z.hp; i++) ctx.fillRect(bx + 1 + i * 2, by + 1, 1, 1);
+        ctx.fillRect(bx + 1, by + 1, Math.max(1, Math.round((bw - 2) * clamp(z.hp / z.max, 0, 1))), 1);
       }
     };
 
-    // стрелок на помосте (смотрит влево)
     const drawGuard = (x, rec, step, dark) => {
       x = Math.round(x);
       const y = PLATFORM_Y - 12;
@@ -1187,7 +1499,6 @@ export default {
       ctx.fillRect(x - 3, y + 5, 2, 1);
     };
 
-    // житель / стражник (смотрит влево при dir -1)
     let VX = 0, VD = -1;
     const vr = (ox, y, w, h) => ctx.fillRect(VD < 0 ? VX + ox : VX - ox - w + 1, y, w, h);
     const drawActor = (a, dark) => {
@@ -1209,20 +1520,18 @@ export default {
       vr(-2, yy + 4, 5, 7 - bend);
       ctx.fillStyle = rgbMix(ROBED[a.robe], NIGHTC, k);
       vr(-2, yy + 7, 5, 1);
-      if (a.robe === 2) { ctx.fillStyle = rgbMix(G_LEG, NIGHTC, k); vr(-2, yy + 6, 2, 4); } // фартук кузнеца
+      if (a.robe === 2) { ctx.fillStyle = rgbMix(G_LEG, NIGHTC, k); vr(-2, yy + 6, 2, 4); }
       ctx.fillStyle = rgbMix(SKIN, NIGHTC, k);
       vr(-1, yy, 4, 4);
       if (a.kind === 0) { ctx.fillStyle = rgbMix(NOSE, NIGHTC, k); vr(-2, yy + 2, 1, 2); }
       ctx.fillStyle = rgbMix(EYE, NIGHTC, k);
       vr(-1, yy + 1, 1, 1);
       if (a.emoteT > 0 && a.emote === 3) vr(-1, yy + 3, 2, 1);
-      // головной убор
       ctx.fillStyle = rgbMix(HATS[a.robe], NIGHTC, k);
       if (a.robe === 0) { vr(-3, yy - 1, 8, 1); vr(-1, yy - 2, 4, 1); }
       else if (a.robe === 3) { vr(-1, yy - 1, 4, 1); vr(2, yy, 1, 3); }
       else if (a.robe === 2) vr(-1, yy - 1, 4, 1);
       else if (a.kind === 1) { vr(-2, yy - 1, 6, 1); vr(-1, yy - 2, 4, 1); }
-      // руки и предметы
       const skin = rgbMix(SKIN, NIGHTC, k);
       if (a.carry) {
         ctx.fillStyle = skin;
@@ -1269,7 +1578,6 @@ export default {
         ctx.fillStyle = rgbStr(255, 170, 70, 0.1 + 0.1 * dark * f);
         vr(-11, yy - 8 + wave, 15, 15);
       }
-      // эмоции
       if (a.emoteT > 0 && a.emote === 1) {
         ctx.fillStyle = 'rgba(42,26,16,0.85)';
         ctx.fillRect(VX - 3, yy - 11, 8, 8);
@@ -1283,12 +1591,10 @@ export default {
       }
     };
 
-    // внешние ворота на дороге: дощатый заслон через дорогу, фонарь на столбе
     const OG_TOP = 124, OG_BOT = 171;
     const drawOuterGate = (wood, woodD, dark) => {
       const x = OUTER_X;
       const sh = g.phase === 'intro' && g.og > 0 && g.pt > 0.9 && g.pt < g.introTp ? Math.round(Math.sin(g.t * 45)) : 0;
-      // столб с фонарём
       ctx.fillStyle = woodD;
       ctx.fillRect(x - 5, OG_TOP - 8, 2, OG_BOT - OG_TOP + 8);
       ctx.fillRect(x - 5, OG_TOP - 8, 5, 1);
@@ -1297,18 +1603,16 @@ export default {
       ctx.fillRect(x - 2, OG_TOP - 6, 2, 3);
       ctx.fillStyle = rgbStr(255, 190, 90, 0.06 + 0.12 * dark);
       ctx.fillRect(x - 8, OG_TOP - 12, 13, 13);
-      // доски: целые снизу вверх на высоту og
       const full = OG_BOT - OG_TOP;
       const hgt = Math.round(full * clamp(g.og, 0, 1));
       for (let i = 0; i < 3; i++) {
         const px = x - 2 + i * 2 + sh;
-        // зубчатый верх: у сломанных досок разная высота
         const jag = g.og < 0.99 ? (i === 1 ? 3 : i === 2 ? -2 : 0) : 0;
         const ph = clamp(hgt + jag, 0, full);
         const top = OG_BOT - ph;
         ctx.fillStyle = i === 1 ? woodD : wood;
         if (ph > 0) ctx.fillRect(px, top, 2, ph);
-        if (g.og >= 0.99) ctx.fillRect(px, top - 1, 1, 1); // заострённые колья
+        if (g.og >= 0.99) ctx.fillRect(px, top - 1, 1, 1);
       }
       if (hgt > 6) {
         ctx.fillStyle = rgbMix(IRON, NIGHTC, dark * 0.5);
@@ -1316,13 +1620,11 @@ export default {
         ctx.fillRect(x - 3 + sh, b1, 8, 1);
         if (OG_BOT - hgt < b2) ctx.fillRect(x - 3 + sh, b2, 8, 1);
       }
-      // трещины
       if (g.og < 0.99 && hgt > 4) {
         ctx.fillStyle = 'rgba(20,12,8,0.85)';
         ctx.fillRect(x - 1 + sh, OG_BOT - hgt + 2, 1, 4);
         ctx.fillRect(x + 2 + sh, OG_BOT - hgt + 5, 1, 3);
       }
-      // обломки на земле
       if (g.og < 0.6) {
         ctx.fillStyle = woodD;
         ctx.fillRect(x - 12, 160, 6, 1);
@@ -1344,6 +1646,8 @@ export default {
     };
 
     const draw = () => {
+      const up = UP();
+      const vl = villageLevel(up);
       const dark = Math.round(clamp(g.dark, 0, 1) * 64) / 64;
       const sx = g.shake > 0 ? Math.round((rand() - 0.5) * 2) : 0;
       ctx.save();
@@ -1372,7 +1676,6 @@ export default {
           ctx.fillRect(x + i * 2, y - Math.round(i * 0.8), 2, 1);
         }
       }
-      // луна — справа, над деревней
       const mx = 196, my = 16;
       ctx.fillStyle = rgbMix(MOON0, MOON1, dark, 0.25);
       ctx.fillRect(mx - 3, my - 3, 16, 16);
@@ -1381,7 +1684,6 @@ export default {
       ctx.fillStyle = rgbMix(MOOND0, MOOND1, dark);
       ctx.fillRect(mx + 3, my + 2, 3, 2);
       ctx.fillRect(mx + 6, my + 6, 2, 2);
-      // холмы и деревья
       ctx.fillStyle = rgbMix(HILL0, HILL1, dark);
       for (let i = 0; i < hills.length; i++) ctx.fillRect(i * 4, hills[i], 4, GROUND - hills[i]);
       const treeC = rgbMix(TREE0, TREE1, dark);
@@ -1393,7 +1695,6 @@ export default {
         ctx.fillRect(tr.x, GROUND - 3 - tr.h, tr.w, tr.h);
         ctx.fillRect(tr.x + 1, GROUND - 5 - tr.h, tr.w - 2, 2);
       }
-      // земля
       const gk = dark * 0.85;
       const gr = lerp(GRASS0[0], GRASS1[0], gk), gg = lerp(GRASS0[1], GRASS1[1], gk), gb = lerp(GRASS0[2], GRASS1[2], gk);
       ctx.fillStyle = rgbStr(gr, gg, gb);
@@ -1406,7 +1707,6 @@ export default {
       for (let x = 3; x < W; x += 9) ctx.fillRect(x, LANE_TOP + 8 + (x % 3) * 5, 3, 1);
       ctx.fillStyle = rgbStr(lerp(gr, TUFT[0], 0.25), lerp(gg, TUFT[1], 0.25), lerp(gb, TUFT[2], 0.25));
       for (let i31 = 0; i31 < tufts.length; i31++) { const tf = tufts[i31]; ctx.fillRect(tf.x, tf.y, 1, 2); }
-      // огород у частокола
       for (let i32 = 0; i32 < garden.length; i32++) { const p = garden[i32];
         ctx.fillStyle = rgbMix(LEAF, NIGHTC, dark * 0.5);
         ctx.fillRect(p.x - 1, p.y + 1, 4, 1);
@@ -1425,7 +1725,7 @@ export default {
         const y = base - hh;
         if (h === 1) {
           ctx.fillStyle = roofD;
-          ctx.fillRect(311, y - 12, 4, 8); // труба
+          ctx.fillRect(311, y - 12, 4, 8);
         }
         ctx.fillStyle = wallC;
         ctx.fillRect(hx, y, hw, hh);
@@ -1436,6 +1736,15 @@ export default {
           const inset = Math.floor(i * (hw / 2 + 2) / rh);
           ctx.fillStyle = i % 3 === 0 ? roofD : roofC;
           ctx.fillRect(hx - 3 + inset, y - i, hw + 6 - inset * 2, 1);
+        }
+        // флажки на крышах — по уровню деревни
+        if (vl >= 3 + h * 3) {
+          ctx.fillStyle = rgbMix(WOOD0, NIGHTC, dark * 0.6);
+          ctx.fillRect(hx + (hw >> 1), y - rh - 6, 1, 6);
+          ctx.fillStyle = rgbMix(BANNER, NIGHTC, dark * 0.5);
+          const fl = Math.floor(g.t * 3 + h) % 2;
+          ctx.fillRect(hx + (hw >> 1) + 1, y - rh - 6, 4 - fl, 2);
+          ctx.fillRect(hx + (hw >> 1) + 1, y - rh - 4, 3 + fl, 1);
         }
         for (let w = 0; w < 2; w++) {
           const lit = g.lit[h * 2 + w] || g.phase !== 'idle';
@@ -1448,18 +1757,15 @@ export default {
             ctx.fillRect(wx - 3, y + 3, 10, 10);
           }
         }
-        // дверь
         const dx = DOORS_X[h];
         ctx.fillStyle = g.doorT[h] > 0 && dark > 0.3 ? rgbStr(255, 190, 90, 0.9) : rgbMix(WOOD0, NIGHTC, 0.3 + dark * 0.5);
         ctx.fillRect(dx - 2, base - 8, 4, 8);
       }
-      // дым
       for (let i33 = 0; i33 < smoke.length; i33++) { const s = smoke[i33];
         if (!s.on) continue;
         ctx.fillStyle = rgbStr(150, 150, 160, 0.35 * (1 - s.life / 6));
         ctx.fillRect(Math.round(s.x), Math.round(s.y), 2 + (s.life > 3 ? 1 : 0), 2);
       }
-      // ящики у дома
       ctx.fillStyle = rgbMix(CRATE0, NIGHTC, dark * 0.6);
       ctx.fillRect(CRATE_X - 2, CRATE_Y - 5, 6, 5);
       ctx.fillRect(CRATE_X + 4, CRATE_Y - 4, 5, 4);
@@ -1467,13 +1773,20 @@ export default {
       ctx.fillRect(CRATE_X - 2, CRATE_Y - 3, 6, 1);
       ctx.fillRect(CRATE_X + 4, CRATE_Y - 2, 5, 1);
 
-      // помост, колокол, стрелки
+      // помост, колокол, лучники
       const woodC = rgbMix(WOOD0, WOOD1, dark * 0.7);
       const woodDC = rgbStr(lerp(WOOD0[0], WOOD1[0], dark * 0.7) * 0.7, lerp(WOOD0[1], WOOD1[1], dark * 0.7) * 0.7, lerp(WOOD0[2], WOOD1[2], dark * 0.7) * 0.7);
       ctx.fillStyle = woodDC;
       for (let x = 258; x < 314; x += 14) ctx.fillRect(x, PLATFORM_Y + 2, 2, GROUND + 4 - PLATFORM_Y);
       ctx.fillRect(316, PLATFORM_Y - 16, 1, 16);
       ctx.fillRect(311, PLATFORM_Y - 16, 6, 1);
+      // навес-башня над помостом при 3+ лучниках
+      if (up[1] >= 3) {
+        ctx.fillStyle = woodDC;
+        ctx.fillRect(256, PLATFORM_Y - 22, 1, 22);
+        ctx.fillStyle = rgbMix(ROOF0, ROOF1, dark * 0.7);
+        for (let i = 0; i < 4; i++) ctx.fillRect(253 + i * 2, PLATFORM_Y - 24 - i, 58 - i * 4, 1);
+      }
       const sw = g.bell > 0 ? Math.round(Math.sin(g.t * 16) * 1.5) : 0;
       ctx.fillStyle = rgbMix(BELL, NIGHTC, dark * 0.5);
       ctx.fillRect(312 + sw, PLATFORM_Y - 14, 3, 3);
@@ -1488,7 +1801,7 @@ export default {
       ctx.fillRect(254, PLATFORM_Y, 66, 3);
       ctx.fillStyle = woodDC;
       ctx.fillRect(254, PLATFORM_Y + 3, 66, 1);
-      for (let i34 = 0; i34 < g.guards.length; i34++) { const gd = g.guards[i34]; drawGuard(gd.x, gd.rec, gd.step, dark); }
+      for (let i34 = 0; i34 < MAX_SLOTS; i34++) { const gd = guards[i34]; if (gd.on) drawGuard(gd.x, gd.rec, gd.step, dark); }
       if (sentry.on) {
         drawGuard(sentry.x, sentry.rec, sentry.step, dark);
         if (sentry.emoteT > 0 && sentry.emote === 1) {
@@ -1498,8 +1811,10 @@ export default {
         }
       }
 
-      // заборы
-      for (let i = 0; i < g.fences; i++) {
+      // заборы и шипы (улучшение «Ловушки»)
+      const nf = fenceCount(up);
+      const spikes = spikeDps(up) > 0;
+      for (let i = 0; i < nf; i++) {
         const fx = FENCE_X[i];
         for (let row = 0; row < 3; row++) {
           const by = LANE_TOP + 6 + row * 9;
@@ -1510,11 +1825,16 @@ export default {
           ctx.fillRect(fx - 5, by - 8, 2, 9);
           ctx.fillRect(fx, by - 9, 2, 10);
           ctx.fillRect(fx + 5, by - 8, 2, 9);
+          if (spikes) {
+            ctx.fillStyle = rgbMix(SPEAR, NIGHTC, dark * 0.5);
+            ctx.fillRect(fx - 7, by - 1, 1, 2);
+            ctx.fillRect(fx - 9, by, 1, 1);
+            ctx.fillRect(fx + 8, by - 1, 1, 2);
+          }
         }
       }
       drawOuterGate(woodC, woodDC, dark);
 
-      // светлячки над полем
       if (dark > 0.45 && g.phase !== 'play') {
         for (let i35 = 0; i35 < ffl.length; i35++) { const f = ffl[i35];
           const b = 0.5 + 0.5 * Math.sin(g.t * f.v * 2 + f.p * 3);
@@ -1524,7 +1844,6 @@ export default {
         }
       }
 
-      // люди и зомби — по глубине
       order.length = 0;
       for (let i36 = 0; i36 < zombies.length; i36++) { const z = zombies[i36]; if (z.on) order.push(z); }
       for (let i37 = 0; i37 < actors.length; i37++) { const a = actors[i37]; if (a.on) order.push(a); }
@@ -1539,7 +1858,7 @@ export default {
         if (e.isZ) drawZombie(e, dark); else drawActor(e, dark);
       }
 
-      // частокол с воротами
+      // частокол с воротами (каменное основание при прокачке)
       const sk = dark * 0.7;
       const stA = rgbMix(STAKE0, STAKE1, sk);
       const stB = rgbStr(lerp(STAKE0[0], STAKE1[0], sk) * 0.85, lerp(STAKE0[1], STAKE1[1], sk) * 0.85, lerp(STAKE0[2], STAKE1[2], sk) * 0.85);
@@ -1550,9 +1869,23 @@ export default {
         ctx.fillRect(x, GATE_Y1, 3, H - GATE_Y1);
         ctx.fillRect(x + 1, 98, 1, 2);
       }
+      if (up[0] >= 3) {
+        const stn = rgbMix(STONE0, STONE1, sk);
+        const stnD = rgbMix(STONE0, BLACK, 0.3 + sk * 0.5);
+        ctx.fillStyle = stn;
+        ctx.fillRect(WALL_X - 1, GATE_Y1, 12, H - GATE_Y1);
+        ctx.fillRect(WALL_X - 1, 120, 12, GATE_Y0 - 120);
+        ctx.fillStyle = stnD;
+        for (let yy = 122; yy < GATE_Y0; yy += 4) ctx.fillRect(WALL_X - 1 + ((yy >> 2) % 2) * 3, yy, 12 - 3, 1);
+        for (let yy = GATE_Y1 + 2; yy < H; yy += 4) ctx.fillRect(WALL_X - 1, yy, 12, 1);
+      }
       ctx.fillStyle = stD;
       ctx.fillRect(WALL_X, 112, 10, 1);
-      // створка ворот: поднимается, трещит, выбита
+      if (up[0] >= 6) {
+        ctx.fillStyle = rgbMix(IRON, NIGHTC, dark * 0.5);
+        ctx.fillRect(WALL_X, 104, 10, 1);
+        ctx.fillRect(WALL_X, 116, 10, 1);
+      }
       if (!g.gbroken) {
         const lift = Math.round(clamp(g.gate, 0, 1) * 30);
         const gy0 = GATE_Y0 - lift, gy1 = GATE_Y1 - lift;
@@ -1564,6 +1897,7 @@ export default {
         ctx.fillStyle = rgbMix(IRON, NIGHTC, dark * 0.5);
         ctx.fillRect(WALL_X, gy0 + 3, 10, 1);
         ctx.fillRect(WALL_X, gy1 - 5, 10, 1);
+        if (up[0] >= 6) ctx.fillRect(WALL_X, gy0 + 13, 10, 1);
         const nc = Math.floor(clamp(g.gdmg, 0, 1) * CRACKS.length);
         ctx.fillStyle = 'rgba(16,10,8,0.85)';
         for (let i = 0; i < nc; i++) ctx.fillRect(CRACKS[i][0], CRACKS[i][1] - lift, 1, 3);
@@ -1577,7 +1911,6 @@ export default {
       }
       ctx.fillStyle = stD;
       ctx.fillRect(WALL_X, GATE_Y1 + 1, 10, 1);
-      // факел у ворот
       const tf = 0.75 + 0.25 * Math.sin(g.t * 11) * Math.sin(g.t * 4.3);
       ctx.fillStyle = '#5a3a20';
       ctx.fillRect(WALL_X - 2, 120, 1, 6);
@@ -1586,13 +1919,19 @@ export default {
       ctx.fillStyle = rgbStr(255, 170, 70, 0.12 + 0.12 * dark * tf);
       ctx.fillRect(WALL_X - 12, 108, 20, 20);
 
-      // стрелы
       ctx.fillStyle = '#e8e2d4';
       for (let i38 = 0; i38 < arrows.length; i38++) { const a = arrows[i38];
         if (!a.on) continue;
         const sp = Math.hypot(a.vx, a.vy) || 1;
         const ux = a.vx / sp, uy = a.vy / sp;
         for (let k = 0; k < 3; k++) ctx.fillRect(Math.round(a.x - ux * k), Math.round(a.y - uy * k), 1, 1);
+      }
+      for (let i = 0; i < bolts.length; i++) { const b = bolts[i];
+        if (!b.on) continue;
+        ctx.fillStyle = '#60e080';
+        ctx.fillRect(Math.round(b.x) - 1, Math.round(b.y) - 1, 3, 3);
+        ctx.fillStyle = '#e8f8e8';
+        ctx.fillRect(Math.round(b.x), Math.round(b.y) - 2, 1, 1);
       }
       for (let i39 = 0; i39 < parts.length; i39++) { const p = parts[i39];
         if (!p.on) continue;
@@ -1616,87 +1955,225 @@ export default {
         if (g.phase === 'lose') drawIcon(ctx, 'skull', 146, 70, 4);
       }
 
-      // ---------- HUD ----------
       const hud = clamp(g.hud, 0, 1);
       if (hud <= 0.01) return;
       ctx.globalAlpha = hud;
-      ctx.fillStyle = 'rgba(16,10,8,0.55)';
-      ctx.fillRect(2, 2, 148, 11);
+      drawHud();
+      ctx.globalAlpha = 1;
+    };
+
+    // ---------- HUD ----------
+    const box = (x, y, w, h, a) => { ctx.fillStyle = rgbStr(16, 10, 8, a); ctx.fillRect(x, y, w, h); };
+    const drawHud = () => {
+      const pr = P.p;
+      const up = pr.up;
+      box(2, 2, 160, 11, 0.55);
       drawIcon(ctx, 'heart', 4, 4);
       ctx.fillStyle = '#2a1414';
       ctx.fillRect(13, 5, 42, 5);
-      const hpw = Math.round(40 * g.hp / MAX_HP);
-      ctx.fillStyle = g.hp < 30 ? (Math.floor(g.t * 6) % 2 ? '#ff5050' : '#b02a2a') : '#e04848';
+      const hpw = Math.round(40 * clamp(g.hp / g.maxHp, 0, 1));
+      ctx.fillStyle = g.hp < g.maxHp * 0.3 ? (Math.floor(g.t * 6) % 2 ? '#ff5050' : '#b02a2a') : '#e04848';
       ctx.fillRect(14, 6, hpw, 3);
       drawIcon(ctx, 'emerald', 60, 3);
-      drawNumber(ctx, g.gems, 67, 5, '#8af0a8');
-      drawIcon(ctx, 'skull', 88, 4);
-      drawNumber(ctx, g.kills, 97, 5, '#e8e2d4');
-      drawSprite(ctx, FLAG, 120, 4);
-      drawNumber(ctx, g.wave, 127, 5, '#ffb0a0');
+      drawInt(ctx, pr.em, 67, 5, '#8af0a8');
+      const ex = 67 + intWidth(pr.em) + 5;
+      drawIcon(ctx, 'skull', ex, 4);
+      drawInt(ctx, g.kills, ex + 9, 5, '#e8e2d4');
+      const fx = ex + 9 + intWidth(g.kills) + 5;
+      drawSprite(ctx, FLAG, fx, 4);
+      drawInt(ctx, g.wave, fx + 7, 5, '#ffb0a0');
+      if (P.author) {
+        ctx.fillStyle = '#ff6ab0';
+        ctx.fillRect(fx + 9 + intWidth(g.wave), 3, 9, 8);
+        drawLabel(ctx, 'A', fx + 11 + intWidth(g.wave), 5, '#ffffff');
+      }
+      // рубеж и уровень деревни
+      box(2, 14, 74, 9, 0.4);
+      drawLabel(ctx, 'РУБЕЖ', 4, 16, '#8fb0c8');
+      drawInt(ctx, pr.ckpt, 30, 16, '#cfe8ff');
+      drawLabel(ctx, 'СЕЛО', 44, 16, '#c8b890');
+      drawInt(ctx, villageLevel(up), 64, 16, '#ffe070');
 
       const sc = score();
-      const scw = textWidth(sc < 10 ? '0' : sc < 100 ? '00' : sc < 1000 ? '000' : '0000', 2);
-      drawNumber(ctx, sc, W - 6 - scw + 1, 6, 'rgba(20,14,10,0.6)', 2);
-      drawNumber(ctx, sc, W - 6 - scw, 5, '#ffffff', 2);
+      const scw = intWidth(sc, 2);
+      drawInt(ctx, sc, W - 6 - scw + 1, 6, 'rgba(20,14,10,0.6)', 2);
+      drawInt(ctx, sc, W - 6 - scw, 5, '#ffffff', 2);
       const best = Math.max(0, Math.floor(api.best || 0));
-      const bw = textWidth(best < 10 ? '0' : best < 100 ? '00' : best < 1000 ? '000' : '0000', 1);
-      drawNumber(ctx, best, W - 6 - bw, 18, '#ffe070');
+      const bw = intWidth(best);
+      drawInt(ctx, best, W - 6 - bw, 18, '#ffe070');
       drawIcon(ctx, 'trophy', W - 6 - bw - 10, 17);
 
-      if (g.phase === 'play' && g.mode === 'play' && g.banner > 0) {
-        const a = Math.min(1, g.banner * 2);
-        ctx.fillStyle = rgbStr(16, 10, 8, 0.5 * a);
-        ctx.fillRect(110, 50, 100, 26);
-        drawSprite(ctx, FLAG, 128, 55, 3);
-        drawNumber(ctx, g.wave, 150, 55, '#ffb0a0', 3);
-      }
-
-      if (g.phase === 'play' && g.mode === 'shop') {
-        ctx.fillStyle = 'rgba(16,10,8,0.72)';
-        ctx.fillRect(62, 40, 196, 82);
-        ctx.fillStyle = '#7a5530';
-        ctx.fillRect(62, 40, 196, 1);
-        ctx.fillRect(62, 121, 196, 1);
-        drawIcon(ctx, 'clock', 66, 45);
-        drawNumber(ctx, Math.ceil(g.shopT), 75, 46, '#e8e2d4');
-        drawIcon(ctx, 'emerald', 238, 44);
-        drawNumber(ctx, g.gems, 245, 46, '#8af0a8');
-        const ng = activeGuards();
-        for (let i = 0; i < 4; i++) {
-          const x = cardX(i), y = CARD_Y;
-          const ok = canBuy(i);
-          const maxed = (i === 0 && g.guards.length >= MAX_GUARDS) || (i === 1 && g.fences >= MAX_FENCES) || (i === 2 && g.hp >= MAX_HP);
-          ctx.fillStyle = i === 3 ? 'rgba(60,110,60,0.9)' : ok ? 'rgba(90,64,40,0.95)' : 'rgba(50,40,36,0.9)';
-          ctx.fillRect(x, y, CARD_W, CARD_H);
-          ctx.fillStyle = ok ? '#c8a060' : '#5a4a40';
-          ctx.fillRect(x, y, CARD_W, 1);
-          ctx.fillRect(x, y + CARD_H - 1, CARD_W, 1);
-          if (i < 3) drawNumber(ctx, i + 1, x + 2, y + 2, 'rgba(255,255,255,0.5)');
-          const ix = x + CARD_W / 2;
-          if (i === 0) drawSprite(ctx, BOW, ix - 7, y + 8, 2);
-          else if (i === 1) drawSprite(ctx, FENCE, ix - 7, y + 9, 2);
-          else if (i === 2) { drawIcon(ctx, 'heart', ix - 7, y + 9, 2); drawText(ctx, '+20', ix - 5, y + 24, '#ffb0b0'); }
-          else drawSprite(ctx, NEXT, ix - 9, y + 12, 2);
-          if (i === 0) for (let k = 0; k < MAX_GUARDS; k++) { ctx.fillStyle = k < ng ? '#ffe070' : '#3a2e28'; ctx.fillRect(x + 8 + k * 7, y + 26, 4, 2); }
-          if (i === 1) for (let k = 0; k < MAX_FENCES; k++) { ctx.fillStyle = k < g.fences ? '#ffe070' : '#3a2e28'; ctx.fillRect(x + 11 + k * 7, y + 26, 4, 2); }
-          if (i < 3) {
-            if (maxed) {
-              if (i === 2) drawText(ctx, '100%', ix - 7, y + 40, '#8a7a70');
-              else drawText(ctx, 'x', ix - 1, y + 40, '#8a7a70');
-            } else {
-              const pr = i === 0 ? priceGuard() : i === 1 ? priceFence() : priceHeal();
-              const pw = (pr < 10 ? 3 : pr < 100 ? 7 : 11) + 7;
-              drawIcon(ctx, 'emerald', ix - pw / 2, y + 38);
-              drawNumber(ctx, pr, ix - pw / 2 + 7, y + 40, ok ? '#8af0a8' : '#c06060');
-            }
-          } else {
-            drawSprite(ctx, FLAG, ix - 8, y + 37);
-            drawNumber(ctx, g.wave + 1, ix - 1, y + 38, '#ffffff');
+      // задания дня
+      if (pr.d) {
+        const d = pr.d;
+        const x0 = W - 104;
+        box(x0 - 2, 27, 104, 26, 0.5);
+        for (let i = 0; i < 3; i++) {
+          const tk = d.l[i];
+          if (!tk) continue;
+          const y = 29 + i * 8;
+          const done = d.c[i];
+          drawSprite(ctx, D_ICON[tk[0]] || D_ICON[0], x0, y);
+          let x = x0 + 8;
+          if (done) { drawSprite(ctx, CHECK, x, y + 1); x += 7; }
+          else {
+            x += drawInt(ctx, tk[3], x, y, '#e8e2d4') + 1;
+            x += drawText(ctx, '/', x, y, '#8a7a70') + 1;
+            x += drawInt(ctx, tk[2], x, y, '#c8b890') + 4;
           }
+          const lbl = tk[0] === 1 ? (TYPES[MOB_IDS[tk[1]]] ? TYPES[MOB_IDS[tk[1]]].name : '') : D_LABEL[tk[0]];
+          drawLabel(ctx, lbl, x, y, done ? '#60e070' : '#c8b8a8');
         }
       }
-      ctx.globalAlpha = 1;
+
+      // босс
+      if (g.boss && g.boss.on && g.phase === 'play') {
+        const b = g.boss;
+        box(100, 26, 120, 12, 0.6);
+        const nm = b.T.name;
+        drawLabel(ctx, nm, 160 - (labelWidth(nm) >> 1), 27, '#ffb0a0');
+        ctx.fillStyle = '#2a1414';
+        ctx.fillRect(104, 33, 112, 3);
+        ctx.fillStyle = '#e04848';
+        ctx.fillRect(104, 33, Math.round(112 * clamp(b.hp / b.max, 0, 1)), 3);
+      }
+
+      if (g.phase === 'play' && g.mode === 'play' && g.banner > 0 && !g.panel) {
+        const a = Math.min(1, g.banner * 2);
+        box(110, 50, 100, g.bossDue || (g.boss && g.boss.on) || bossFor(g.wave) ? 34 : 26, 0.5 * a);
+        drawSprite(ctx, FLAG, 128, 55, 3);
+        drawInt(ctx, g.wave, 150, 55, '#ffb0a0', 3);
+        if (bossFor(g.wave)) {
+          const nm = TYPES[bossFor(g.wave)].name;
+          drawLabel(ctx, 'БОСС: ', 124, 76, '#ff8070');
+          drawLabel(ctx, nm, 124 + labelWidth('БОСС: '), 76, '#ffe070');
+        }
+      }
+
+      if (g.phase === 'play' && g.mode === 'shop' && !g.panel) drawShop();
+      // книга
+      if (g.phase === 'play') {
+        box(BOOK_X - 1, BOOK_Y - 1, 13, 11, g.panel ? 0.9 : 0.55);
+        drawSprite(ctx, BOOK, BOOK_X + 2, BOOK_Y + 1);
+      }
+      if (g.toast && g.toastT > 0) {
+        const a = clamp(g.toastT * 3, 0, 1) * clamp((2.2 - g.toastT) * 5, 0, 1);
+        const tw = labelWidth(g.toast.text);
+        const ga = ctx.globalAlpha;
+        ctx.globalAlpha = ga * a;
+        box(160 - (tw >> 1) - 4, 166, tw + 8, 11, 0.8);
+        drawLabel(ctx, g.toast.text, 160 - (tw >> 1), 169, g.toast.color);
+        ctx.globalAlpha = ga;
+      }
+      if (g.phase === 'play' && g.panel) drawAlbum();
+    };
+
+    const drawShop = () => {
+      const pr = P.p;
+      box(8, 56, 304, 98, 0.8);
+      ctx.fillStyle = '#7a5530';
+      ctx.fillRect(8, 56, 304, 1);
+      ctx.fillRect(8, 153, 304, 1);
+      drawIcon(ctx, 'clock', 12, 60);
+      drawInt(ctx, Math.ceil(g.shopT), 21, 61, '#e8e2d4');
+      drawLabel(ctx, 'ЛАВКА ДЕРЕВНИ', 34, 61, '#ffe070');
+      drawIcon(ctx, 'emerald', 250, 59);
+      drawInt(ctx, pr.em, 257, 61, '#8af0a8');
+      for (let i = 0; i < 8; i++) {
+        const x = cardX(i), y = CARD_Y;
+        const ok = canBuy(i);
+        ctx.fillStyle = i === 7 ? 'rgba(60,110,60,0.9)' : ok ? 'rgba(90,64,40,0.95)' : 'rgba(50,40,36,0.9)';
+        ctx.fillRect(x, y, CARD_W, CARD_H);
+        ctx.fillStyle = ok ? '#c8a060' : '#5a4a40';
+        ctx.fillRect(x, y, CARD_W, 1);
+        ctx.fillRect(x, y + CARD_H - 1, CARD_W, 1);
+        drawInt(ctx, i + 1, x + 2, y + 2, 'rgba(255,255,255,0.5)');
+        const cx = x + (CARD_W >> 1);
+        if (i < 6) {
+          const u = UPGRADES[i];
+          drawSprite(ctx, UPG_ICON[i], cx - 7, y + 8, 2);
+          const nw = labelWidth(u.name);
+          drawLabel(ctx, u.name, cx - (nw >> 1), y + 26, '#e8e2d4');
+          let lx = cx - ((intWidth(pr.up[i]) + intWidth(u.max) + 5) >> 1);
+          lx += drawInt(ctx, pr.up[i], lx, y + 35, '#ffe070') + 1;
+          lx += drawText(ctx, '/', lx, y + 35, '#8a7a70') + 1;
+          drawInt(ctx, u.max, lx, y + 35, '#8a7a70');
+          const pr2 = upgradePrice(pr, i);
+          if (pr2 < 0) drawLabel(ctx, 'МАКС', cx - (labelWidth('МАКС') >> 1), y + 62, '#8a7a70');
+          else {
+            const pw = intWidth(pr2) + 7;
+            drawIcon(ctx, 'emerald', cx - (pw >> 1), y + 60);
+            drawInt(ctx, pr2, cx - (pw >> 1) + 7, y + 62, ok ? '#8af0a8' : '#c06060');
+          }
+        } else if (i === 6) {
+          drawIcon(ctx, HEAL_ICON, cx - 7, y + 9, 2);
+          drawLabel(ctx, 'ЛЕЧИТЬ', cx - (labelWidth('ЛЕЧИТЬ') >> 1), y + 26, '#e8e2d4');
+          drawText(ctx, '+', cx - 8, y + 35, '#ffb0b0');
+          drawInt(ctx, healAmt(), cx - 4, y + 35, '#ffb0b0');
+          if (g.hp >= g.maxHp) drawText(ctx, '100%', cx - 7, y + 62, '#8a7a70');
+          else {
+            const p3 = priceHeal();
+            const pw = intWidth(p3) + 7;
+            drawIcon(ctx, 'emerald', cx - (pw >> 1), y + 60);
+            drawInt(ctx, p3, cx - (pw >> 1) + 7, y + 62, ok ? '#8af0a8' : '#c06060');
+          }
+        } else {
+          drawSprite(ctx, NEXT, cx - 9, y + 10, 2);
+          drawLabel(ctx, 'ВОЛНА', cx - (labelWidth('ВОЛНА') >> 1), y + 30, '#e8e2d4');
+          drawSprite(ctx, FLAG, cx - 8, y + 42);
+          drawInt(ctx, g.wave + 1, cx - 1, y + 43, '#ffffff');
+          if (bossFor(g.wave + 1)) drawLabel(ctx, 'БОСС', cx - (labelWidth('БОСС') >> 1), y + 62, '#ff8070');
+        }
+      }
+    };
+
+    const ALB_Z = { zz: 1, on: true, isZ: true, type: 'normal', T: TYPES.normal, mode: 'stand', x: 0, y: 0, hp: 1, max: 1, spd: 0, flash: 0, kb: 0, atk: false, phase: 0, dir: 1, hx: 0, hs: 0, give: 9, act: 1, act2: 1, hop: 0, ghost: false, stopX: 999, summon: false };
+    const drawAlbum = () => {
+      const pr = P.p;
+      box(AX, AY, AW, AH, 0.92);
+      ctx.fillStyle = '#7a5530';
+      ctx.fillRect(AX, AY, AW, 1);
+      ctx.fillRect(AX, AY + AH - 1, AW, 1);
+      drawLabel(ctx, 'АЛЬБОМ ВРАГОВ', AX + 6, AY + 5, '#ffe070');
+      let seen = 0;
+      for (let i = 0; i < TYPE_IDS.length; i++) if (pr.alb[TYPE_IDS[i]]) seen++;
+      let x = AX + 70;
+      x += drawInt(ctx, seen, x, AY + 5, '#ffffff') + 1;
+      x += drawText(ctx, '/', x, AY + 5, '#8a7a70') + 1;
+      drawInt(ctx, TYPE_IDS.length, x, AY + 5, '#c8b890');
+      ctx.fillStyle = '#5a3a20';
+      ctx.fillRect(AX + AW - 12, AY + 3, 9, 8);
+      drawText(ctx, 'x', AX + AW - 10, AY + 4, '#ffffff');
+      for (let i = 0; i < TYPE_IDS.length; i++) {
+        const id = TYPE_IDS[i];
+        const T = TYPES[id];
+        const cx = AX + 6 + (i % 6) * 48, cy = AY + 15 + Math.floor(i / 6) * 52;
+        const n = pr.alb[id] || 0;
+        ctx.fillStyle = i === g.sel ? 'rgba(120,90,50,0.9)' : T.boss ? 'rgba(70,30,26,0.85)' : 'rgba(46,36,28,0.85)';
+        ctx.fillRect(cx, cy, 46, 50);
+        ALB_Z.type = id; ALB_Z.T = T; ALB_Z.x = cx + 20 - (T.s > 2 ? 4 : 0); ALB_Z.y = cy + 40; ALB_Z.hp = ALB_Z.max = 1;
+        silh = n === 0;
+        drawZombie(ALB_Z, 0.1);
+        silh = false;
+        if (n) drawInt(ctx, n, cx + 2, cy + 43, '#c8b890');
+        else if (!T.boss && T.from > pr.bestW) { drawLabel(ctx, 'В', cx + 2, cy + 43, '#6a5a50'); drawInt(ctx, T.from, cx + 8, cy + 43, '#6a5a50'); }
+        else if (T.boss) { drawLabel(ctx, 'В', cx + 2, cy + 43, '#6a5a50'); drawInt(ctx, bossFirstWave(id), cx + 8, cy + 43, '#6a5a50'); }
+      }
+      // описание и итоги
+      const id = TYPE_IDS[g.sel];
+      const T = TYPES[id];
+      const y = AY + AH - 19;
+      if (pr.alb[id]) {
+        let x2 = AX + 6;
+        x2 += drawLabel(ctx, T.name, x2, y, T.boss ? '#ffb0a0' : '#e8e2d4') + 6;
+        x2 += drawText(ctx, 'x', x2, y, '#8a7a70') + 2;
+        drawInt(ctx, pr.alb[id], x2, y, '#ffffff');
+      } else drawLabel(ctx, '???', AX + 6, y, '#8a7a70');
+      let x3 = AX + 6;
+      x3 += drawLabel(ctx, 'ВСЕГО', x3, y + 8, '#8a7a70') + 3;
+      x3 += drawInt(ctx, pr.kills, x3, y + 8, '#e8e2d4') + 8;
+      x3 += drawLabel(ctx, 'ЛУЧШАЯ ВОЛНА', x3, y + 8, '#8a7a70') + 3;
+      drawInt(ctx, pr.bestW, x3, y + 8, '#ffb0a0');
     };
 
     // ---------- цикл ----------
@@ -1705,6 +2182,7 @@ export default {
     let alive = true;
     let shownPhase = '';
     let cursorOn = false;
+    if (typeof api._debug === 'function') { try { api._debug({ g, P, zombies }); } catch (e) { /* тесты */ } }
     const loop = (now) => {
       if (!alive) return;
       let dt = (now - last) / 1000;
@@ -1725,7 +2203,11 @@ export default {
       }
       const wantCursor = g.phase === 'play';
       if (wantCursor !== cursorOn) { cursorOn = wantCursor; canvas.style.cursor = wantCursor ? 'crosshair' : prevCursor; }
-      if (g.phase !== shownPhase) { shownPhase = g.phase; if (canvas.dataset) canvas.dataset.gamePhase = shownPhase; }
+      if (g.phase !== shownPhase) {
+        shownPhase = g.phase;
+        if (canvas.dataset) canvas.dataset.gamePhase = shownPhase;
+        if (typeof api._phase === 'function') { try { api._phase(shownPhase); } catch (e) { /* отладка */ } }
+      }
       draw();
       raf = requestAnimationFrame(loop);
     };
@@ -1734,6 +2216,7 @@ export default {
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
+      if (g.phase === 'play') P.save();
       if (canvas.dataset) delete canvas.dataset.gamePhase;
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('contextmenu', onCtx);

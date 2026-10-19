@@ -100,7 +100,7 @@ export function createProgress(api) {
     get author() { return author; },
     events,
     load() {
-      if (variant) { p = freshProgress(); const v = Math.max(1, Math.min(11, variant)); for (let i = 0, s = (v - 1) * 5; i < p.up.length && s > 0; i++) { const add = Math.min(UPGRADES[i].max, Math.ceil(s / (p.up.length - i))); p.up[i] = add; s -= add; } author = false; return p; }
+      if (variant) { p = freshProgress(); const v = Math.max(1, Math.min(11, variant)); for (let i = 0, s = (v - 1) * 8; i < p.up.length && s > 0; i++) { const add = Math.min(UPGRADES[i].max, Math.ceil(s / (p.up.length - i))); p.up[i] = add; s -= add; } author = false; return p; }
       let o = null;
       try { o = typeof api.load === 'function' ? api.load() : null; } catch (e) { o = null; }
       root = o && typeof o === 'object' ? o : {};

@@ -120,9 +120,9 @@ export const LAKES = [
 export const TIERS = [
   { name: 'Обычная', w: 100, xp: 4, coin: 3, col: '#c8c0b0', speed: 0.5, jumpy: 0.6, zone: 0.32, gain: 0.3, drain: 0.17 },
   { name: 'Необычная', w: 34, xp: 10, coin: 8, col: '#70d070', speed: 0.72, jumpy: 0.9, zone: 0.28, gain: 0.27, drain: 0.19 },
-  { name: 'Редкая', w: 8, xp: 26, coin: 22, col: '#60a8ff', speed: 0.95, jumpy: 1.15, zone: 0.25, gain: 0.24, drain: 0.21 },
-  { name: 'Эпическая', w: 1.6, xp: 60, coin: 60, col: '#c070ff', speed: 1.15, jumpy: 1.45, zone: 0.22, gain: 0.22, drain: 0.23 },
-  { name: 'Легенда', w: 0.32, xp: 300, coin: 400, col: '#ffc830', speed: 1.3, jumpy: 1.7, zone: 0.2, gain: 0.2, drain: 0.24 }
+  { name: 'Редкая', w: 5, xp: 26, coin: 22, col: '#60a8ff', speed: 0.95, jumpy: 1.15, zone: 0.25, gain: 0.24, drain: 0.21 },
+  { name: 'Эпическая', w: 0.9, xp: 60, coin: 60, col: '#c070ff', speed: 1.15, jumpy: 1.45, zone: 0.22, gain: 0.22, drain: 0.23 },
+  { name: 'Легенда', w: 1.0, xp: 300, coin: 400, col: '#ffc830', speed: 1.3, jumpy: 1.7, zone: 0.2, gain: 0.2, drain: 0.24 }
 ];
 // tod: веса [день, сумерки, ночь]; wx: [ясно, облачно, дождь]; sp: [мостки, камыши, омут]
 // legend: need = { tod, wx, spot } — без этого не клюёт вовсе
@@ -181,16 +181,16 @@ export const MINNOW = sprite({ a: '#9ab0b8', b: '#d8e4e8', t: '#7a9098' }, ['.aa
 
 // ---------- снасти ----------
 export const UPGRADES = [
-  { id: 'rod', name: 'Удилище', hint: 'зона шире', max: 6, base: 60, k: 1.75 },
-  { id: 'line', name: 'Леска', hint: 'срыв медленнее', max: 6, base: 45, k: 1.75 },
-  { id: 'reel', name: 'Катушка', hint: 'тянешь быстрее', max: 6, base: 70, k: 1.75 },
-  { id: 'bait', name: 'Наживка', hint: 'редкие чаще', max: 6, base: 90, k: 1.8 },
-  { id: 'flask', name: 'Термос', hint: 'дольше сил', max: 5, base: 50, k: 1.8 }
+  { id: 'rod', name: 'Удилище', hint: 'зона шире', max: 8, base: 90, k: 1.85 },
+  { id: 'line', name: 'Леска', hint: 'срыв медленнее', max: 8, base: 70, k: 1.85 },
+  { id: 'reel', name: 'Катушка', hint: 'тянешь быстрее', max: 8, base: 100, k: 1.85 },
+  { id: 'bait', name: 'Наживка', hint: 'редкие чаще', max: 8, base: 130, k: 1.9 },
+  { id: 'flask', name: 'Термос', hint: 'дольше сил', max: 5, base: 80, k: 2 }
 ];
 export const upgradeCost = (u, lvl) => Math.round(u.base * Math.pow(u.k, lvl) / 5) * 5;
 
 // ---------- уровни ----------
-export const xpNeed = (lvl) => Math.round(60 + 28 * Math.pow(lvl, 1.55));
+export const xpNeed = (lvl) => Math.round(100 + 50 * Math.pow(lvl, 1.55));
 export const MAX_LVL = 40;
 
 // ---------- задания дня ----------
