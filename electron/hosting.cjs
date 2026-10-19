@@ -5,7 +5,20 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const os = require('os');
 const store = require('./store.cjs');
+
+// Radmin VPN, если уже стоит у игрока: адаптер «Radmin VPN» с адресом 26.x.x.x. Ничего не ставим и не трогаем — только читаем.
+function radmin() {
+  const ifs = os.networkInterfaces();
+  for (const [name, list] of Object.entries(ifs)) {
+    for (const a of list || []) {
+      if (a.family !== 'IPv4' && a.family !== 4) continue;
+      if (/radmin/i.test(name) || /^26\./.test(a.address)) return { found: true, ip: a.address, adapter: name };
+    }
+  }
+  return { found: false, ip: null };
+}
 
 const b64u = (buf) => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const unb64u = (s) => Buffer.from(String(s).replace(/-/g, '+').replace(/_/g, '/'), 'base64');
@@ -56,7 +69,9 @@ function resetKey() {
 
 function keyOf() {
   const p = profile();
-  const data = { r: p.room, s: store.getSecret('hostServer:secret'), n: p.name, pw: p.hasPassword ? 1 : 0, a: p.radmin || undefined };
+  const rm = radmin();
+  const auto = rm.found ? rm.ip + ':' + (store.get().serverPort || 25565) : '';
+  const data = { r: p.room, s: store.getSecret('hostServer:secret'), n: p.name, pw: p.hasPassword ? 1 : 0, a: p.radmin || auto || undefined };
   return 'VKS1-' + b64u(JSON.stringify(data));
 }
 function parseKey(key) {
@@ -121,4 +136,4 @@ function props() {
   };
 }
 
-module.exports = { profile, update, resetKey, keyOf, parseKey, tunnelPassword, hostTunnelPassword, worlds, importWorld, newWorld, props, publicIdOf };
+module.exports = { radmin, profile, update, resetKey, keyOf, parseKey, tunnelPassword, hostTunnelPassword, worlds, importWorld, newWorld, props, publicIdOf };

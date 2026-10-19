@@ -550,7 +550,7 @@ function onServerState(d) {
     if (win && !win.isVisible()) { tray && tray.destroy(); tray = null; app.quit(); } // сервер закрыли из трея — выходим
   }
 }
-handle('hosting:get', () => ({ ...hosting.profile(), key: hosting.keyOf(), worlds: hosting.worlds() }));
+handle('hosting:get', () => ({ ...hosting.profile(), key: hosting.keyOf(), worlds: hosting.worlds(), radminNow: hosting.radmin() }));
 handle('hosting:update', (patch) => { hosting.update(patch || {}); if (server.running()) publishPresence(true); return { ...hosting.profile(), key: hosting.keyOf() }; });
 handle('hosting:resetKey', async () => {
   hosting.resetKey();
@@ -570,6 +570,7 @@ handle('hosting:join', async ({ key, password }) => {
   return { ok: true, name: k.name, radmin: k.radmin };
 });
 handle('hosting:leave', () => (tunnelWin ? tunnelCmd('leave') : true));
+handle('radmin:status', () => hosting.radmin());
 // каталог серверов от автора (вкладка «Сервера» у всех) + кто сейчас в сети
 let srvPresence = {};
 ipcMain.on('srv-presence', (e, { id, info }) => {

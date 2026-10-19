@@ -5,6 +5,7 @@ import Icon from '../components/Icon.jsx';
 import { Empty } from '../components/ui.jsx';
 import { call as call2, on } from '../lib/api.js';
 import { joinByKey } from '../lib/joinServer.js';
+import RadminInfo from '../components/RadminInfo.jsx';
 
 // Сервера игроков из каталога автора: описание, кто в сети, вход по кнопке (через туннель лаунчера)
 function Catalog({ t, toast, account, busy }) {
@@ -100,6 +101,7 @@ export default function Servers() {
       </div>
 
       <Catalog t={t} toast={toast} account={account} busy={busy} />
+      <RadminInfo t={t} />
 
       <form className="card add-server" onSubmit={add}>
         <input className="input" placeholder={t('Название (необязательно)')} value={name} onChange={(e) => setName(e.target.value)} />

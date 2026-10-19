@@ -4,6 +4,7 @@ import { call, on } from '../lib/api.js';
 import Icon from '../components/Icon.jsx';
 import { Section, Progress } from '../components/ui.jsx';
 import { joinByKey } from '../lib/joinServer.js';
+import RadminInfo from '../components/RadminInfo.jsx';
 
 // Игра с друзьями: своя «локальная сеть» через лаунчер (Windows и Mac вместе, без VPN и аккаунтов) и сервер сборки.
 
@@ -221,7 +222,8 @@ function ServerCard({ t, toast, settings, saveSettings, progress, account, openA
         </div>
         <details>
           <summary className="small muted">{t('Запасной вход через Radmin VPN')}</summary>
-          <label className="small">{t('Твой адрес в Radmin (если друзьям не удастся зайти напрямую)')}<input className="input mono" placeholder="26.x.x.x:25565" value={form.radmin} onChange={set('radmin')} /></label>
+          <RadminInfo t={t} />
+          <label className="small">{t('Свой адрес (необязательно; если Radmin стоит — подставится сам)')}<input className="input mono" placeholder={hp.radminNow && hp.radminNow.found ? hp.radminNow.ip + ':' + (settings.serverPort || 25565) : '26.x.x.x:25565'} value={form.radmin} onChange={set('radmin')} /></label>
         </details>
         <button className="btn sm" onClick={() => saveForm(false).catch((e) => toast(e.message, 'error'))}>{t('Сохранить')}</button>
       </div>
@@ -318,6 +320,7 @@ function JoinByKey({ t, toast, settings, saveSettings, account, openAccounts }) 
   return (
     <Section title={t('Войти на сервер по ключу')} icon="lock">
       <p className="muted small">{t('Друг открыл свой сервер и скинул ключ (VKS1-…)? Вставь его сюда.')}</p>
+      <RadminInfo t={t} />
       <input className="input mono" placeholder="VKS1-…" value={key} onChange={(e) => check(e.target.value)} />
       {info && info.error && <p className="warn-text small">{t(info.error)}</p>}
       {info && !info.error && (
