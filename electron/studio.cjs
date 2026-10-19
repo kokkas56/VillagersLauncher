@@ -371,8 +371,9 @@ module.exports = function setupStudio({ handle, send, store }) {
     try { msg = JSON.parse(line); } catch (_) { return; }
     if (!msg || typeof msg !== 'object') return;
     if (msg.t === 'hello') { info = msg; emitState(); }
-    const hit = waiters.filter((w) => w.type === msg.t);
-    if (hit.length) { waiters = waiters.filter((w) => w.type !== msg.t); hit.forEach((w) => { clearTimeout(w.timer); w.resolve(msg); }); }
+    const match = (w) => (w.pred ? w.pred(msg) : w.type === msg.t);
+    const hit = waiters.filter(match);
+    if (hit.length) { waiters = waiters.filter((w) => !match(w)); hit.forEach((w) => { clearTimeout(w.timer); w.resolve(msg); }); }
     send('studio-link', { type: 'msg', msg });
   }
   function connect() {
@@ -405,6 +406,14 @@ module.exports = function setupStudio({ handle, send, store }) {
       failWaiters('Связь с игрой пропала');
       if (was) emitState();
       schedule();
+    });
+  }
+  // ждать сообщение игры, подходящее под условие (без отправки)
+  function waitMsg(pred, ms) {
+    return new Promise((resolve, reject) => {
+      const w = { pred, resolve, reject };
+      w.timer = setTimeout(() => { waiters = waiters.filter((x) => x !== w); reject(new Error('Игра не ответила за ' + Math.round(ms / 1000) + ' с')); }, ms);
+      waiters.push(w);
     });
   }
   function request(msg, type, ms = 3000) {
@@ -490,7 +499,10 @@ module.exports = function setupStudio({ handle, send, store }) {
   handle('studio:scheme', (scheme) => write({ t: 'scheme', scheme: V.normalizeScheme(scheme) }));
   // запустить событие вручную: { id, node?, ctx? } — игра шлёт {t:'trace', …} по шагам, если трассировка включена
   handle('studio:schemeFire', ({ id, node, ctx }) => { const m = { t: 'schemeFire', id: String(id) }; if (node) m.node = String(node); if (ctx && typeof ctx === 'object') m.ctx = ctx; return write(m); });
-  handle('studio:schemeTrace', ({ on, id }) => { const m = { t: 'schemeTrace', on: !!on }; if (id) m.id = String(id); return write(m); });
+  handle('studio:schemeTrace', ({ on, chat }) => { const m = { t: 'schemeTrace', on: !!on }; if (chat !== undefined) m.chat = !!chat; return write(m); });
+  // состояние схем в игре: {t:'schemes', items:[{ id, title, enabled, ok, errors, running, source, problems }]}
+  handle('studio:schemes', () => request({ t: 'schemes' }, 'schemes', 4000));
+  handle('studio:schemeEnable', ({ id, on }) => write({ t: 'schemeEnable', id: String(id), on: !!on }));
   // ---------- фаза 4: «Строительство» ----------
   // палитра блоков игры: {t:'blocks', ids:[…], colors:{id:[r,g,b]}, flags?:{id:'tge'}} — первый раз считается долго
   handle('studio:blocks', () => request({ t: 'blocks' }, 'blocks', 30000));
@@ -518,7 +530,7 @@ module.exports = function setupStudio({ handle, send, store }) {
     return fs.existsSync(f) ? 'data:image/png;base64,' + fs.readFileSync(f).toString('base64') : null;
   });
   // сохранить постройку из Студии (3D-модель → блоки): { id, name, size, palette, blocks:[x,y,z,p,…], png?, source?, counts? }
-  handle('studio:structSave', ({ id, name, size, palette, blocks, png, source, counts, overwrite }) => {
+  handle('studio:structSave', ({ id, name, size, palette, blocks, png, source, counts, overwrite, preview }) => {
     ensure();
     if (!SAFE_ID.test(String(id || ''))) throw new Error('Имя постройки: только маленькие латинские буквы, цифры, _ и -');
     if (!Array.isArray(size) || size.length !== 3 || size.some((v) => !(v > 0 && v <= 512))) throw new Error('Размер постройки — от 1 до 512 по каждой оси');
@@ -530,7 +542,9 @@ module.exports = function setupStudio({ handle, send, store }) {
     const cnt = {};
     if (counts && typeof counts === 'object') Object.assign(cnt, counts);
     else for (let i = 3; i < arr.length; i += 4) { const b = palette[arr[i]]; cnt[b] = (cnt[b] || 0) + 1; }
-    writeJson(path.join(structDir(), id + '.json'), { v: 1, id, name: String(name || id).slice(0, 80), size, blocks: Math.floor(arr.length / 4), palette: cnt, source: source || 'studio', created: new Date().toISOString() });
+    const meta = { v: 1, id, name: String(name || id).slice(0, 80), size, blocks: Math.floor(arr.length / 4), entities: 0, palette: cnt, source: source || 'studio', created: new Date().toISOString() };
+    if (preview && typeof preview === 'object' && preview.w > 0 && typeof preview.rgb === 'string') meta.preview = preview;
+    writeJson(path.join(structDir(), id + '.json'), meta);
     if (typeof png === 'string' && png.startsWith('data:image/png;base64,')) fs.writeFileSync(path.join(structDir(), id + '.png'), Buffer.from(png.slice(22), 'base64'));
     return { id, file: f };
   });
@@ -550,23 +564,37 @@ module.exports = function setupStudio({ handle, send, store }) {
     writeJson(f, { ...meta, name: String(name || id).slice(0, 80) });
     return true;
   });
-  // Большие объёмы блоков (3D-модели, сотни тысяч): шлём частями. Компактный формат части:
-  // { t:'ghostChunk', id, part, parts, origin:[x,y,z], palette:[блоки], blocks:[dx,dy,dz,p, …] } — до CHUNK блоков в части.
-  // part 0 очищает старый призрак с этим id; последняя часть (part === parts-1) — «можно рисовать». Пустой blocks в одной части — убрать.
-  // «Запечь» так же: { t:'bakeChunk', id, undoId, part, parts, origin, palette, blocks, replace? } — игра копит части и начинает ставить
-  // после последней; прогресс и итог — обычные {t:'bake', undoId, state, done, total}; отмена — {t:'undo', undoId}.
-  const CHUNK = 16384;
-  function stream(kind, { id, origin, palette, blocks, undoId, replace }) {
+  // Большие объёмы блоков (3D-модели, до ~200 000): шлём частями по порядку и ждём подтверждения каждой части, кроме последней.
+  // { t:'ghostChunk'|'bakeChunk', id, seq (с 0), last, placements:[{ pos, block }], undoId?, replace? }
+  // игра: { t, id, seq, ok, got } на каждую не последнюю часть; на последнюю — обычный ghost / bake.
+  // Из окна приходит компактно: origin + palette + blocks [dx,dy,dz,p, …] — здесь разворачиваем в размещения.
+  const CHUNK = 8000;
+  const streams = new Map(); // id → номер текущей отправки (новая отправка того же id обрывает старую)
+  async function stream(kind, { id, origin, palette, blocks, undoId, replace }) {
     const arr = blocks && blocks.length !== undefined ? blocks : [];
     const n = Math.floor(arr.length / 4);
+    if (!Array.isArray(palette) || !n) throw new Error('Нечего отправлять');
+    const o = (origin || [0, 0, 0]).map((v) => Math.floor(v));
     const parts = Math.max(1, Math.ceil(n / CHUNK));
+    const sid = String(id || 'vox');
+    const my = (streams.get(sid) || 0) + 1;
+    streams.set(sid, my);
     const u = kind === 'bakeChunk' ? String(undoId || ('bake_' + Date.now().toString(36))) : null;
-    for (let p = 0; p < parts; p++) {
-      const slice = Array.prototype.slice.call(arr, p * CHUNK * 4, Math.min(n, (p + 1) * CHUNK) * 4);
-      const m = { t: kind, id: String(id || ''), part: p, parts, origin: (origin || [0, 0, 0]).map((v) => Math.floor(v)), palette, blocks: slice };
+    for (let seq = 0; seq < parts; seq++) {
+      if (streams.get(sid) !== my) return { sent: false, cancelled: true };
+      const a = seq * CHUNK, b = Math.min(n, a + CHUNK);
+      const placements = new Array(b - a);
+      for (let i = a; i < b; i++) placements[i - a] = { pos: [o[0] + arr[i * 4], o[1] + arr[i * 4 + 1], o[2] + arr[i * 4 + 2]], block: palette[arr[i * 4 + 3]] };
+      const last = seq === parts - 1;
+      const m = { t: kind, id: sid, seq, last, placements };
       if (u) m.undoId = u;
-      if (kind === 'bakeChunk' && replace === false) m.replace = false;
+      if (u && seq === 0 && replace === false) m.replace = false;
+      const ack = last ? null : waitMsg((x) => x && x.t === kind && x.id === sid && x.seq === seq, 20000);
       write(m);
+      if (ack) {
+        const r = await ack;
+        if (r.ok === false) throw new Error('Игра не приняла часть ' + (seq + 1) + ' из ' + parts + ': ' + (r.error || '?'));
+      }
     }
     return { sent: true, parts, count: n, undoId: u };
   }

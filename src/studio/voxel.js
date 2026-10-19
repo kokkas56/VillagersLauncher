@@ -584,6 +584,29 @@ export function toPlacement(vox, idx, palette) {
   return { size: vox.size.slice(), palette: pal, blocks: blocks.subarray(0, k * 4), count: k, counts };
 }
 
+// вид сверху в формате описания постройки (как пишет игра): { w, d, top:[индекс pal или -1], y:[высота], pal:[id], rgb:"rrggbb…" }
+export function topPreview(vox, idx, palette) {
+  const [w, , d] = vox.size;
+  const top = new Array(w * d).fill(-1), ys = new Array(w * d).fill(-1);
+  for (let i = 0; i < vox.n; i++) {
+    const p = idx[i];
+    if (p < 0) continue;
+    const c = vox.xyz[i * 3 + 2] * w + vox.xyz[i * 3], y = vox.xyz[i * 3 + 1];
+    if (y > ys[c]) { ys[c] = y; top[c] = p; }
+  }
+  const used = new Map();
+  let rgb = '';
+  const t2 = top.map((p) => {
+    if (p < 0) { rgb += '000000'; return -1; }
+    rgb += palette[p].rgb.map((v) => (v | 0).toString(16).padStart(2, '0')).join('');
+    if (!used.has(p)) used.set(p, used.size);
+    return used.get(p);
+  });
+  const pal = new Array(used.size);
+  for (const [p, u] of used) pal[u] = palette[p].id;
+  return { w, d, top: t2, y: ys, pal, rgb };
+}
+
 // ======================= превью: изометрия на «точках» с буфером глубины =======================
 // colors: Uint8Array(n*3) — какими рисовать (цвета модели или блоков). yaw/pitch — градусы. Возвращает { w, h, data }.
 export function renderPreview(vox, colors, opts) {
@@ -674,7 +697,7 @@ const TRANSPARENT = /glass|leaves|(^|:)ice$|frosted_ice|slime_block|honey_block|
 const GRAVITY = /(^|:)(sand|red_sand|gravel|suspicious_sand|suspicious_gravel)$|concrete_powder|anvil|dragon_egg|pointed_dripstone/;
 const ENTITY = /chest|barrel|furnace|smoker|hopper|dispenser|dropper|shulker|sign|banner|_bed$|beehive|bee_nest|lectern|beacon|jukebox|note_block|command_block|structure_block|jigsaw|campfire|brewing|enchanting|conduit|(^|:)bell$|skull|_head$|sculk_(sensor|shrieker|catalyst)|crafter|vault|trial_spawner|decorated_pot|chiseled_bookshelf|comparator|daylight_detector|spawner/;
 export function blockFlags(b) {
-  if (b.flags !== undefined && b.flags !== null && b.flags !== '') return b.flags;
+  if (b.flags !== undefined && b.flags !== null) return b.flags;
   const id = b.id;
   return (TRANSPARENT.test(id) ? 't' : '') + (GRAVITY.test(id) ? 'g' : '') + (ENTITY.test(id) ? 'e' : '');
 }
@@ -692,9 +715,16 @@ export function filterPalette(blocks, opts) {
     return true;
   });
 }
-// цвета палитры игры { id:[r,g,b] } + флаги { id:'tge' } → список блоков
+// ответ игры {t:'blocks', ids, colors:{id:[r,g,b]}, names:{id:'название'}, info:{id:{ full, transparent, gravity, be, light }}} → список блоков.
+// Флаги: t — прозрачный или не полный блок (ступеньки, заборы — для модели как «дырки»), g — падает, e — блок-сущность.
 export function blocksFromGame(msg) {
   if (!msg || !msg.colors) return null;
+  const info = msg.info || {};
+  const names = msg.names || {};
   const flags = msg.flags || {};
-  return Object.keys(msg.colors).filter((id) => Array.isArray(msg.colors[id]) && msg.colors[id].length >= 3).map((id) => ({ id, rgb: msg.colors[id].slice(0, 3).map((v) => Math.max(0, Math.min(255, Math.round(v)))), flags: flags[id] !== undefined ? flags[id] : undefined }));
+  return Object.keys(msg.colors).filter((id) => Array.isArray(msg.colors[id]) && msg.colors[id].length >= 3).map((id) => {
+    const inf = info[id];
+    const f = inf ? (inf.transparent || inf.full === false ? 't' : '') + (inf.gravity ? 'g' : '') + (inf.be ? 'e' : '') : flags[id];
+    return { id, rgb: msg.colors[id].slice(0, 3).map((v) => Math.max(0, Math.min(255, Math.round(v)))), flags: f, name: names[id] || undefined, light: inf && inf.light ? inf.light : undefined };
+  });
 }

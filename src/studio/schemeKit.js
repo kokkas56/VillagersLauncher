@@ -5,6 +5,7 @@ import {
   SCHEME_COND_EXTRA, SCHEME_ACTION_EXTRA, SCHEME_LIMITS
 } from './scheme.js';
 import { condText, actionText, wrap, clip, docTitle, speakerName, evalCond } from './dialog.js';
+import { timeAtTick } from './scheme.js';
 import { HEAD, NW } from './dialog.js';
 
 export const CAT_COLOR = { event: '#e5534b', cond: '#e6c13c', action: '#4f9cf5', flow: '#a3a8b0', note: '#9a9a78' };
@@ -38,7 +39,7 @@ export const EVENT_HINT = {
   chat: 'Кто-то написал в чат сообщение с этим текстом — для твоих проверок.',
   signal: 'Другая схема (или эта) подала сигнал с этим именем — действие «Подать сигнал».'
 };
-const AT_RU = { dawn: 'на рассвете', day: 'днём (полдень)', dusk: 'на закате', night: 'ночью' };
+const AT_RU = { dawn: 'на рассвете (23000)', day: 'утром (1000)', noon: 'в полдень (6000)', dusk: 'на закате (12000)', night: 'ночью (13000)', midnight: 'в полночь (18000)' };
 const ON_RU = { enter: 'вошёл в', leave: 'вышел из', inside: 'внутри' };
 const QON_RU = { start: 'начато', step: 'шаг', done: 'сделано', fail: 'провалено' };
 const ION_RU = { pickup: 'подобрал', use: 'использовал', craft: 'скрафтил' };
@@ -46,13 +47,13 @@ const BON_RU = { break: 'сломал', place: 'поставил', use: 'наж�
 const short = (id) => String(id || '?').replace(/^minecraft:/, '');
 const sec = (t) => (Math.round((t || 0) / 2) / 10) + ' с';
 const zoneTxt = (z) => (!z ? 'зона?' : Array.isArray(z.from) ? 'коробка ' + z.from.join(' ') + '…' + (z.to || []).join(' ') : (Array.isArray(z.pos) ? z.pos.map((v) => Math.round(v)).join(' ') : '?') + ', r ' + (z.radius || '?'));
-const posTxt = (p) => (p === 'player' ? 'у игрока' : p === 'event' ? 'где событие' : Array.isArray(p) ? p.map((v) => Math.round(v * 10) / 10).join(' ') : '?');
+const posTxt = (p) => (p === 'player' ? 'у игрока' : p === 'event' ? 'где событие' : p === 'entity' ? 'у существа' : Array.isArray(p) ? p.map((v) => Math.round(v * 10) / 10).join(' ') : p && typeof p === 'object' && p.of !== undefined ? posTxt(p.of) + ' +' + (p.offset || []).join(' ') : typeof p === 'string' ? 'у «' + p + '»' : '?');
 const whoTxt = (s, refs) => (typeof s !== 'string' ? '?' : s.startsWith('actor:') ? speakerName(s, refs) : s.startsWith('entity:') ? short(s.slice(7)) : '«' + s + '»');
 
 export function eventText(n, refs) {
   switch (n.event) {
     case 'start': return 'при запуске сервера';
-    case 'time': return n.at === 'tick' ? 'в тик суток ' + (n.tick || 0) : AT_RU[n.at] || '?';
+    case 'time': return AT_RU[n.at] || (timeAtTick(n.at) !== null ? 'в тик суток ' + timeAtTick(n.at) : '?');
     case 'timer': return 'каждые ' + sec(n.every) + ' (' + (n.every || 0) + ' т)';
     case 'zone': return (n.who === 'any_player' ? 'любой игрок ' : 'игрок ') + (ON_RU[n.on || 'enter'] || '') + ' зону ' + zoneTxt(n);
     case 'talk': return 'разговор с: ' + speakerName(n.speaker, refs);
@@ -92,16 +93,17 @@ export function sActionText(a, refs) {
     case 'move': return whoTxt(a.move, refs) + ' идёт ' + posTxt(a.to);
     case 'say': return whoTxt(a.say, refs) + ': «' + (a.text || '') + '»';
     case 'block': return 'блок ' + short(a.state) + ' ' + posTxt(a.block);
-    case 'structure': return 'постройка «' + (((refs && refs.structures) || []).find((x) => x.id === a.structure) || {}).name || a.structure || '?') + '» ' + posTxt(a.pos) + (a.rot ? ' ↻' + a.rot : '');
+    case 'structure': return 'постройка «' + ((((refs && refs.structures) || []).find((x) => x.id === a.structure) || {}).name || a.structure || '?') + '» ' + posTxt(a.pos) + (a.rot ? ' ↻' + a.rot : '');
     case 'fx': return 'эффект: ' + ({ fade_in: 'из темноты', fade_out: 'в темноту', flash: 'вспышка', shake: 'тряска', particles: 'частицы ' + short(a.name), story_fx: a.name || '?', title: '«' + (a.text || '') + '»' }[a.fx] || a.fx);
-    case 'message': return (a.to === 'all' ? 'всем' : 'игроку') + ': «' + (a.message || '') + '»';
+    case 'message': return (a.to === 'all' ? 'всем' : a.to === 'near' ? 'рядом' : 'игроку') + ': «' + (a.message || '') + '»';
     case 'tp': return 'перенести игрока в ' + posTxt(a.tp);
     case 'effect': return short(a.effect) + ' ' + (a.level || 1) + ' на ' + (a.seconds || 0) + ' с';
     case 'weather': return 'погода: ' + ({ clear: 'ясно', rain: 'дождь', thunder: 'гроза' }[a.weather] || '?');
     case 'time': return 'время суток ' + a.time;
     case 'signal': return 'сигнал «' + (a.signal || '?') + '»';
     case 'scheme': return (a.enable === false ? 'выключить' : 'включить') + ' схему «' + docTitle(refs && refs.schemes, a.scheme) + '»';
-    case 'gate': return (a.open === 'toggle' ? 'переключить' : a.open ? 'открыть' : 'закрыть') + ' ворота ' + (a.gate || '?');
+    case 'gate': return ({ toggle: 'переключить', open: 'открыть', close: 'закрыть' }[a.set] || '?') + ' ворота ' + (a.gate || '?') + (a.scheme ? ' в «' + a.scheme + '»' : '');
+    case 'once': return 'сбросить «Один раз» ' + (a.once || '?') + (a.scheme ? ' в «' + a.scheme + '»' : '');
     default: return k ? actionText(a, refs) : '?';
   }
 }
@@ -147,6 +149,7 @@ export function schemeNodeBox(n, refs) {
       const sum = outs.reduce((s, _, i) => s + (typeof ws[i] === 'number' ? ws[i] : 1), 0) || 1;
       outs.forEach((t, i) => rows.push({ key: 'out:' + i, label: (n.type === 'random' ? 'вариант ' : 'шаг ') + (i + 1), extra: n.type === 'random' ? Math.round(((typeof ws[i] === 'number' ? ws[i] : 1) / sum) * 100) + '%' : null }));
       rows.push({ key: 'out:' + outs.length, label: '+ выход', add: true });
+      if (n.type === 'sequence') rows.push({ key: 'next', label: 'потом' });
       break;
     }
     case 'loop':
@@ -154,7 +157,7 @@ export function schemeNodeBox(n, refs) {
       rows.push({ key: 'body', label: 'каждый раз' }, { key: 'next', label: 'потом' });
       break;
     case 'gate': lines.push({ t: n.open === false ? 'в начале закрыты' : 'в начале открыты', cls: '' }); break;
-    case 'once': lines.push({ t: 'только в первый раз', cls: '' }); break;
+    case 'once': lines.push({ t: n.per === 'player' ? 'первый раз для каждого игрока' : 'только в первый раз (на весь мир)', cls: '' }); break;
     default: lines.push({ t: 'неизвестный узел «' + n.type + '»', cls: 'empty' });
   }
   let h = HEAD + 6 + lines.length * LH;
@@ -183,7 +186,7 @@ export function newSchemeNode(type, preset, refs) {
       if (ev === 'signal') return { ...base, name: ((refs && refs.signals) || [])[0] || 'my_signal' };
       return base;
     }
-    case 'cond': return { type, if: [preset && preset.if ? preset.if : { time: 'night' }] };
+    case 'cond': return { type, if: [preset && preset.if ? preset.if : { weather: 'clear' }] };
     case 'action': return { type, do: [preset && preset.do ? preset.do : { message: 'Привет, {player}!', to: 'player', style: 'chat' }] };
     case 'wait': return { type, ticks: 100 };
     case 'sequence': return { type, outs: [] };
@@ -309,7 +312,8 @@ export function dryRun(scheme, from, world, extra) {
       case 'action':
         steps.push({ node: id, ok: true, note: (n.do || []).length + ' действ.' });
         for (const a of n.do || []) {
-          if (schemeActionKind(a) === 'gate') ex.gates[a.gate] = a.open === 'toggle' ? !(ex.gates[a.gate] !== undefined ? ex.gates[a.gate] : (nodes[a.gate] || {}).open !== false) : !!a.open;
+          if (schemeActionKind(a) === 'gate' && !a.scheme) ex.gates[a.gate] = a.set === 'toggle' ? !(ex.gates[a.gate] !== undefined ? ex.gates[a.gate] : (nodes[a.gate] || {}).open !== false) : a.set === 'open';
+          if (schemeActionKind(a) === 'once' && !a.scheme) delete ex.onceDone[a.once];
           if (schemeActionKind(a) === 'set') world.vars[a.set] = a.value;
           if (schemeActionKind(a) === 'add') world.vars[a.add] = (Number(world.vars[a.add]) || 0) + (Number(a.value) || 0);
           if (schemeActionKind(a) === 'signal') Object.entries(nodes).filter(([, e]) => e.type === 'event' && e.event === 'signal' && e.name === a.signal).forEach(([eid]) => run(eid, depth + 1));
@@ -318,7 +322,7 @@ export function dryRun(scheme, from, world, extra) {
         run(n.next, depth + 1);
         break;
       case 'wait': steps.push({ node: id, ok: true, note: 'пауза ' + sec(n.ticks) }); run(n.next, depth + 1); break;
-      case 'sequence': steps.push({ node: id, ok: true, note: 'по очереди' }); (n.outs || []).forEach((t) => run(t, depth + 1)); break;
+      case 'sequence': steps.push({ node: id, ok: true, note: 'по очереди' }); (n.outs || []).forEach((t) => run(t, depth + 1)); run(n.next, depth + 1); break;
       case 'random': {
         const outs = (n.outs || []).filter(Boolean);
         const ws = (n.outs || []).map((_, i) => (typeof (n.weights || [])[i] === 'number' ? n.weights[i] : 1));

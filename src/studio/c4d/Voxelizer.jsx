@@ -10,11 +10,11 @@ import { BlockField, addStructure } from './Build.jsx';
 import { selToPos } from '../fields.jsx';
 import { slug, uniqueId } from '../model.js';
 import {
-  parseOBJ, parseMTL, objLibs, parseGLB, parseGLTF, voxelize, mapToBlocks, toPlacement, renderPreview, filterPalette, DEFAULT_BLOCKS, PRESETS, baseName, meshBounds
+  parseOBJ, parseMTL, objLibs, parseGLB, parseGLTF, voxelize, mapToBlocks, toPlacement, renderPreview, filterPalette, DEFAULT_BLOCKS, PRESETS, baseName, meshBounds, topPreview
 } from '../voxel.js';
 
 const UPS = [['y', 'Y вверх (обычно)'], ['z', 'Z вверх (Blender, 3ds Max)'], ['-z', '−Z вверх'], ['x', 'X вверх'], ['-y', 'вверх ногами']];
-const DITHER = [['none', 'Нет', 'Каждый воксель — ближайший по цвету блок. Чисто, но плавные переходы становятся полосами.'], ['ordered', 'Узором', 'Сетка-узор (Байер): ровная «пиксельная» смесь двух блоков на переходах.'], ['diffuse', 'Рассеиванием', 'Ошибка цвета растекается на соседей (Флойд — Стейнберг в 3D): плавнее, но «шумнее».']];
+const DITHER = [['none', 'Нет', 'Каждый воксель — ближайший по цвету блок. Чисто, но плавные переходы становятся полосами.'], ['ordered', 'Узор', 'Сетка-узор (Байер): ровная «пиксельная» смесь двух блоков на переходах.'], ['diffuse', 'Растекание', 'Ошибка цвета растекается на соседей (Флойд — Стейнберг в 3D): плавнее, но «шумнее».']];
 const DEF = { size: 48, up: 'y', rotY: 0, fill: 'surface', preset: 'colorful', dither: 'none', strength: 0.6, noT: true, noG: true, noE: true, inner: '', custom: [], view: 'blocks', anchor: 'center', metric: 'de2000' };
 const hex = (rgb) => '#' + rgb.map((v) => Math.max(0, Math.min(255, v | 0)).toString(16).padStart(2, '0')).join('');
 
@@ -158,6 +158,7 @@ export default function Voxelizer({ onClose }) {
   const grabPos = async () => { try { const p = selToPos(await core.api.getSel(), true); if (!p) throw new Error('В игре прицел ни на что не наведён'); const n = [p[0], p[1] + 1, p[2]]; setPos(n); lsSet('voxPos', n); } catch (e) { core.toast(e.message, 'error'); } };
   const ghost = async () => {
     if (!map) return;
+    if (map.pl.count > 200000) { core.toast('Призрак — до 200 000 блоков, а тут ' + map.pl.count.toLocaleString('ru-RU') + '. Уменьши размер или выбери «Оболочка».', 'warn', 7000); return; }
     try { const r = await call('studio:ghostStream', { id: 'vox', origin: origin(), palette: map.pl.palette, blocks: map.pl.blocks }); core.toast('Призрак в игре: ' + map.pl.count.toLocaleString('ru-RU') + ' блоков' + (r.parts > 1 ? ' (частей: ' + r.parts + ')' : ''), 'ok', 2500); } catch (e) { core.toast(e.message, 'error'); }
   };
   const unghost = () => call('studio:ghost', { id: 'vox', placements: [] }).catch(() => {});
@@ -178,7 +179,7 @@ export default function Voxelizer({ onClose }) {
       png = c.toDataURL('image/png');
     } catch (_) {}
     try {
-      await call('studio:structSave', { id, name, size: map.pl.size, palette: map.pl.palette, blocks: map.pl.blocks, png, source: 'voxel', counts: map.pl.counts });
+      await call('studio:structSave', { id, name, size: map.pl.size, palette: map.pl.palette, blocks: map.pl.blocks, png, source: 'voxel', counts: map.pl.counts, preview: topPreview(vox.v, map.idx, map.pal) });
       await core.reloadAny('structures');
       setSave({ ...save, saved: id });
       core.toast('Шаблон «' + name + '» в библиотеке (studio/structures/' + id + '.nbt)', 'ok', 4000);

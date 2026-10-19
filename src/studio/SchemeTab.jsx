@@ -14,7 +14,7 @@ import { freshWorld } from './dialog.js';
 import { slug, uniqueId } from './model.js';
 import { ERR, OPS } from './validate.js';
 import {
-  validateScheme, defaultScheme, schemeSetOut, schemeGetOut, schemeOutputs, EVENT_KINDS, EVENT_LABEL, TIME_AT, ZONE_ON, QUEST_ON, ITEM_ON, BLOCK_ON, SCHEME_LIMITS
+  validateScheme, defaultScheme, schemeSetOut, schemeGetOut, schemeOutputs, EVENT_KINDS, EVENT_LABEL, TIME_AT, ZONE_ON, QUEST_ON, ITEM_ON, BLOCK_ON, SCHEME_LIMITS, timeAtTick
 } from './scheme.js';
 import { SCHEME_DEFS, SCHEME_KIT_BASE, EVENT_HINT, newSchemeNode, nextSchemeId, schemeLayout, dryRun, CAT_COLOR, schemePalette } from './schemeKit.js';
 
@@ -45,6 +45,9 @@ export default function SchemeTab({ shared, goto }) {
   const [tlog, setTlog] = useState([]); // [{ at, node, ok, note, src }]
   const [follow, setFollow] = useState(() => lsGet('schemeTrace', true));
   const [, tick] = useState(0);
+  const [gameSt, setGameSt] = useState({}); // состояние схем в игре: id → { enabled, ok, errors, running, problems }
+  const askGame = useCallback(() => { if (link.connected) call('studio:schemes').then((r) => { if (r && Array.isArray(r.items)) setGameSt(Object.fromEntries(r.items.map((x) => [x.id, x]))); }).catch(() => {}); }, [link.connected]);
+  useEffect(() => { askGame(); }, [askGame]);
   const seq = useRef(0);
   const dryTimers = useRef([]);
 
@@ -74,6 +77,8 @@ export default function SchemeTab({ shared, goto }) {
   }, []);
   useEffect(() => on('studio-link', (d) => {
     const m = d && d.msg;
+    if (m && m.t === 'schemes' && Array.isArray(m.items)) { setGameSt(Object.fromEntries(m.items.map((x) => [x.id, x]))); return; }
+    if (m && m.t === 'result' && (m.op === 'scheme' || m.op === 'schemeFire') && m.ok === false) { toast('Игра: ' + (m.error || 'не вышло'), 'error', 7000); return; }
     if (!m || m.t !== 'trace' || !docRef.current || m.scheme !== docRef.current.id || !m.node) return;
     const ctx = m.ctx && typeof m.ctx === 'object' ? m.ctx : null;
     pushTrace(m.node, m.ok !== false, ctx ? [ctx.player && 'игрок ' + ctx.player, Array.isArray(ctx.pos) && 'в ' + ctx.pos.map((v) => Math.round(v)).join(' '), ctx.error].filter(Boolean).join(', ') : '', 'игра');
@@ -83,8 +88,8 @@ export default function SchemeTab({ shared, goto }) {
   // включить трассу в игре, пока открыта схема
   useEffect(() => {
     if (!link.connected || !doc) return undefined;
-    call('studio:schemeTrace', { on: follow, id: doc.id }).catch(() => {});
-    return () => { if (follow) call('studio:schemeTrace', { on: false, id: doc.id }).catch(() => {}); };
+    call('studio:schemeTrace', { on: follow }).catch(() => {});
+    return () => { if (follow) call('studio:schemeTrace', { on: false }).catch(() => {}); };
   }, [link.connected, doc && doc.id, follow]); // eslint-disable-line
   useEffect(() => () => dryTimers.current.forEach(clearTimeout), []);
 
@@ -93,7 +98,7 @@ export default function SchemeTab({ shared, goto }) {
     const sigs = new Set();
     for (const s of list) { (s.raised || []).forEach((x) => sigs.add(x)); (s.listened || []).forEach((x) => sigs.add(x)); }
     for (const n of Object.values(nodes)) { if (n && n.type === 'event' && n.event === 'signal' && n.name) sigs.add(n.name); if (n && n.type === 'action') (n.do || []).forEach((a) => a && typeof a.signal === 'string' && sigs.add(a.signal)); }
-    return { ...baseRefs, schemes: list, structures: lists.structures || [], gates: Object.keys(nodes).filter((k) => nodes[k].type === 'gate'), signals: [...sigs], api: shared.api };
+    return { ...baseRefs, schemes: list, structures: lists.structures || [], gates: Object.keys(nodes).filter((k) => nodes[k].type === 'gate'), onces: Object.keys(nodes).filter((k) => nodes[k].type === 'once'), signals: [...sigs], api: shared.api };
   }, [baseRefs, list, lists.structures, doc, shared.api]);
   const lazy = useDeferredValue(doc);
   const issues = useMemo(() => {
@@ -151,7 +156,7 @@ export default function SchemeTab({ shared, goto }) {
   // ---------- игра ----------
   const loadToGame = async (quiet) => {
     if (!link.connected) { toast('Нет связи с игрой — запусти игру с режимом разработчика', 'warn', 6000); return false; }
-    try { await ed.flush(); await call('studio:scheme', docRef.current); if (!quiet) { addLog('info', 'Схема загружена в игру: ' + docRef.current.id); toast('Схема загружена в игру — работает сразу, без «Собрать»', 'ok'); } return true; } catch (e) { toast(e.message, 'error'); return false; }
+    try { await ed.flush(); await call('studio:scheme', docRef.current); setTimeout(askGame, 400); if (!quiet) { addLog('info', 'Схема загружена в игру: ' + docRef.current.id); toast('Схема загружена в игру — работает сразу, без «Собрать»', 'ok'); } return true; } catch (e) { toast(e.message, 'error'); return false; }
   };
   const fire = async (nodeId) => {
     const d = docRef.current;
@@ -165,7 +170,7 @@ export default function SchemeTab({ shared, goto }) {
     setCheck(false);
     if (!(await loadToGame(true))) return;
     if (!follow) { setFollow(true); lsSet('schemeTrace', true); }
-    try { await call('studio:schemeTrace', { on: true, id: docRef.current.id }); await call('studio:schemeFire', { id: docRef.current.id, node: evId, ctx: { from: 'studio' } }); addLog('info', 'Запущено событие «' + evId + '» схемы ' + docRef.current.id); toast('Событие запущено в игре — смотри подсветку', 'ok', 2500); } catch (e) { toast(e.message, 'error'); }
+    try { await call('studio:schemeTrace', { on: true }); await call('studio:schemeFire', { id: docRef.current.id, node: evId, ctx: { from: 'studio' } }); addLog('info', 'Запущено событие «' + evId + '» схемы ' + docRef.current.id); toast('Событие запущено в игре — смотри подсветку', 'ok', 2500); } catch (e) { toast(e.message, 'error'); }
   };
   const dry = (nodeId) => {
     const d = docRef.current;
@@ -218,7 +223,7 @@ export default function SchemeTab({ shared, goto }) {
           <button className="btn sm ghost icon-btn" disabled={!ed.canRedo} onClick={ed.redo} {...hp('Вернуть (Ctrl+Y).')}><Icon name="redo" size={13} /></button>
           <span className={'st-save ' + ed.saveState} {...hp('Схема сохраняется сама через секунду после правки. Ctrl+S — сразу.')}>{SAVE_TEXT[ed.saveState]}</span>
           <label className={'sc-onoff' + (doc.enabled === false ? ' off' : '')} {...hp('Включена — схема работает в игре. Выключена — лежит в проекте, но ни на что не реагирует (можно включить действием другой схемы).')}>
-            <input type="checkbox" checked={doc.enabled !== false} onChange={(e) => edit((d) => ({ ...d, enabled: e.target.checked }))} /> {doc.enabled === false ? 'выключена' : 'включена'}
+            <input type="checkbox" checked={doc.enabled !== false} onChange={(e) => { const v = e.target.checked; edit((d) => ({ ...d, enabled: v })); if (link.connected) call('studio:schemeEnable', { id: doc.id, on: v }).then(askGame).catch(() => {}); }} /> {doc.enabled === false ? 'выключена' : 'включена'}
           </label>
           <div className="grow" />
           <button className="btn sm" onClick={() => dry()} {...hp('Прогнать без игры: пройти по схеме от выбранного (или первого) события на выдуманном мире и подсветить путь. Действия в мире не выполняются.')}><Icon name="play" size={12} /> Прогнать<span className="lbl-wide"> без игры</span></button>
@@ -245,7 +250,7 @@ export default function SchemeTab({ shared, goto }) {
         {linkCard}
         <DocList kind="schemes" list={list} cur={doc && doc.id} open={open} create={create} reload={() => reloadList('schemes')} flush={ed.flush} hp={hp} toast={toast}
           onRenamed={(id) => { reloadList('schemes'); open(id); }} onDeleted={(id) => { if (doc && doc.id === id) ed.close(); }}
-          sub={(x) => x.id + (x.enabled === false ? ' · выкл' : '') + ' · ' + (x.events && x.events.length ? x.events.map((e) => EVENT_LABEL[e] || e).slice(0, 2).join(', ') : 'нет событий')}
+          sub={(x) => x.id + (x.enabled === false ? ' · выкл' : '') + ' · ' + (x.events && x.events.length ? x.events.map((e) => EVENT_LABEL[e] || e).slice(0, 2).join(', ') : 'нет событий') + (gameSt[x.id] ? ' · в игре: ' + (gameSt[x.id].ok === false || gameSt[x.id].errors ? 'ошибки' : gameSt[x.id].enabled === false ? 'выкл' : gameSt[x.id].running ? 'идёт ' + gameSt[x.id].running : 'ждёт') : '')}
           L={{ title: 'Схемы', add: 'Схема', placeholder: 'Название, например «Ночной набег»', empty: 'Схем пока нет — нажми «+ Схема».', hint: 'Все схемы проекта: studio/schemes/<id>.json. Схема — логика мира: «когда … если … то …».', addHint: 'Создать схему: событие «ночь» → условие → действие. Дальше дорисуешь.' }} />
         {doc && <Palette hp={hp} onAdd={(it) => addNode(it.type, { x: 80 + Math.random() * 40, y: 80 + Math.random() * 40 }, null, it.preset)} />}
       </aside>
@@ -346,7 +351,7 @@ function NextSel({ nodes, value, onChange, self, none = '— стоп (даль�
   );
 }
 
-const AT_LABEL = { dawn: 'рассвет (0)', day: 'день (6000)', dusk: 'закат (12000)', night: 'ночь (13000)', tick: 'точный тик…' };
+const AT_LABEL = { dawn: 'рассвет (23000)', day: 'утро (1000)', noon: 'полдень (6000)', dusk: 'закат (12000)', night: 'ночь (13000)', midnight: 'полночь (18000)', tick: 'точный тик…' };
 const ZONE_ON_L = { enter: 'вошёл', leave: 'вышел', inside: 'находится внутри' };
 const QUEST_ON_L = { start: 'начато', step: 'перешло на шаг', done: 'выполнено', fail: 'провалено' };
 const ITEM_ON_L = { pickup: 'подобрал', use: 'использовал', craft: 'скрафтил' };
@@ -379,10 +384,10 @@ function NodeInsp({ id, n, doc, refs, hp, setNode, issues, onDelete, onDup, onFi
             </select>
           </FieldRow>
           {ev === 'time' && (<>
-            <FieldRow label="Время суток" hp={hp} hint="Когда сработать: на рассвете (0), днём (6000), на закате (12000), ночью (13000) или в точный тик (0–23999)." wide>
-              <select className="input sm" value={n.at || 'night'} onChange={(e) => set('at', e.target.value)}>{TIME_AT.map((a) => <option key={a} value={a}>{AT_LABEL[a]}</option>)}</select>
+            <FieldRow label="Время суток" hp={hp} hint="Когда сработать: рассвет (23000), утро (1000), полдень (6000), закат (12000), ночь (13000), полночь (18000) или точный тик суток (0–23999). Срабатывает, когда время мира проходит эту отметку." wide>
+              <select className="input sm" value={TIME_AT.includes(n.at) ? n.at : 'tick'} onChange={(e) => set('at', e.target.value === 'tick' ? 6000 : e.target.value)}>{[...TIME_AT, 'tick'].map((a) => <option key={a} value={a}>{AT_LABEL[a]}</option>)}</select>
             </FieldRow>
-            {n.at === 'tick' && <FieldRow label="Тик суток" hp={hp} hint="0 — рассвет, 6000 — полдень, 13000 — ночь, 18000 — полночь."><NumInput value={n.tick || 0} int min={0} max={23999} onChange={(v) => set('tick', v || 0)} /></FieldRow>}
+            {!TIME_AT.includes(n.at) && <FieldRow label="Тик суток" hp={hp} hint="0 — утро, 6000 — полдень, 13000 — ночь, 18000 — полночь."><NumInput value={timeAtTick(n.at) || 0} int min={0} max={23999} onChange={(v) => set('at', Math.max(0, Math.min(23999, v || 0)))} /></FieldRow>}
           </>)}
           {ev === 'timer' && <FieldRow label="Каждые" hp={hp} hint={'Как часто, в тиках (20 = 1 секунда). Сейчас: раз в ' + (Math.round((n.every || 0) / 2) / 10) + ' с.'}><NumInput value={n.every} int min={1} onChange={(v) => set('every', v || 1)} /></FieldRow>}
           {ev === 'zone' && (<>
@@ -457,6 +462,7 @@ function NodeInsp({ id, n, doc, refs, hp, setNode, issues, onDelete, onDup, onFi
           <FieldRow label="Потом" hp={hp} hint="Что выполнить после паузы." wide><NextSel nodes={nodes} value={n.next} self={id} onChange={(v) => set('next', v)} /></FieldRow>
         </>)}
         {(n.type === 'sequence' || n.type === 'random') && <OutsEditor id={id} n={n} nodes={nodes} hp={hp} setNode={setNode} />}
+        {n.type === 'sequence' && <FieldRow label="Потом" hp={hp} hint="Куда, когда все шаги закончились (с учётом «Подождать» внутри)." wide><NextSel nodes={nodes} value={n.next} self={id} onChange={(v) => set('next', v)} /></FieldRow>}
         {n.type === 'loop' && (<>
           <FieldRow label="Сколько раз" hp={hp} hint={'От 1 до ' + SCHEME_LIMITS.loop + '. Между повторами можно поставить «Подождать» внутри ветки.'}><NumInput value={n.times} int min={1} max={SCHEME_LIMITS.loop} onChange={(v) => set('times', Math.max(1, Math.min(SCHEME_LIMITS.loop, v || 1)))} /></FieldRow>
           <FieldRow label="Каждый раз →" hp={hp} hint="Ветка, которая повторяется." wide><NextSel nodes={nodes} value={n.body} self={id} onChange={(v) => set('body', v)} /></FieldRow>
@@ -466,7 +472,12 @@ function NodeInsp({ id, n, doc, refs, hp, setNode, issues, onDelete, onDup, onFi
           <BoolRow label="Открыты в начале" hp={hp} hint="Какими ворота будут при первом запуске. Дальше их открывает и закрывает действие «Открыть/закрыть ворота» (состояние помнится)." value={n.open !== false} onChange={(v) => setNode(id, { open: v })} />
           <FieldRow label="Дальше" hp={hp} hint="Куда, если ворота открыты." wide><NextSel nodes={nodes} value={n.next} self={id} onChange={(v) => set('next', v)} /></FieldRow>
         </>)}
-        {n.type === 'once' && <FieldRow label="Дальше" hp={hp} hint="Куда — только в самый первый раз." wide><NextSel nodes={nodes} value={n.next} self={id} onChange={(v) => set('next', v)} /></FieldRow>}
+        {n.type === 'once' && (<>
+          <FieldRow label="Один раз для" hp={hp} hint="Для всего мира — сработает однажды за всю игру. Для каждого игрока — каждый игрок пройдёт один раз. Сбросить можно действием «Сбросить «Один раз»»." wide>
+            <select className="input sm" value={n.per || 'world'} onChange={(e) => set('per', e.target.value === 'world' ? undefined : e.target.value)}><option value="world">всего мира</option><option value="player">каждого игрока</option></select>
+          </FieldRow>
+          <FieldRow label="Дальше" hp={hp} hint="Куда — только в самый первый раз." wide><NextSel nodes={nodes} value={n.next} self={id} onChange={(v) => set('next', v)} /></FieldRow>
+        </>)}
         {n.type === 'comment' && <FieldRow label="Текст" hp={hp} hint="Заметка на схеме. Игра её не читает." wide><textarea className="input sm" rows={5} value={n.text || ''} onChange={(e) => set('text', e.target.value)} /></FieldRow>}
       </div>
     </div>

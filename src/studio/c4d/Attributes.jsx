@@ -176,13 +176,14 @@ const TABS = {
   effector: [['object', 'Эффектор'], ['basic', 'Основное'], ['anim', 'Анимация']],
   block: [['object', 'Блок'], ['basic', 'Основное']],
   template: [['object', 'Шаблон'], ['basic', 'Основное']],
+  structure: [['object', 'Постройка'], ['bake', 'В мир'], ['basic', 'Основное'], ['coord', 'Координаты'], ['anim', 'Анимация']],
   actor: [['object', 'Актёр'], ['basic', 'Основное'], ['events', 'Дорожка']]
 };
 
 function ObjAttrs({ o, act, issues }) {
   const core = useStudio();
   const tabs = TABS[o.type] || [['basic', 'Основное']];
-  const [tab, setTab] = useState(() => (tabs.some((t) => t[0] === 'object') && ['cloner', 'effector', 'block', 'template', 'actor'].includes(o.type) ? 'object' : tabs[0][0]));
+  const [tab, setTab] = useState(() => (tabs.some((t) => t[0] === 'object') && ['cloner', 'effector', 'block', 'template', 'actor', 'structure'].includes(o.type) ? 'object' : tabs[0][0]));
   useEffect(() => { if (!tabs.some((t) => t[0] === tab)) setTab(tabs[0][0]); }, [o.type]); // eslint-disable-line
   const cur = tabs.some((t) => t[0] === tab) ? tab : tabs[0][0];
   return (
@@ -206,6 +207,7 @@ function ObjAttrs({ o, act, issues }) {
       {cur === 'object' && o.type === 'cloner' && <ClonerTab o={o} />}
       {cur === 'eff' && <ClonerEffTab o={o} />}
       {cur === 'bake' && <ClonerBakeTab o={o} act={act} />}
+      {cur === 'object' && o.type === 'structure' && <StructureTab o={o} />}
       {cur === 'object' && o.type === 'effector' && <EffectorTab o={o} />}
       {cur === 'object' && o.type === 'block' && <BlockTab o={o} />}
       {cur === 'object' && o.type === 'template' && <TemplateTab o={o} />}
@@ -548,19 +550,19 @@ function ClonerBakeTab({ o, act }) {
   return (
     <>
       <Sec title="Показать в игре">
-        <ARow label="Призрак в игре" hint="Показывать копии в игре прозрачными блоками (до 20000). Обновляется после каждой правки."><Check value={!!o.props.preview} onChange={(v) => e.setProp('preview', v)} /></ARow>
+        <ARow label="Призрак в игре" hint={o.type === 'structure' ? 'Показывать постройку в игре призраком.' : 'Показывать копии в игре прозрачными блоками (до 20000). Обновляется после каждой правки.'}><Check value={!!o.props.preview} onChange={(v) => e.setProp('preview', v)} /></ARow>
       </Sec>
       <Sec title="Запечь в мир">
         <div className="c4-ahint">«Запечь» ставит блоки в мир по-настоящему (по тикам, чанки грузятся сами). Что стояло раньше, игра запоминает — «Отменить запекание» вернёт всё как было, даже после перезапуска.</div>
         <div className="c4-btnrow">
-          <button className="c4-btn sm prim" disabled={!core.link.connected} onClick={() => act.bake(o.id)} {...core.hp('Поставить блоки клонера в мир (можно отменить).')}><I name="bake" size={12} /> Запечь в мир</button>
+          <button className="c4-btn sm prim" disabled={!core.link.connected} onClick={() => act.bake(o.id)} {...core.hp(o.type === 'structure' ? 'Поставить постройку в мир (можно отменить).' : 'Поставить блоки клонера в мир (можно отменить).')}><I name="bake" size={12} /> Запечь в мир</button>
           <button className="c4-btn sm" disabled={!core.link.connected || !bakes.length} onClick={() => act.unbake(o.id)} {...core.hp('Вернуть блоки, как были до последнего запекания этого клонера.')}><I name="unbake" size={12} /> Отменить запекание</button>
         </div>
         {job && <div className="c4-ahint">{job.kind === 'bake' ? 'Запекаю' : 'Отменяю'}: {job.done} / {job.total}</div>}
         {bakes.length > 0 && <div className="c4-ahint">Запечено раз: {bakes.length}, последнее — {new Date(bakes[bakes.length - 1].at).toLocaleString('ru-RU')} ({bakes[bakes.length - 1].n} шт.)</div>}
       </Sec>
       <Sec title="В сцене">
-        <ARow label="Появляется в сцене" hint="Клонер появится во время сцены в этот момент (событие «Клонер появляется»). Пусто — не появляется.">
+        <ARow label="Появляется в сцене" hint="Клонер (или постройка) появится во время сцены в этот момент (событие «Клонер появляется»). Пусто — не появляется.">
           <Check value={typeof o.props.appearAt === 'number'} onChange={(v) => e.setProp('appearAt', v ? core.time : null)} />
           {typeof o.props.appearAt === 'number' && <Num value={o.props.appearAt} int min={0} unit="т" onChange={(v) => e.setProp('appearAt', v)} />}
         </ARow>
@@ -620,13 +622,38 @@ function BlockTab({ o }) {
 const BLOCKS = ['minecraft:stone', 'minecraft:cobblestone', 'minecraft:oak_log', 'minecraft:spruce_log', 'minecraft:oak_planks', 'minecraft:oak_fence', 'minecraft:cobblestone_wall', 'minecraft:lantern', 'minecraft:torch', 'minecraft:hay_block', 'minecraft:glass', 'minecraft:bricks', 'minecraft:stone_bricks', 'minecraft:oak_leaves', 'minecraft:grass_block', 'minecraft:dirt_path', 'minecraft:oak_stairs', 'minecraft:barrel', 'minecraft:campfire'];
 function TemplateTab({ o }) {
   const e = useObjEdit(o);
+  const core = useStudio();
   return (
     <Sec title="Шаблон постройки">
       <ARow label="Шаблон" hint="id шаблона структуры (structures/*.nbt), например minecraft:village/plains/houses/plains_small_house_1 или свой kokk:hut.">
         <Text mono value={e.props.template} onChange={(v) => e.setProp('template', v.trim())} />
       </ARow>
-      <div className="c4-ahint">Сохранять свои шаблоны из игры можно будет во вкладке «Строительство» (следующая фаза). В призраке шаблон — розовая метка.</div>
+      <div className="c4-ahint">Свои постройки — вкладка «Строительство» → «Постройки». Здесь можно вписать id своей постройки или ванильной (minecraft:…).</div>
+      {core.structures.length > 0 && <ARow label="Из библиотеки" hint="Выбрать свою постройку."><Select value="" options={[['', '— выбрать —'], ...core.structures.map((s) => [s.id, s.name || s.id])]} onChange={(v) => v && e.setProp('template', v)} /></ARow>}
     </Sec>
+  );
+}
+function StructureTab({ o }) {
+  const core = useStudio();
+  const e = useObjEdit(o);
+  const p = e.props;
+  const st = core.structures.find((x) => x.id === p.structure);
+  const rotOf = (r) => (r === 90 || r === 270 ? [st.size[2], st.size[1], st.size[0]] : st.size);
+  return (
+    <>
+      <Sec title="Постройка">
+        <ARow label="Постройка" hint="Какую постройку из библиотеки ставить (studio/structures). Новые — «Строительство» → «Постройки» или «Сохранить шаблон».">
+          <Select value={p.structure || ''} options={[['', '— выбери —'], ...core.structures.map((s) => [s.id, (s.name || s.id) + (s.size ? ' · ' + s.size.join('×') : '')]), ...(p.structure && !st ? [[p.structure, p.structure + ' (нет в библиотеке!)']] : [])]} onChange={(v) => { e.setProp('structure', v); const s2 = core.structures.find((x) => x.id === v); if (s2 && (o.name === 'Постройка' || /^Постройка( \d+)?$/.test(o.name))) e.setField('name', s2.name || v); }} />
+        </ARow>
+        <ARow label="Поворот" hint="Поворот вокруг вертикали по 90° (как в игре: сначала отражение, потом поворот)."><Select value={p.rot || 0} options={[0, 90, 180, 270].map((r) => [r, r + '°'])} onChange={(v) => e.setProp('rot', Number(v))} /></ARow>
+        <ARow label="Отражение" hint="Зеркально: по X (перед-зад) или по Z (лево-право)."><Select value={p.mirror === true ? 'x' : p.mirror || 'none'} options={[['none', 'нет'], ['x', 'по X'], ['z', 'по Z']]} onChange={(v) => e.setProp('mirror', v === 'none' ? false : v)} /></ARow>
+        <ARow label="Позиция — это" hint="Угол — наименьшие x, y, z уже повёрнутой постройки. Центр низа — середина основания (удобно ставить по центру площади)."><Select value={p.anchor || 'corner'} options={[['corner', 'угол'], ['center', 'центр низа']]} onChange={(v) => e.setProp('anchor', v)} /></ARow>
+        {st ? <div className="c4-ahint">Размер {rotOf(p.rot || 0).join(' × ')} · блоков {st.blocks != null ? st.blocks.toLocaleString('ru-RU') : '?'}{st.source === 'voxel' ? ' · из 3D-модели' : ''}.</div> : <div className="c4-ahint">Постройка не выбрана — в игре ничего не появится.</div>}
+      </Sec>
+      <Sec title="Показать в игре">
+        <ARow label="Призрак в игре" hint="Показывать постройку в игре тёплым призраком, пока редактируешь. Следует за позицией."><Check value={!!p.preview} onChange={(v) => e.setProp('preview', v)} /></ARow>
+      </Sec>
+    </>
   );
 }
 

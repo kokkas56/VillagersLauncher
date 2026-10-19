@@ -15,6 +15,9 @@ import { Datalists } from '../fields.jsx';
 import DialogTab from '../DialogTab.jsx';
 import QuestTab from '../QuestTab.jsx';
 import VarsTab from '../VarsTab.jsx';
+import SchemeTab from '../SchemeTab.jsx';
+import { BuildProvider, BlockPalette, BuildDock, useBuild } from './Build.jsx';
+import Voxelizer from './Voxelizer.jsx';
 import { LinkCard, ProjectActors } from '../../pages/Studio.jsx';
 import { fmtTicks } from '../model.js';
 import { ERR } from '../validate.js';
@@ -23,11 +26,11 @@ import '../studio.css';
 
 export const LAYOUTS = [
   ['scene', 'Сцена', 'Катсцена: камеры, актёры, свет, «Монтаж» и ключи на таймлайне. В центре — игра.'],
-  ['build', 'Строительство', 'Клонеры и эффекторы: раскладывай блоки и постройки, смотри призраком в игре, запекай в мир.'],
+  ['build', 'Строительство', 'Блоки и постройки: палитра блоков, рамка (заполнить, заменить, копировать, повернуть), кисть, библиотека построек, 3D-модели → блоки, клонеры. Призраком в игре, запекание в мир.'],
   ['dialogs', 'Диалоги', 'Разговоры с ветками: граф из реплик, выборов, условий и действий.'],
   ['quests', 'Задания', 'Задания по шагам и награды.'],
   ['vars', 'Переменные', 'Память сюжета: что игрок уже сделал.'],
-  ['schemes', 'Схемы', 'Логика «событие → условие → действие» узлами. Скоро.']
+  ['schemes', 'Схемы', 'Логика мира узлами: «событие → условие → действие» (как блюпринты). Живая трасса из игры.']
 ];
 const TOOLS = [
   ['select', 'select', 'Выбор', 'Выбор (щёлкни объект в игре или на схеме). Пробел — прошлый инструмент.'],
@@ -49,7 +52,12 @@ const KEYS = [
 ];
 
 export default function StudioApp() {
+  return <BuildProvider><StudioMain /></BuildProvider>;
+}
+
+function StudioMain() {
   const core = useStudioCore({ withScene: true, who: 'window' });
+  const bc = useBuild();
   const act = useMemo(() => makeActions(core), [core]); // eslint-disable-line
   const actRef = useRef(act);
   actRef.current = act;
@@ -151,6 +159,10 @@ export default function StudioApp() {
       { label: 'Привязка (0,5 блока / 15°)', icon: 'snap', checked: core.snap, run: () => core.setSnap(!core.snap) },
       { sep: true },
       { label: 'Камера Студии в игре', icon: 'gamecam', kb: 'F6 в игре', checked: core.game.editorCam, run: () => core.gameCmd.editorCam(!core.game.editorCam) },
+      { sep: true },
+      { label: '3D-модель → блоки…', icon: 'cube3', hint: 'Открыть OBJ, glTF или GLB и превратить модель в блоки: превью, призрак в игре, запекание, шаблон в библиотеку.', run: () => bc.setVox(true) },
+      { label: 'Кисть', icon: 'brush', hint: 'Рисовать блоками в игре: макет «Строительство» → «Кисть».', run: () => openDock('brush') },
+      { label: 'Рамка и действия', icon: 'frame', hint: 'Выделить область в мире и заполнить, заменить, скопировать, повернуть, сохранить шаблоном.', run: () => openDock('sel') },
       { label: 'Показать выбранное', icon: 'frame', kb: 'H', run: core.gameCmd.frame }
     ] },
     { id: 'anim', label: 'Анимация', hint: 'Проигрывание, ключи, интерполяция.', items: () => [
@@ -188,11 +200,12 @@ export default function StudioApp() {
     buildBtn: <button className="btn sm" onClick={build} {...hp('Проверить всё и собрать для игроков.')}>Собрать</button>,
     actorsCard: <ProjectActors project={core.project} save={core.saveProject} hp={hp} toast={toast} sceneIds={null} addToScene={() => {}} />,
     toast, hp, api: core.api, link: core.link, project: core.project, saveProject: core.saveProject,
-    lists: { scenes: core.list, dialogs: core.dialogs, quests: core.quests }, reloadList: core.reloadAny, patchList: core.patchList, baseRefs: core.baseRefs,
+    lists: { scenes: core.list, dialogs: core.dialogs, quests: core.quests, schemes: core.schemes, structures: core.structures }, reloadList: core.reloadAny, patchList: core.patchList, baseRefs: core.baseRefs,
     addLog: core.addLog, gameVars: core.gameVars, setGameVars: core.setGameVars, setGameVarsState: core.setGameVarsState, questStates: core.questStates,
-    openDoc: async (kind, id) => { if (kind === 'scenes') { setLayout('scene'); core.openScene(id); return; } setGoto({ kind: kind === 'dialogs' ? 'dialog' : 'quest', id, n: Date.now() }); setLayout(kind); }
+    openDoc: async (kind, id) => { if (kind === 'scenes') { setLayout('scene'); core.openScene(id); return; } setGoto({ kind: kind === 'dialogs' ? 'dialog' : kind === 'schemes' ? 'scheme' : 'quest', id, n: Date.now() }); setLayout(kind); }
   };
 
+  const openDock = (tab) => { lsSet('bDock', tab); setLayout('build'); window.dispatchEvent(new CustomEvent('c4-dock', { detail: tab })); };
   const splitV = (e) => {
     e.preventDefault();
     const x0 = e.clientX, w0 = rightW;
@@ -255,7 +268,8 @@ export default function StudioApp() {
         {is3d ? (
           <>
             <div className="c4-main">
-              <ToolPalette act={act} />
+              <ToolPalette act={act} openDock={openDock} />
+              {layout === 'build' && <BlockPalette />}
               <div className="c4-center">
                 <Viewport visible={is3d} />
               </div>
@@ -266,8 +280,8 @@ export default function StudioApp() {
                 <div style={{ flex: 1, display: 'flex', minHeight: 0 }}><AttributesPane act={act} /></div>
               </div>
             </div>
-            <div className="c4-splitter-h" onMouseDown={splitH} title="Тяни — высота таймлайна" />
-            <Timeline act={act} height={layout === 'build' ? Math.min(tlH, 150) : tlH} />
+            <div className="c4-splitter-h" onMouseDown={splitH} title={layout === 'build' ? 'Тяни — высота нижней панели' : 'Тяни — высота таймлайна'} />
+            {layout === 'build' ? <BuildDock height={Math.max(200, tlH)} timeline={<Timeline act={act} height={Math.max(200, tlH) - 27} />} /> : <Timeline act={act} height={tlH} />}
           </>
         ) : (
           <DocLayout layout={layout} shared={shared} goto={goto} popped={popped(layout)} popOut={popOut} />
@@ -291,10 +305,11 @@ export default function StudioApp() {
           {report.ok && <button className="c4-btn" onClick={() => call('shell:openPath', 'config/kokkstory/studio')}>Открыть папку</button>}
           <button className="c4-btn prim" onClick={() => setModal(null)}>Понятно</button>
         </>}>
-          {report.ok ? <p>Собрано: сцен <b>{report.count}</b>, диалогов <b>{report.dialogs || 0}</b>, заданий <b>{report.quests || 0}</b>. Лежат в <span className="mono">{report.dir}</span> и уйдут игрокам со следующей публикацией сборки.</p> : <p>Ошибок: <b>{report.errors}</b>. Пока они есть, ничего не записано.</p>}
+          {report.ok ? <p>Собрано: сцен <b>{report.count}</b>, диалогов <b>{report.dialogs || 0}</b>, заданий <b>{report.quests || 0}</b>, схем <b>{report.schemes || 0}</b>, построек <b>{report.structures || 0}</b>. Лежат в <span className="mono">{report.dir}</span> и уйдут игрокам со следующей публикацией сборки.</p> : <p>Ошибок: <b>{report.errors}</b>. Пока они есть, ничего не записано.</p>}
           {(report.issues || []).slice(0, 80).map((x, i) => <div key={i} className="c4-issrow"><span className="sv" style={{ background: x.sev === ERR ? '#e0504a' : '#e0a030' }} />{(x.doc || x.scene) ? <b className="mono" style={{ fontSize: 11 }}>{x.doc || x.scene}</b> : null} {x.msg}</div>)}
         </Modal>}
         {modal === 'newScene' && <NewSceneModal onClose={() => setModal(null)} />}
+        {bc.vox && <Voxelizer onClose={() => bc.setVox(false)} />}
         <Toasts />
       </div>
     </StudioProvider>
@@ -375,8 +390,9 @@ function CommandBar({ play, build, openIssues, issuesN }) {
   );
 }
 
-function ToolPalette({ act }) {
+function ToolPalette({ act, openDock }) {
   const core = React.useContext(StudioCtx);
+  const bc = useBuild();
   const { hp, tool, setTool } = core;
   const [sub, setSub] = useState(null);
   return (
@@ -395,7 +411,9 @@ function ToolPalette({ act }) {
         </button>
       ))}
       <div className="c4-tsep" />
-      <button className="c4-ib" disabled {...hp('Блок-кисть: рисовать блоками прямо в игре — скоро.')}><I name="brush" size={19} /></button>
+      <button className={'c4-ib' + (core.brushOn ? ' on' : '')} onClick={() => openDock('brush')} {...hp('Блок-кисть: рисовать блоками прямо в игре (шар, куб, цилиндр; ставить, заменять, стирать). Открывает «Строительство» → «Кисть».')}><I name="brush" size={19} /></button>
+      <button className="c4-ib" onClick={() => openDock('sel')} {...hp('Рамка: выделить область в мире и заполнить, заменить, очистить, скопировать, повернуть, сохранить шаблоном.')}><I name="frame" size={19} /></button>
+      <button className="c4-ib" onClick={() => bc.setVox(true)} {...hp('3D-модель → блоки: открыть OBJ / glTF / GLB и превратить в постройку.')}><I name="cube3" size={19} /></button>
       {sub && <SubMenu sub={sub} act={act} close={() => setSub(null)} />}
     </div>
   );
@@ -409,7 +427,6 @@ function SubMenu({ sub, act, close }) {
 }
 
 function DocLayout({ layout, shared, goto, popped, popOut }) {
-  if (layout === 'schemes') return <Soon onPop={() => popOut('schemes')} />;
   if (popped) {
     return (
       <div className="c4-soon">
@@ -430,24 +447,7 @@ function DocLayout({ layout, shared, goto, popped, popOut }) {
         {layout === 'dialogs' && <DialogTab shared={shared} goto={goto} />}
         {layout === 'quests' && <QuestTab shared={shared} goto={goto} />}
         {layout === 'vars' && <VarsTab shared={shared} goto={goto} />}
-      </div>
-    </div>
-  );
-}
-
-export function Soon({ onPop }) {
-  return (
-    <div className="c4-soon">
-      <div className="c4-soon-card">
-        <h3><I name="scheme" size={22} color="#9fb0ff" /> Схемы <span className="pill">скоро</span></h3>
-        <p>Логика сюжета узлами, как Xpresso в Cinema 4D или блюпринты: «когда игрок вошёл в деревню» → «если ночь и задание не начато» → «включить сцену, выдать задание, записать переменную».</p>
-        <ul>
-          <li>события мира и игрока, таймеры, переменные;</li>
-          <li>условия и ветвления;</li>
-          <li>действия: сцены, диалоги, задания, постройки, команды.</li>
-        </ul>
-        <p className="dim">Это следующая фаза Студии. Вкладка и отдельное окно уже зарезервированы.</p>
-        {onPop && <div><button className="c4-btn" onClick={onPop}><I name="popout" size={13} /> Открыть в отдельном окне</button></div>}
+        {layout === 'schemes' && <SchemeTab shared={shared} goto={goto} />}
       </div>
     </div>
   );

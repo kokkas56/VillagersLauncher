@@ -125,7 +125,8 @@ export function actionDefault(k, refs) {
     case 'time': return { time: 13000 };
     case 'signal': return { signal: (refs.signals || [])[0] || 'my_signal' };
     case 'scheme': return { scheme: ((refs.schemes || [])[0] || {}).id || '', enable: true };
-    case 'gate': return { gate: (refs.gates || [])[0] || '', open: true };
+    case 'gate': return { gate: (refs.gates || [])[0] || '', set: 'open' };
+    case 'once': return { once: (refs.onces || [])[0] || '', reset: true };
     default: return { command: '/time set day' };
   }
 }
@@ -227,17 +228,29 @@ function Row({ label, children, hint, hp }) { // eslint-disable-line
 
 // место в схеме: точка / у игрока (кто вызвал событие) / там, где случилось событие
 export function SchemePos({ value, onChange, refs, nullable }) {
-  const mode = Array.isArray(value) ? 'point' : value === 'player' || value === 'event' ? value : nullable ? 'none' : 'point';
+  const off = value && typeof value === 'object' && !Array.isArray(value) && value.of !== undefined;
+  const base = off ? value.of : value;
+  const mode = Array.isArray(base) ? 'point' : ['player', 'event', 'entity'].includes(base) ? base : typeof base === 'string' && base ? 'named' : nullable ? 'none' : 'point';
   const api = refs.api || { connected: false, toast: () => {}, tp: () => {} };
+  const setBase = (b) => onChange(off ? { ...value, of: b } : b);
   return (
     <div className="st-col">
-      <select className="input sm" value={mode} onChange={(e) => { const m = e.target.value; onChange(m === 'point' ? (Array.isArray(value) ? value : [0, 64, 0]) : m === 'none' ? null : m); }} title="Где: точка мира, у игрока, вызвавшего событие, или там, где событие случилось (блок, моб, зона)">
+      <select className="input sm" value={mode} onChange={(e) => { const m = e.target.value; setBase(m === 'point' ? (Array.isArray(base) ? base : [0, 64, 0]) : m === 'none' ? null : m === 'named' ? 'actor:' + (((refs.actors || [])[0] || {}).id || '') : m); }} title="Где: точка мира, у игрока события, где событие случилось, у существа события, у персонажа или созданного раньше (по имени «как»)">
         {nullable && <option value="none">— не задано —</option>}
         <option value="player">у игрока</option>
         <option value="event">где случилось событие</option>
+        <option value="entity">у существа события</option>
+        <option value="named">у персонажа / созданного…</option>
         <option value="point">точка x y z…</option>
       </select>
-      {mode === 'point' && <PosField value={value} onChange={onChange} api={api} f={{ source: 'sel' }} />}
+      {mode === 'point' && <PosField value={base} onChange={setBase} api={api} f={{ source: 'sel' }} />}
+      {mode === 'named' && <input className="input sm mono" value={base} placeholder="actor:miron или имя из «как»" onChange={(e) => setBase(e.target.value.replace(/[^a-zA-Z0-9_:-]/g, ''))} />}
+      {mode !== 'none' && (
+        <label className="check small" title="Сдвинуть от этого места на dx dy dz блоков">
+          <input type="checkbox" checked={off} onChange={(e) => onChange(e.target.checked ? { of: base, offset: [0, 0, 3] } : base)} /><span>со сдвигом</span>
+        </label>
+      )}
+      {off && <div className="row lg-inline">{[0, 1, 2].map((i) => <NumInput key={i} value={(value.offset || [0, 0, 0])[i]} step={1} title={'d' + 'xyz'[i]} onChange={(n) => { const o = (value.offset || [0, 0, 0]).slice(); o[i] = n || 0; onChange({ ...value, offset: o }); }} />)}</div>}
     </div>
   );
 }
@@ -317,7 +330,7 @@ function CondFields({ c, set, refs, hp, depth, scheme }) {
       </div>
     </>);
     case 'time': return (
-      <select className="input sm" value={c.time} onChange={(e) => set({ time: e.target.value })}><option value="day">сейчас день</option><option value="night">сейчас ночь</option></select>
+      <select className="input sm" value={c.time} onChange={(e) => set({ time: e.target.value })}><option value="day">сейчас день</option><option value="night">сейчас ночь</option>{scheme && <option value="dawn">сейчас рассвет</option>}{scheme && <option value="dusk">сейчас закат</option>}</select>
     );
     case 'memory': return <input className="input sm mono" placeholder="факт латиницей, например saw_fire" value={c.memory || ''} onChange={(e) => set({ memory: e.target.value })} />;
     case 'chance': return (
@@ -456,8 +469,9 @@ function ActionFields({ a, set, refs, hp, scheme }) {
       <Row label="где"><SchemePos value={a.pos} refs={refs} onChange={(p) => set({ ...a, pos: p })} /></Row>
       <div className="lg-two">
         <select className="input sm" value={a.rot || 0} onChange={(e) => set({ ...a, rot: Number(e.target.value) })} title="Поворот вокруг вертикали">{ROTS.map((r) => <option key={r} value={r}>поворот {r}°</option>)}</select>
-        <label className="check small"><input type="checkbox" checked={!!a.mirror} onChange={(e) => set({ ...a, mirror: e.target.checked })} /><span>отразить</span></label>
+        <select className="input sm" value={a.mirror === true ? 'x' : a.mirror || 'none'} onChange={(e) => set({ ...a, mirror: e.target.value === 'none' ? false : e.target.value })} title="Отражение (сначала отражение, потом поворот — как в игре)"><option value="none">без отражения</option><option value="x">отразить по X</option><option value="z">отразить по Z</option></select>
       </div>
+      <select className="input sm" value={a.anchor || 'corner'} onChange={(e) => set({ ...a, anchor: e.target.value === 'corner' ? undefined : e.target.value })} title="Точка — наименьший угол постройки (уже повёрнутой) или центр её низа"><option value="corner">точка — угол постройки</option><option value="center">точка — центр низа</option></select>
     </>);
     case 'fx': return (<>
       <select className="input sm" value={a.fx} onChange={(e) => set({ fx: e.target.value, ...(e.target.value === 'title' ? { text: 'Глава 1' } : e.target.value === 'particles' ? { name: 'minecraft:flame', pos: 'player', count: 20 } : e.target.value === 'shake' ? { power: 0.6, ticks: 30 } : {}) })}>{FX_KINDS.map((f) => <option key={f} value={f}>{FX_LABEL[f]}</option>)}</select>
@@ -470,7 +484,7 @@ function ActionFields({ a, set, refs, hp, scheme }) {
     case 'message': return (<>
       <textarea className="input sm" rows={2} value={a.message || ''} placeholder="Текст. {player} — имя игрока, {var:имя} — переменная" onChange={(e) => set({ ...a, message: e.target.value })} />
       <div className="lg-two">
-        <select className="input sm" value={a.to || 'player'} onChange={(e) => set({ ...a, to: e.target.value })}><option value="player">игроку</option><option value="all">всем</option></select>
+        <select className="input sm" value={a.to || 'player'} onChange={(e) => set({ ...a, to: e.target.value })}><option value="player">игроку</option><option value="all">всем</option><option value="near">всем рядом</option></select>
         <select className="input sm" value={a.style || 'chat'} onChange={(e) => set({ ...a, style: e.target.value })}>{MSG_STYLES.map((m) => <option key={m} value={m}>{STYLE_LABEL[m]}</option>)}</select>
       </div>
     </>);
@@ -499,8 +513,11 @@ function ActionFields({ a, set, refs, hp, scheme }) {
     case 'gate': return (
       <div className="lg-two">
         <select className="input sm mono" value={a.gate || ''} onChange={(e) => set({ ...a, gate: e.target.value })}>{!a.gate && <option value="">— ворота —</option>}{(refs.gates || []).map((g) => <option key={g} value={g}>{g}</option>)}{a.gate && !(refs.gates || []).includes(a.gate) && <option value={a.gate}>{a.gate} (нет!)</option>}</select>
-        <select className="input sm" value={String(a.open)} onChange={(e) => set({ ...a, open: e.target.value === 'toggle' ? 'toggle' : e.target.value === 'true' })}><option value="true">открыть</option><option value="false">закрыть</option><option value="toggle">переключить</option></select>
+        <select className="input sm" value={a.set || 'open'} onChange={(e) => set({ ...a, set: e.target.value })}><option value="open">открыть</option><option value="close">закрыть</option><option value="toggle">переключить</option></select>
       </div>
+    );
+    case 'once': return (
+      <select className="input sm mono" value={a.once || ''} onChange={(e) => set({ once: e.target.value, reset: true })}>{!a.once && <option value="">— узел «Один раз» —</option>}{(refs.onces || []).map((g) => <option key={g} value={g}>{g}</option>)}{a.once && !(refs.onces || []).includes(a.once) && <option value={a.once}>{a.once} (нет!)</option>}</select>
     );
     default: return <span className="small muted">Непонятное действие: {JSON.stringify(a)}</span>;
   }

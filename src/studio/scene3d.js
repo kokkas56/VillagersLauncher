@@ -60,7 +60,7 @@ export function defaultProps(type) {
     case 'block': return { block: 'minecraft:oak_log', state: '' };
     case 'template': return { template: '' };
     // постройка из библиотеки (studio/structures/<id>.nbt): ставится целиком, поворот по 90°, отражение по X
-    case 'structure': return { pos: [0, 64, 0], structure: '', rot: 0, mirror: false, preview: true, appearAt: null, removeAtEnd: true };
+    case 'structure': return { pos: [0, 64, 0], structure: '', rot: 0, mirror: false, anchor: 'corner', preview: true, appearAt: null, removeAtEnd: true };
     default: return {};
   }
 }
@@ -382,13 +382,15 @@ export function compileSounds(scene) {
 }
 // клонер «появляется в момент t»: событие мира «bake» (игра ставит блоки сама, по тикам; removeAtEnd — вернуть в конце)
 export const SCENE_CLONE_MAX = 20000;
-// постройка-объект → одно размещение шаблона (как у клонера): { pos, rot, template, mirror? }
+// постройка-объект → одно размещение (формат игры): { pos, structure, rot, mirror?, anchor? }
+// pos — наименьший угол уже повёрнутой постройки (или центр низа при anchor:'center'); сначала отражение, потом поворот
 export function structurePlacements(scene, o, t) {
   const p = propsAt(o, t || 0);
   if (!p.structure) return [];
   const wp = worldPos(scene, o, t || 0) || [0, 64, 0];
-  const pl = { pos: wp.map((v) => Math.floor(v)), rot: [0, 90, 180, 270].includes(p.rot) ? p.rot : 0, template: p.structure };
-  if (p.mirror) pl.mirror = true;
+  const pl = { pos: wp.map((v) => Math.floor(v)), structure: p.structure, rot: [0, 90, 180, 270].includes(p.rot) ? p.rot : 0 };
+  if (p.mirror && p.mirror !== 'none') pl.mirror = p.mirror === true ? 'x' : p.mirror;
+  if (p.anchor === 'center') pl.anchor = 'center';
   return [pl];
 }
 export function compileCloners(scene) {
@@ -498,7 +500,7 @@ export function gameObject(scene, o, t, selected) {
     case 'marker': props.label = p.label || o.name; break;
     case 'sound': props.sound = p.id; if (!isP3(p.pos)) delete props.pos; break;
     case 'cloner': props.mode = p.mode; break;
-    case 'structure': props.structure = p.structure || ''; props.rot = p.rot || 0; props.mirror = !!p.mirror; if (props.pos) props.pos = props.pos.map((v) => Math.floor(v)); break;
+    case 'structure': props.structure = p.structure || ''; props.rot = p.rot || 0; props.mirror = p.mirror === true ? 'x' : p.mirror || false; if (p.anchor === 'center') props.anchor = 'center'; if (props.pos) props.pos = props.pos.map((v) => Math.floor(v)); break;
     case 'effector': props.kind = p.kind; { const cl = o.parent && objById(scene, o.parent); const cp = cl && worldPos(scene, cl, t); if (!props.pos && cp) props.pos = cp.map(r3); } break;
     case 'actor': {
       const ap = actorPosAt(scene, o.actor, t);
@@ -620,6 +622,7 @@ export function validateObjects(scene, add, E, W) {
       if (!p.structure) add(W, 'Постройка ' + nm + ': не выбрана постройка из библиотеки — ничего не появится', sel);
       else if (!/^[a-z0-9_-]{1,64}$/.test(p.structure) && !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(p.structure)) add(E, 'Постройка ' + nm + ': id постройки — латиница, цифры, _ и -', sel);
       if (p.rot !== undefined && ![0, 90, 180, 270].includes(p.rot)) add(E, 'Постройка ' + nm + ': поворот — 0, 90, 180 или 270', sel);
+      if (p.mirror !== undefined && ![false, true, 'x', 'z', 'none'].includes(p.mirror)) add(E, 'Постройка ' + nm + ': отражение — нет, по X или по Z', sel);
       if (isNum(p.appearAt) && isNum(len) && p.appearAt > len) add(W, 'Постройка ' + nm + ': появляется после конца сцены', sel);
     }
     if (o.type === 'cloner') {

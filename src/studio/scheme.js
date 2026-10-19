@@ -20,7 +20,9 @@ export const EVENT_LABEL = {
   quest: 'Задание', scene_end: 'Сцена закончилась', var: 'Переменная', item: 'Предмет', block: 'Блок', kill: 'Убит моб',
   death: 'Игрок умер', login: 'Игрок зашёл', chat: 'Сообщение в чат', signal: 'Сигнал'
 };
-export const TIME_AT = ['dawn', 'day', 'dusk', 'night', 'tick'];
+export const TIME_AT = ['dawn', 'day', 'noon', 'dusk', 'night', 'midnight'];
+// at: одно из TIME_AT, число 0–23999 или строка «tick N»
+export function timeAtTick(at) { if (typeof at === 'number') return at; const m = /^tick\s+(\d+)$/.exec(String(at || '')); return m ? Number(m[1]) : null; }
 export const ZONE_ON = ['enter', 'leave', 'inside'];
 export const QUEST_ON = ['start', 'step', 'done', 'fail'];
 export const ITEM_ON = ['pickup', 'use', 'craft'];
@@ -31,16 +33,19 @@ export const WHO_ZONE = ['player', 'any_player'];
 export const SCHEME_COND_EXTRA = ['zone', 'players_online', 'weather', 'dim', 'random'];
 export const SCHEME_COND_EXTRA_LABEL = { zone: 'Игрок в зоне', players_online: 'Игроков онлайн', weather: 'Погода', dim: 'Измерение', random: 'Случайно (доля)' };
 // действия схем: всё из диалогов + новые (порядок важен для распознавания вида)
-export const SCHEME_ACTION_EXTRA = ['spawn', 'despawn', 'move', 'say', 'block', 'structure', 'fx', 'message', 'tp', 'effect', 'weather', 'time', 'signal', 'scheme', 'gate'];
+export const SCHEME_ACTION_EXTRA = ['spawn', 'despawn', 'move', 'say', 'block', 'structure', 'fx', 'message', 'tp', 'effect', 'weather', 'time', 'signal', 'scheme', 'gate', 'once'];
 export const SCHEME_ACTION_EXTRA_LABEL = {
   spawn: 'Создать актёра/моба', despawn: 'Убрать актёра/моба', move: 'Отправить идти', say: 'Сказать над головой', block: 'Поставить блок',
   structure: 'Поставить постройку', fx: 'Эффект', message: 'Сообщение', tp: 'Перенести игрока', effect: 'Эффект зелья', weather: 'Погода',
-  time: 'Время суток', signal: 'Подать сигнал', scheme: 'Вкл/выкл схему', gate: 'Открыть/закрыть ворота'
+  time: 'Время суток', signal: 'Подать сигнал', scheme: 'Вкл/выкл схему', gate: 'Открыть/закрыть ворота', once: 'Сбросить «Один раз»'
 };
 export const FX_KINDS = ['fade_in', 'fade_out', 'flash', 'shake', 'particles', 'story_fx', 'title'];
 export const MSG_STYLES = ['chat', 'title', 'actionbar'];
 export const WEATHER_KINDS = ['clear', 'rain', 'thunder'];
 export const ROTS = [0, 90, 180, 270];
+export const MIRRORS = [false, true, 'x', 'z', 'none'];
+export const GATE_SET = ['open', 'close', 'toggle'];
+export const MSG_TO = ['player', 'all', 'near'];
 // безопасные пределы (их же соблюдает игра)
 export const SCHEME_LIMITS = { instances: 64, loop: 1000, waitMin: 1, nodes: 400 };
 
@@ -56,6 +61,8 @@ export function schemeCondKind(c) {
   return null;
 }
 export function schemeActionKind(a) {
+  // { gate, set } и { once, reset } — раньше «set» (переменная) и «scheme»
+  if (a && typeof a === 'object' && !Array.isArray(a)) { if ('gate' in a) return 'gate'; if ('once' in a) return 'once'; }
   const k = actionKind(a);
   if (k) return k;
   if (!a || typeof a !== 'object' || Array.isArray(a)) return null;
@@ -70,7 +77,8 @@ export function schemeOutputs(n) {
     case 'event': case 'action': case 'wait': case 'gate': case 'once': return [{ key: 'next', label: 'дальше' }];
     case 'cond': return [{ key: 'then', label: 'да' }, { key: 'else', label: 'нет' }];
     case 'loop': return [{ key: 'body', label: 'каждый раз' }, { key: 'next', label: 'потом' }];
-    case 'sequence': case 'random': return (Array.isArray(n.outs) ? n.outs : []).map((_, i) => ({ key: 'out:' + i, label: (n.type === 'random' ? 'вариант ' : 'шаг ') + (i + 1) }));
+    case 'sequence': return [...(Array.isArray(n.outs) ? n.outs : []).map((_, i) => ({ key: 'out:' + i, label: 'шаг ' + (i + 1) })), { key: 'next', label: 'потом' }];
+    case 'random': return (Array.isArray(n.outs) ? n.outs : []).map((_, i) => ({ key: 'out:' + i, label: 'вариант ' + (i + 1) }));
     default: return [];
   }
 }
@@ -111,10 +119,15 @@ function zoneErr(z) {
   if (!isNum(z.radius) || z.radius <= 0 || z.radius > 512) return 'радиус зоны — число от 0 до 512';
   return null;
 }
+// место: [x,y,z] | 'player' | 'event' | 'entity' | 'actor:id' | имя из spawn.as | { of: место, offset:[dx,dy,dz] }
 function posErr(p, allowCtx) {
   if (isPos(p)) return null;
-  if (allowCtx && (p === 'player' || p === 'event')) return null;
-  return allowCtx ? 'место — три числа x y z, «player» (у игрока) или «event» (где случилось событие)' : 'место — три числа x y z';
+  if (allowCtx) {
+    if (p === 'player' || p === 'event' || p === 'entity') return null;
+    if (typeof p === 'string' && /^(actor:)?[a-zA-Z0-9_-]{1,48}$/.test(p)) return null;
+    if (p && typeof p === 'object' && !Array.isArray(p) && p.of !== undefined) { if (p.offset !== undefined && !isPos(p.offset)) return 'сдвиг — три числа dx dy dz'; return posErr(p.of, true); }
+  }
+  return allowCtx ? 'место — три числа x y z, «player» (у игрока), «event» (где случилось событие), «entity», actor:id или имя созданного' : 'место — три числа x y z';
 }
 function targetErr(s, R, allowTmp) {
   if (typeof s !== 'string' || !s) return 'не выбрано, кто';
@@ -126,6 +139,7 @@ function targetErr(s, R, allowTmp) {
 
 function checkSchemeCond(c, where, add, R, sel) {
   const k = schemeCondKind(c);
+  if (k === 'time') { if (!['day', 'night', 'dawn', 'dusk'].includes(c.time)) add(ERR, where + ' → условие «Время суток»: день, ночь, рассвет или закат', sel); return; }
   if (!SCHEME_COND_EXTRA.includes(k) && !['not', 'any', 'all'].includes(k)) { checkConds([c], where, add, { ...R, quests: R.questsMap, dialogs: R.dialogsMap }, sel); return; }
   const w = where + ' → условие «' + (SCHEME_COND_EXTRA_LABEL[k] || k) + '»';
   switch (k) {
@@ -174,6 +188,8 @@ function checkSchemeAction(a, where, add, R, sel, info) {
       else if (R.structures && !R.structures.includes(a.structure)) add(ERR, w + ': в библиотеке нет постройки «' + a.structure + '»', sel);
       pe(a.pos, true);
       if (a.rot !== undefined && !ROTS.includes(a.rot)) add(ERR, w + ': поворот — 0, 90, 180 или 270', sel);
+      if (a.mirror !== undefined && !MIRRORS.includes(a.mirror)) add(ERR, w + ': отражение — нет, по X или по Z', sel);
+      if (a.anchor !== undefined && !['corner', 'center'].includes(a.anchor)) add(ERR, w + ': точка — угол или центр низа', sel);
       return;
     case 'fx':
       if (!FX_KINDS.includes(a.fx)) { add(ERR, w + ': неизвестный эффект «' + a.fx + '»', sel); return; }
@@ -184,7 +200,8 @@ function checkSchemeAction(a, where, add, R, sel, info) {
       return;
     case 'message':
       if (!a.message || !String(a.message).trim()) add(ERR, w + ': пустой текст', sel);
-      if (a.to !== undefined && !['player', 'all'].includes(a.to)) add(ERR, w + ': кому — «игроку» или «всем»', sel);
+      if (a.to !== undefined && !MSG_TO.includes(a.to)) add(ERR, w + ': кому — игроку, всем или рядом', sel);
+      if (a.to === 'near' && a.radius !== undefined && (!isNum(a.radius) || a.radius <= 0)) add(ERR, w + ': радиус «рядом» — число больше нуля', sel);
       if (a.style !== undefined && !MSG_STYLES.includes(a.style)) add(ERR, w + ': вид — чат, заголовок или над хотбаром', sel);
       return;
     case 'tp': pe(a.tp, false); return;
@@ -202,8 +219,11 @@ function checkSchemeAction(a, where, add, R, sel, info) {
       if (typeof a.enable !== 'boolean') add(ERR, w + ': включить или выключить — да/нет', sel);
       return;
     case 'gate':
-      if (!info.nodes[a.gate] || info.nodes[a.gate].type !== 'gate') add(ERR, w + ': в этой схеме нет ворот «' + a.gate + '»', sel);
-      if (![true, false, 'toggle'].includes(a.open)) add(ERR, w + ': открыть, закрыть или переключить', sel);
+      if (!a.scheme && (!info.nodes[a.gate] || info.nodes[a.gate].type !== 'gate')) add(ERR, w + ': в этой схеме нет ворот «' + a.gate + '»', sel);
+      if (!GATE_SET.includes(a.set)) add(ERR, w + ': открыть, закрыть или переключить', sel);
+      return;
+    case 'once':
+      if (!a.scheme && (!info.nodes[a.once] || info.nodes[a.once].type !== 'once')) add(ERR, w + ': в этой схеме нет узла «Один раз» «' + a.once + '»', sel);
       return;
     default:
   }
@@ -214,10 +234,13 @@ function checkEvent(n, where, add, R, sel, info) {
   if (!EVENT_KINDS.includes(k)) { add(ERR, where + ': не выбрано, какое событие', sel); return; }
   const w = where + ' («' + EVENT_LABEL[k] + '»)';
   switch (k) {
-    case 'time':
-      if (!TIME_AT.includes(n.at)) add(ERR, w + ': когда — рассвет, день, закат, ночь или тик', sel);
-      if (n.at === 'tick' && (!Number.isInteger(n.tick) || n.tick < 0 || n.tick >= 24000)) add(ERR, w + ': тик суток — целое от 0 до 23999', sel);
+    case 'time': {
+      if (TIME_AT.includes(n.at)) return;
+      const t = timeAtTick(n.at);
+      if (t === null) add(ERR, w + ': когда — рассвет, день, полдень, закат, ночь, полночь или тик суток', sel);
+      else if (!Number.isInteger(t) || t < 0 || t >= 24000) add(ERR, w + ': тик суток — целое от 0 до 23999', sel);
       return;
+    }
     case 'timer': if (!Number.isInteger(n.every) || n.every < 1) add(ERR, w + ': «каждые» — целое число тиков от 1 (20 = 1 с)', sel); else if (n.every < 20) add(WARN, w + ': чаще раза в секунду — проверь, что так задумано', sel); return;
     case 'zone': {
       const e = zoneErr(n); if (e) add(ERR, w + ': ' + e, sel);
@@ -320,6 +343,7 @@ export function validateScheme(d, ctx) {
         const outs = Array.isArray(n.outs) ? n.outs : [];
         if (!outs.filter(Boolean).length) add(ERR, where + ': нет ни одного выхода — протяни стрелки из «+»', sel);
         outs.forEach((t, i) => link(t, where + ', выход ' + (i + 1), sel, 'warn'));
+        if (n.type === 'sequence') link(n.next, where + ' → «потом»', sel, null);
         if (n.type === 'random') {
           const ws = Array.isArray(n.weights) ? n.weights : [];
           if (ws.length && ws.length !== outs.length) add(WARN, where + ': весов ' + ws.length + ', а выходов ' + outs.length + ' — недостающие считаются 1', sel);
@@ -334,7 +358,7 @@ export function validateScheme(d, ctx) {
         link(n.next, where + ' → «потом»', sel, null);
         break;
       case 'gate': if (n.open !== undefined && typeof n.open !== 'boolean') add(ERR, where + ': «открыты в начале» — да/нет', sel); link(n.next, where, sel, 'warn'); break;
-      case 'once': link(n.next, where, sel, 'warn'); break;
+      case 'once': if (n.per !== undefined && !['world', 'player'].includes(n.per)) add(ERR, where + ': «один раз» — для всего мира или для каждого игрока', sel); link(n.next, where, sel, 'warn'); break;
       case 'comment': if (n.text && String(n.text).length > 2000) add(WARN, where + ': очень длинный комментарий', sel); break;
       default: add(ERR, 'Узел «' + id + '»: неизвестный вид «' + n.type + '»', sel);
     }

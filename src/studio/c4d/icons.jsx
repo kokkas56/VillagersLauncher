@@ -26,6 +26,8 @@ const P = {
   effector: <><path d="M5 19 15 9" /><path d="M15 4v3M19 9h-3M18 5.5l-2 2M11.5 4.5l1.2 2.2M19.5 12.5l-2.2-1.2" /><circle cx="15" cy="9" r="1" /></>,
   block: <><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z" /><path d="M4 7.5 12 12l8-4.5M12 12v9" /></>,
   template: <><path d="M4 11 12 4l8 7v9H4z" /><path d="M10 20v-5h4v5" /></>,
+  structure: <><path d="M3 20h18" /><path d="M5 20v-8l4-3 4 3v8" /><path d="M13 20v-6h6v6" /><path d="M15 14v-3h2v3" /><path d="M8 20v-3h2v3" /></>,
+  cube3: <><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z" /><path d="M4 7.5 12 12l8-4.5M12 12v9" /><path d="M8 5.3l8 4.5M16 5.3 8 9.8" strokeDasharray="1.5 1.5" /></>,
   brush: <><path d="M14 4 20 10l-8 8-6-6z" /><path d="M6 12 3 21l9-3" /></>,
   world: <><circle cx="12" cy="12" r="8" /><path d="M4 12h16M12 4c3 3 3 13 0 16M12 4c-3 3-3 13 0 16" /></>,
   object: <><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z" /><path d="M12 12v9M12 12l8-4.5" strokeDasharray="2 1.5" /></>,
@@ -84,7 +86,7 @@ const P = {
 
 export const TYPE_COLOR = {
   camera: '#a6b4c8', actor: '#e8a05a', light: '#f2d76b', sound: '#7cc4f5', marker: '#e57373', path: '#9ed2ff',
-  group: '#d0d0d0', cloner: '#7fd36b', effector: '#b38cf0', block: '#c6a46b', template: '#d4b483', scene: '#c8c8c8'
+  group: '#d0d0d0', cloner: '#7fd36b', effector: '#b38cf0', block: '#c6a46b', template: '#d4b483', structure: '#e7a96a', scene: '#c8c8c8'
 };
 
 export default function I({ name, size = 18, color, sw = 1.6, fill }) {

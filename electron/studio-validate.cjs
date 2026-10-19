@@ -316,7 +316,7 @@ function defaultProps(type) {
     case 'block': return { block: 'minecraft:oak_log', state: '' };
     case 'template': return { template: '' };
     // постройка из библиотеки (studio/structures/<id>.nbt): ставится целиком, поворот по 90°, отражение по X
-    case 'structure': return { pos: [0, 64, 0], structure: '', rot: 0, mirror: false, preview: true, appearAt: null, removeAtEnd: true };
+    case 'structure': return { pos: [0, 64, 0], structure: '', rot: 0, mirror: false, anchor: 'corner', preview: true, appearAt: null, removeAtEnd: true };
     default: return {};
   }
 }
@@ -638,13 +638,15 @@ function compileSounds(scene) {
 }
 // клонер «появляется в момент t»: событие мира «bake» (игра ставит блоки сама, по тикам; removeAtEnd — вернуть в конце)
 const SCENE_CLONE_MAX = 20000;
-// постройка-объект → одно размещение шаблона (как у клонера): { pos, rot, template, mirror? }
+// постройка-объект → одно размещение (формат игры): { pos, structure, rot, mirror?, anchor? }
+// pos — наименьший угол уже повёрнутой постройки (или центр низа при anchor:'center'); сначала отражение, потом поворот
 function structurePlacements(scene, o, t) {
   const p = propsAt(o, t || 0);
   if (!p.structure) return [];
   const wp = worldPos(scene, o, t || 0) || [0, 64, 0];
-  const pl = { pos: wp.map((v) => Math.floor(v)), rot: [0, 90, 180, 270].includes(p.rot) ? p.rot : 0, template: p.structure };
-  if (p.mirror) pl.mirror = true;
+  const pl = { pos: wp.map((v) => Math.floor(v)), structure: p.structure, rot: [0, 90, 180, 270].includes(p.rot) ? p.rot : 0 };
+  if (p.mirror && p.mirror !== 'none') pl.mirror = p.mirror === true ? 'x' : p.mirror;
+  if (p.anchor === 'center') pl.anchor = 'center';
   return [pl];
 }
 function compileCloners(scene) {
@@ -754,7 +756,7 @@ function gameObject(scene, o, t, selected) {
     case 'marker': props.label = p.label || o.name; break;
     case 'sound': props.sound = p.id; if (!isP3(p.pos)) delete props.pos; break;
     case 'cloner': props.mode = p.mode; break;
-    case 'structure': props.structure = p.structure || ''; props.rot = p.rot || 0; props.mirror = !!p.mirror; if (props.pos) props.pos = props.pos.map((v) => Math.floor(v)); break;
+    case 'structure': props.structure = p.structure || ''; props.rot = p.rot || 0; props.mirror = p.mirror === true ? 'x' : p.mirror || false; if (p.anchor === 'center') props.anchor = 'center'; if (props.pos) props.pos = props.pos.map((v) => Math.floor(v)); break;
     case 'effector': props.kind = p.kind; { const cl = o.parent && objById(scene, o.parent); const cp = cl && worldPos(scene, cl, t); if (!props.pos && cp) props.pos = cp.map(r3); } break;
     case 'actor': {
       const ap = actorPosAt(scene, o.actor, t);
@@ -876,6 +878,7 @@ function validateObjects(scene, add, E, W) {
       if (!p.structure) add(W, 'Постройка ' + nm + ': не выбрана постройка из библиотеки — ничего не появится', sel);
       else if (!/^[a-z0-9_-]{1,64}$/.test(p.structure) && !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(p.structure)) add(E, 'Постройка ' + nm + ': id постройки — латиница, цифры, _ и -', sel);
       if (p.rot !== undefined && ![0, 90, 180, 270].includes(p.rot)) add(E, 'Постройка ' + nm + ': поворот — 0, 90, 180 или 270', sel);
+      if (p.mirror !== undefined && ![false, true, 'x', 'z', 'none'].includes(p.mirror)) add(E, 'Постройка ' + nm + ': отражение — нет, по X или по Z', sel);
       if (isNum(p.appearAt) && isNum(len) && p.appearAt > len) add(W, 'Постройка ' + nm + ': появляется после конца сцены', sel);
     }
     if (o.type === 'cloner') {
@@ -1746,7 +1749,9 @@ const EVENT_LABEL = {
   quest: 'Задание', scene_end: 'Сцена закончилась', var: 'Переменная', item: 'Предмет', block: 'Блок', kill: 'Убит моб',
   death: 'Игрок умер', login: 'Игрок зашёл', chat: 'Сообщение в чат', signal: 'Сигнал'
 };
-const TIME_AT = ['dawn', 'day', 'dusk', 'night', 'tick'];
+const TIME_AT = ['dawn', 'day', 'noon', 'dusk', 'night', 'midnight'];
+// at: одно из TIME_AT, число 0–23999 или строка «tick N»
+function timeAtTick(at) { if (typeof at === 'number') return at; const m = /^tick\s+(\d+)$/.exec(String(at || '')); return m ? Number(m[1]) : null; }
 const ZONE_ON = ['enter', 'leave', 'inside'];
 const QUEST_ON = ['start', 'step', 'done', 'fail'];
 const ITEM_ON = ['pickup', 'use', 'craft'];
@@ -1757,16 +1762,19 @@ const WHO_ZONE = ['player', 'any_player'];
 const SCHEME_COND_EXTRA = ['zone', 'players_online', 'weather', 'dim', 'random'];
 const SCHEME_COND_EXTRA_LABEL = { zone: 'Игрок в зоне', players_online: 'Игроков онлайн', weather: 'Погода', dim: 'Измерение', random: 'Случайно (доля)' };
 // действия схем: всё из диалогов + новые (порядок важен для распознавания вида)
-const SCHEME_ACTION_EXTRA = ['spawn', 'despawn', 'move', 'say', 'block', 'structure', 'fx', 'message', 'tp', 'effect', 'weather', 'time', 'signal', 'scheme', 'gate'];
+const SCHEME_ACTION_EXTRA = ['spawn', 'despawn', 'move', 'say', 'block', 'structure', 'fx', 'message', 'tp', 'effect', 'weather', 'time', 'signal', 'scheme', 'gate', 'once'];
 const SCHEME_ACTION_EXTRA_LABEL = {
   spawn: 'Создать актёра/моба', despawn: 'Убрать актёра/моба', move: 'Отправить идти', say: 'Сказать над головой', block: 'Поставить блок',
   structure: 'Поставить постройку', fx: 'Эффект', message: 'Сообщение', tp: 'Перенести игрока', effect: 'Эффект зелья', weather: 'Погода',
-  time: 'Время суток', signal: 'Подать сигнал', scheme: 'Вкл/выкл схему', gate: 'Открыть/закрыть ворота'
+  time: 'Время суток', signal: 'Подать сигнал', scheme: 'Вкл/выкл схему', gate: 'Открыть/закрыть ворота', once: 'Сбросить «Один раз»'
 };
 const FX_KINDS = ['fade_in', 'fade_out', 'flash', 'shake', 'particles', 'story_fx', 'title'];
 const MSG_STYLES = ['chat', 'title', 'actionbar'];
 const WEATHER_KINDS = ['clear', 'rain', 'thunder'];
 const ROTS = [0, 90, 180, 270];
+const MIRRORS = [false, true, 'x', 'z', 'none'];
+const GATE_SET = ['open', 'close', 'toggle'];
+const MSG_TO = ['player', 'all', 'near'];
 // безопасные пределы (их же соблюдает игра)
 const SCHEME_LIMITS = { instances: 64, loop: 1000, waitMin: 1, nodes: 400 };
 
@@ -1782,6 +1790,8 @@ function schemeCondKind(c) {
   return null;
 }
 function schemeActionKind(a) {
+  // { gate, set } и { once, reset } — раньше «set» (переменная) и «scheme»
+  if (a && typeof a === 'object' && !Array.isArray(a)) { if ('gate' in a) return 'gate'; if ('once' in a) return 'once'; }
   const k = actionKind(a);
   if (k) return k;
   if (!a || typeof a !== 'object' || Array.isArray(a)) return null;
@@ -1796,7 +1806,8 @@ function schemeOutputs(n) {
     case 'event': case 'action': case 'wait': case 'gate': case 'once': return [{ key: 'next', label: 'дальше' }];
     case 'cond': return [{ key: 'then', label: 'да' }, { key: 'else', label: 'нет' }];
     case 'loop': return [{ key: 'body', label: 'каждый раз' }, { key: 'next', label: 'потом' }];
-    case 'sequence': case 'random': return (Array.isArray(n.outs) ? n.outs : []).map((_, i) => ({ key: 'out:' + i, label: (n.type === 'random' ? 'вариант ' : 'шаг ') + (i + 1) }));
+    case 'sequence': return [...(Array.isArray(n.outs) ? n.outs : []).map((_, i) => ({ key: 'out:' + i, label: 'шаг ' + (i + 1) })), { key: 'next', label: 'потом' }];
+    case 'random': return (Array.isArray(n.outs) ? n.outs : []).map((_, i) => ({ key: 'out:' + i, label: 'вариант ' + (i + 1) }));
     default: return [];
   }
 }
@@ -1837,10 +1848,15 @@ function zoneErr(z) {
   if (!isNum(z.radius) || z.radius <= 0 || z.radius > 512) return 'радиус зоны — число от 0 до 512';
   return null;
 }
+// место: [x,y,z] | 'player' | 'event' | 'entity' | 'actor:id' | имя из spawn.as | { of: место, offset:[dx,dy,dz] }
 function posErr(p, allowCtx) {
   if (isPos(p)) return null;
-  if (allowCtx && (p === 'player' || p === 'event')) return null;
-  return allowCtx ? 'место — три числа x y z, «player» (у игрока) или «event» (где случилось событие)' : 'место — три числа x y z';
+  if (allowCtx) {
+    if (p === 'player' || p === 'event' || p === 'entity') return null;
+    if (typeof p === 'string' && /^(actor:)?[a-zA-Z0-9_-]{1,48}$/.test(p)) return null;
+    if (p && typeof p === 'object' && !Array.isArray(p) && p.of !== undefined) { if (p.offset !== undefined && !isPos(p.offset)) return 'сдвиг — три числа dx dy dz'; return posErr(p.of, true); }
+  }
+  return allowCtx ? 'место — три числа x y z, «player» (у игрока), «event» (где случилось событие), «entity», actor:id или имя созданного' : 'место — три числа x y z';
 }
 function targetErr(s, R, allowTmp) {
   if (typeof s !== 'string' || !s) return 'не выбрано, кто';
@@ -1852,6 +1868,7 @@ function targetErr(s, R, allowTmp) {
 
 function checkSchemeCond(c, where, add, R, sel) {
   const k = schemeCondKind(c);
+  if (k === 'time') { if (!['day', 'night', 'dawn', 'dusk'].includes(c.time)) add(ERR, where + ' → условие «Время суток»: день, ночь, рассвет или закат', sel); return; }
   if (!SCHEME_COND_EXTRA.includes(k) && !['not', 'any', 'all'].includes(k)) { checkConds([c], where, add, { ...R, quests: R.questsMap, dialogs: R.dialogsMap }, sel); return; }
   const w = where + ' → условие «' + (SCHEME_COND_EXTRA_LABEL[k] || k) + '»';
   switch (k) {
@@ -1900,6 +1917,8 @@ function checkSchemeAction(a, where, add, R, sel, info) {
       else if (R.structures && !R.structures.includes(a.structure)) add(ERR, w + ': в библиотеке нет постройки «' + a.structure + '»', sel);
       pe(a.pos, true);
       if (a.rot !== undefined && !ROTS.includes(a.rot)) add(ERR, w + ': поворот — 0, 90, 180 или 270', sel);
+      if (a.mirror !== undefined && !MIRRORS.includes(a.mirror)) add(ERR, w + ': отражение — нет, по X или по Z', sel);
+      if (a.anchor !== undefined && !['corner', 'center'].includes(a.anchor)) add(ERR, w + ': точка — угол или центр низа', sel);
       return;
     case 'fx':
       if (!FX_KINDS.includes(a.fx)) { add(ERR, w + ': неизвестный эффект «' + a.fx + '»', sel); return; }
@@ -1910,7 +1929,8 @@ function checkSchemeAction(a, where, add, R, sel, info) {
       return;
     case 'message':
       if (!a.message || !String(a.message).trim()) add(ERR, w + ': пустой текст', sel);
-      if (a.to !== undefined && !['player', 'all'].includes(a.to)) add(ERR, w + ': кому — «игроку» или «всем»', sel);
+      if (a.to !== undefined && !MSG_TO.includes(a.to)) add(ERR, w + ': кому — игроку, всем или рядом', sel);
+      if (a.to === 'near' && a.radius !== undefined && (!isNum(a.radius) || a.radius <= 0)) add(ERR, w + ': радиус «рядом» — число больше нуля', sel);
       if (a.style !== undefined && !MSG_STYLES.includes(a.style)) add(ERR, w + ': вид — чат, заголовок или над хотбаром', sel);
       return;
     case 'tp': pe(a.tp, false); return;
@@ -1928,8 +1948,11 @@ function checkSchemeAction(a, where, add, R, sel, info) {
       if (typeof a.enable !== 'boolean') add(ERR, w + ': включить или выключить — да/нет', sel);
       return;
     case 'gate':
-      if (!info.nodes[a.gate] || info.nodes[a.gate].type !== 'gate') add(ERR, w + ': в этой схеме нет ворот «' + a.gate + '»', sel);
-      if (![true, false, 'toggle'].includes(a.open)) add(ERR, w + ': открыть, закрыть или переключить', sel);
+      if (!a.scheme && (!info.nodes[a.gate] || info.nodes[a.gate].type !== 'gate')) add(ERR, w + ': в этой схеме нет ворот «' + a.gate + '»', sel);
+      if (!GATE_SET.includes(a.set)) add(ERR, w + ': открыть, закрыть или переключить', sel);
+      return;
+    case 'once':
+      if (!a.scheme && (!info.nodes[a.once] || info.nodes[a.once].type !== 'once')) add(ERR, w + ': в этой схеме нет узла «Один раз» «' + a.once + '»', sel);
       return;
     default:
   }
@@ -1940,10 +1963,13 @@ function checkEvent(n, where, add, R, sel, info) {
   if (!EVENT_KINDS.includes(k)) { add(ERR, where + ': не выбрано, какое событие', sel); return; }
   const w = where + ' («' + EVENT_LABEL[k] + '»)';
   switch (k) {
-    case 'time':
-      if (!TIME_AT.includes(n.at)) add(ERR, w + ': когда — рассвет, день, закат, ночь или тик', sel);
-      if (n.at === 'tick' && (!Number.isInteger(n.tick) || n.tick < 0 || n.tick >= 24000)) add(ERR, w + ': тик суток — целое от 0 до 23999', sel);
+    case 'time': {
+      if (TIME_AT.includes(n.at)) return;
+      const t = timeAtTick(n.at);
+      if (t === null) add(ERR, w + ': когда — рассвет, день, полдень, закат, ночь, полночь или тик суток', sel);
+      else if (!Number.isInteger(t) || t < 0 || t >= 24000) add(ERR, w + ': тик суток — целое от 0 до 23999', sel);
       return;
+    }
     case 'timer': if (!Number.isInteger(n.every) || n.every < 1) add(ERR, w + ': «каждые» — целое число тиков от 1 (20 = 1 с)', sel); else if (n.every < 20) add(WARN, w + ': чаще раза в секунду — проверь, что так задумано', sel); return;
     case 'zone': {
       const e = zoneErr(n); if (e) add(ERR, w + ': ' + e, sel);
@@ -2046,6 +2072,7 @@ function validateScheme(d, ctx) {
         const outs = Array.isArray(n.outs) ? n.outs : [];
         if (!outs.filter(Boolean).length) add(ERR, where + ': нет ни одного выхода — протяни стрелки из «+»', sel);
         outs.forEach((t, i) => link(t, where + ', выход ' + (i + 1), sel, 'warn'));
+        if (n.type === 'sequence') link(n.next, where + ' → «потом»', sel, null);
         if (n.type === 'random') {
           const ws = Array.isArray(n.weights) ? n.weights : [];
           if (ws.length && ws.length !== outs.length) add(WARN, where + ': весов ' + ws.length + ', а выходов ' + outs.length + ' — недостающие считаются 1', sel);
@@ -2060,7 +2087,7 @@ function validateScheme(d, ctx) {
         link(n.next, where + ' → «потом»', sel, null);
         break;
       case 'gate': if (n.open !== undefined && typeof n.open !== 'boolean') add(ERR, where + ': «открыты в начале» — да/нет', sel); link(n.next, where, sel, 'warn'); break;
-      case 'once': link(n.next, where, sel, 'warn'); break;
+      case 'once': if (n.per !== undefined && !['world', 'player'].includes(n.per)) add(ERR, where + ': «один раз» — для всего мира или для каждого игрока', sel); link(n.next, where, sel, 'warn'); break;
       case 'comment': if (n.text && String(n.text).length > 2000) add(WARN, where + ': очень длинный комментарий', sel); break;
       default: add(ERR, 'Узел «' + id + '»: неизвестный вид «' + n.type + '»', sel);
     }
@@ -2148,8 +2175,8 @@ function normalizeScheme(d) {
   return { v: 1, id: s.id, title: s.title || s.id, enabled: s.enabled !== false, nodes };
 }
 
-return { SCHEME_NODE_TYPES, SCHEME_NODE_LABEL, SCHEME_NODE_CAT, EVENT_KINDS, EVENT_LABEL, TIME_AT, ZONE_ON, QUEST_ON, ITEM_ON, BLOCK_ON, WHO_ZONE, SCHEME_COND_EXTRA, SCHEME_COND_EXTRA_LABEL, SCHEME_ACTION_EXTRA, SCHEME_ACTION_EXTRA_LABEL, FX_KINDS, MSG_STYLES, WEATHER_KINDS, ROTS, SCHEME_LIMITS, schemeCondKind, schemeActionKind, schemeOutputs, schemeGetOut, schemeSetOut, schemeHasInput, validateScheme, schemeSignals, defaultScheme, normalizeScheme };
+return { SCHEME_NODE_TYPES, SCHEME_NODE_LABEL, SCHEME_NODE_CAT, EVENT_KINDS, EVENT_LABEL, TIME_AT, timeAtTick, ZONE_ON, QUEST_ON, ITEM_ON, BLOCK_ON, WHO_ZONE, SCHEME_COND_EXTRA, SCHEME_COND_EXTRA_LABEL, SCHEME_ACTION_EXTRA, SCHEME_ACTION_EXTRA_LABEL, FX_KINDS, MSG_STYLES, WEATHER_KINDS, ROTS, MIRRORS, GATE_SET, MSG_TO, SCHEME_LIMITS, schemeCondKind, schemeActionKind, schemeOutputs, schemeGetOut, schemeSetOut, schemeHasInput, validateScheme, schemeSignals, defaultScheme, normalizeScheme };
 })();
-const { SCHEME_NODE_TYPES, SCHEME_NODE_LABEL, SCHEME_NODE_CAT, EVENT_KINDS, EVENT_LABEL, TIME_AT, ZONE_ON, QUEST_ON, ITEM_ON, BLOCK_ON, WHO_ZONE, SCHEME_COND_EXTRA, SCHEME_COND_EXTRA_LABEL, SCHEME_ACTION_EXTRA, SCHEME_ACTION_EXTRA_LABEL, FX_KINDS, MSG_STYLES, WEATHER_KINDS, ROTS, SCHEME_LIMITS, schemeCondKind, schemeActionKind, schemeOutputs, schemeGetOut, schemeSetOut, schemeHasInput, validateScheme, schemeSignals, defaultScheme, normalizeScheme } = __scheme;
+const { SCHEME_NODE_TYPES, SCHEME_NODE_LABEL, SCHEME_NODE_CAT, EVENT_KINDS, EVENT_LABEL, TIME_AT, timeAtTick, ZONE_ON, QUEST_ON, ITEM_ON, BLOCK_ON, WHO_ZONE, SCHEME_COND_EXTRA, SCHEME_COND_EXTRA_LABEL, SCHEME_ACTION_EXTRA, SCHEME_ACTION_EXTRA_LABEL, FX_KINDS, MSG_STYLES, WEATHER_KINDS, ROTS, MIRRORS, GATE_SET, MSG_TO, SCHEME_LIMITS, schemeCondKind, schemeActionKind, schemeOutputs, schemeGetOut, schemeSetOut, schemeHasInput, validateScheme, schemeSignals, defaultScheme, normalizeScheme } = __scheme;
 
-module.exports = { CLONER_MODES, CLONER_MODE_LABEL, EFFECTOR_KINDS, EFFECTOR_LABEL, MAX_CLONES, MAX_SEND, hash01, noise2, smoothPath, samplePath, clonerLayout, applyEffector, rotateBlockState, quarter, clonerPlacements, placementsBox, OBJ_TYPES, OBJ_LABEL, INTERPS, INTERP_LABEL, CHANNELS, STEP_CHANNELS, CHANNEL_LABEL, defaultProps, makeObject, uniqueObjId, chanGet, chanSet, isStepChannel, keySlopes, evalKeys, propsAt, isAnimated, keyAt, setKey, removeKey, setChannel, moveKeys, allKeyTimes, objById, childrenOf, ancestors, isDescendant, isActive, parentOffset, worldPos, stageAt, activeCamera, cameraPose, hasObjects, toObjectScene, compileCamera, lightObjects, compileSounds, SCENE_CLONE_MAX, structurePlacements, compileCloners, clonerInputs, clonerOutput, compileScene, sceneForDisk, gameObject, objectsSnapshot, posesAt, actorPosAt, validateObjects, ERR, WARN, TRACK_KINDS, ACTOR_KINDS, EASES, WEATHERS, END_MODES, SUB_MAX, VERBS, TRACK_LABEL, VERB_LABEL, FIELD_LABEL, isResId, isSceneId, isActorId, isPos, isNum, trackKeyOf, itemsOfTrack, verbOf, isTarget, validateScene, validateProject, cleanScene, cleanProject, DEFAULT_UI, defaultProject, defaultScene, normalizeScene, normalizeProject, VAR_TYPES, OPS, NODE_TYPES, NODE_LABEL, TRIGGERS, COND_KINDS, COND_LABEL, ACTION_KINDS, ACTION_LABEL, QUEST_STATES, QUEST_OPS, GOAL_TYPES, GOAL_LABEL, VAR_SCOPES, TEXT_MAX, isDocId, isVarName, condKind, actionKind, nodeOutputs, getOut, setOut, isEndRef, checkSpeaker, checkConds, checkActions, validateDialog, describeGoal, validateQuest, validateVars, varDefault, defaultDialog, defaultQuest, cleanDoc, normalizeDialog, normalizeQuest, SCHEME_NODE_TYPES, SCHEME_NODE_LABEL, SCHEME_NODE_CAT, EVENT_KINDS, EVENT_LABEL, TIME_AT, ZONE_ON, QUEST_ON, ITEM_ON, BLOCK_ON, WHO_ZONE, SCHEME_COND_EXTRA, SCHEME_COND_EXTRA_LABEL, SCHEME_ACTION_EXTRA, SCHEME_ACTION_EXTRA_LABEL, FX_KINDS, MSG_STYLES, WEATHER_KINDS, ROTS, SCHEME_LIMITS, schemeCondKind, schemeActionKind, schemeOutputs, schemeGetOut, schemeSetOut, schemeHasInput, validateScheme, schemeSignals, defaultScheme, normalizeScheme };
+module.exports = { CLONER_MODES, CLONER_MODE_LABEL, EFFECTOR_KINDS, EFFECTOR_LABEL, MAX_CLONES, MAX_SEND, hash01, noise2, smoothPath, samplePath, clonerLayout, applyEffector, rotateBlockState, quarter, clonerPlacements, placementsBox, OBJ_TYPES, OBJ_LABEL, INTERPS, INTERP_LABEL, CHANNELS, STEP_CHANNELS, CHANNEL_LABEL, defaultProps, makeObject, uniqueObjId, chanGet, chanSet, isStepChannel, keySlopes, evalKeys, propsAt, isAnimated, keyAt, setKey, removeKey, setChannel, moveKeys, allKeyTimes, objById, childrenOf, ancestors, isDescendant, isActive, parentOffset, worldPos, stageAt, activeCamera, cameraPose, hasObjects, toObjectScene, compileCamera, lightObjects, compileSounds, SCENE_CLONE_MAX, structurePlacements, compileCloners, clonerInputs, clonerOutput, compileScene, sceneForDisk, gameObject, objectsSnapshot, posesAt, actorPosAt, validateObjects, ERR, WARN, TRACK_KINDS, ACTOR_KINDS, EASES, WEATHERS, END_MODES, SUB_MAX, VERBS, TRACK_LABEL, VERB_LABEL, FIELD_LABEL, isResId, isSceneId, isActorId, isPos, isNum, trackKeyOf, itemsOfTrack, verbOf, isTarget, validateScene, validateProject, cleanScene, cleanProject, DEFAULT_UI, defaultProject, defaultScene, normalizeScene, normalizeProject, VAR_TYPES, OPS, NODE_TYPES, NODE_LABEL, TRIGGERS, COND_KINDS, COND_LABEL, ACTION_KINDS, ACTION_LABEL, QUEST_STATES, QUEST_OPS, GOAL_TYPES, GOAL_LABEL, VAR_SCOPES, TEXT_MAX, isDocId, isVarName, condKind, actionKind, nodeOutputs, getOut, setOut, isEndRef, checkSpeaker, checkConds, checkActions, validateDialog, describeGoal, validateQuest, validateVars, varDefault, defaultDialog, defaultQuest, cleanDoc, normalizeDialog, normalizeQuest, SCHEME_NODE_TYPES, SCHEME_NODE_LABEL, SCHEME_NODE_CAT, EVENT_KINDS, EVENT_LABEL, TIME_AT, timeAtTick, ZONE_ON, QUEST_ON, ITEM_ON, BLOCK_ON, WHO_ZONE, SCHEME_COND_EXTRA, SCHEME_COND_EXTRA_LABEL, SCHEME_ACTION_EXTRA, SCHEME_ACTION_EXTRA_LABEL, FX_KINDS, MSG_STYLES, WEATHER_KINDS, ROTS, MIRRORS, GATE_SET, MSG_TO, SCHEME_LIMITS, schemeCondKind, schemeActionKind, schemeOutputs, schemeGetOut, schemeSetOut, schemeHasInput, validateScheme, schemeSignals, defaultScheme, normalizeScheme };

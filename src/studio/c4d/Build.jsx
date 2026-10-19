@@ -126,6 +126,7 @@ export function BuildDock({ height, timeline }) {
   const { hp } = core;
   const [tab, setTab] = useState(() => lsGet('bDock', 'sel'));
   const setT = (t) => { setTab(t); lsSet('bDock', t); };
+  useEffect(() => { const f = (e) => e.detail && setTab(e.detail); window.addEventListener('c4-dock', f); return () => window.removeEventListener('c4-dock', f); }, []);
   return (
     <div className="c4-pane bd-dock" style={{ height }}>
       <div className="c4-ptabs">
@@ -168,6 +169,7 @@ function Corner({ label, value, onChange, hint }) {
   );
 }
 
+const FILL_SHAPES = [['solid', 'Сплошь', 'Заполнить всю рамку.'], ['hollow', 'Коробка', 'Оболочка блоком, внутри воздух.'], ['walls', 'Стены', 'Только боковые стены.'], ['outline', 'Рёбра', 'Только рёбра рамки (каркас).']];
 function SelectionPanel() {
   const core = useStudio();
   const bc = useBuild();
@@ -175,58 +177,66 @@ function SelectionPanel() {
   const ok = Array.isArray(s.from) && Array.isArray(s.to);
   const size = ok ? [0, 1, 2].map((i) => Math.abs(s.to[i] - s.from[i]) + 1) : null;
   const vol = size ? size[0] * size[1] * size[2] : 0;
-  const [tpl, setTpl] = useState({ name: '', ents: false });
+  const [tpl, setTpl] = useState({ name: '', ents: false, air: true });
   const [rot, setRot] = useState(90);
+  const [shape, setShape] = useState('solid');
+  const [target, setTarget] = useState('box');
+  const live = core.link.connected;
   const capture = async () => {
     const name = tpl.name.trim() || 'Постройка';
     const id = uniqueId(slug(name, 'build'), core.structures.map((x) => x.id));
-    const r = await core.regionOp('capture', { id, name, includeEntities: !!tpl.ents });
+    const r = await core.regionOp('capture', { id, name, includeEntities: !!tpl.ents, ...(tpl.air ? {} : { air: false }) });
     if (r) { core.toast('Сохраняю «' + name + '» (' + id + ') — игра пришлёт ответ', 'ok', 3000); setTpl({ ...tpl, name: '' }); }
   };
   const big = vol > 200000;
+  const boxHint = ok ? '' : ' Рамки в Студии нет — игра возьмёт свою рамку (B в Камере Студии).';
   return (
     <div className="bd-body">
       <div className="bd-col" style={{ width: 340 }}>
-        <div className="bd-h">Область <span className="dim">{ok ? size.join(' × ') + ' = ' + vol.toLocaleString('ru-RU') + ' блоков' : 'не выделена'}</span></div>
-        <Corner label="Угол 1" value={s.from} onChange={(p) => setBuildSel({ ...s, from: p })} hint="Первый угол области. В игре: Камера Студии → Shift+ЛКМ по блоку (и Shift+ЛКМ по второму углу) — углы придут сюда сами." />
-        <Corner label="Угол 2" value={s.to} onChange={(p) => setBuildSel({ ...s, to: p })} hint="Противоположный угол области." />
+        <div className="bd-h">Рамка <span className="dim">{ok ? size.join(' × ') + ' = ' + vol.toLocaleString('ru-RU') + ' блоков' : 'не задана — берётся из игры'}</span></div>
+        <Corner label="Угол 1" value={s.from} onChange={(p) => setBuildSel({ ...s, from: p })} hint="Первый угол рамки. В игре: Камера Студии → B (или Shift+ЛКМ) и тяни от блока до блока — углы придут сюда сами." />
+        <Corner label="Угол 2" value={s.to} onChange={(p) => setBuildSel({ ...s, to: p })} hint="Противоположный угол рамки." />
         <div className="c4-btnrow">
-          <button className="c4-btn sm" disabled={!ok || !core.link.connected} onClick={() => call('studio:send', { t: 'selection', from: s.from, to: s.to }).catch(() => {})} {...hp('Показать рамку выделения в игре.')}><I name="frame" size={12} /> Показать в игре</button>
-          <button className="c4-btn sm" disabled={!ok} onClick={() => setBuildSel({ from: null, to: null })} {...hp('Снять выделение (и рамку в игре).')}><I name="close" size={12} /> Снять</button>
+          <button className="c4-btn sm" disabled={!live} onClick={() => call('studio:send', { t: 'getBox' }).catch(() => {})} {...hp('Взять рамку, выделенную в игре.')}><I name="look" size={12} /> Из игры</button>
+          <button className="c4-btn sm" disabled={!ok} onClick={() => setBuildSel({ from: null, to: null })} {...hp('Снять рамку (и в игре).')}><I name="close" size={12} /> Снять</button>
         </div>
-        <div className="c4-ahint">В игре: <b>Shift+ЛКМ</b> — угол 1, ещё раз — угол 2 (в Камере Студии). Рамку видно сквозь стены.</div>
+        <div className="c4-ahint">В игре: <b>B</b> — «Рамка» (ЛКМ тянуть), <b>F</b> — заполнить, <b>Del</b> — очистить, <b>Ctrl+C / X / V</b> — копия. Рамка оранжевая, видна сквозь стены.</div>
       </div>
-      <div className="bd-col" style={{ width: 300 }}>
+      <div className="bd-col" style={{ width: 340 }}>
         <div className="bd-h">Блоками</div>
         <ARow label="Чем" hint="Каким блоком заполнять или на что заменять. Щелчок в палитре слева или перетащи блок сюда."><BlockField value={bc.block} onChange={bc.setBlock} /></ARow>
-        <ARow label="Что заменить" hint="Для «Заменить»: какой блок искать в области (пусто — все, кроме воздуха). Shift+щелчок в палитре."><BlockField value={bc.what} onChange={bc.setWhat} placeholder="все, кроме воздуха" /></ARow>
+        <ARow label="Что заменить" hint="Для «Заменить» и «Очистить»: какой блок искать — id, id[свойства], #тег, * (всё, кроме воздуха), !… (кроме). Пусто — всё, кроме воздуха. Shift+щелчок в палитре."><BlockField value={bc.what} onChange={bc.setWhat} placeholder="всё, кроме воздуха" /></ARow>
+        <ARow label="Форма" hint={FILL_SHAPES.map((x) => x[1] + ' — ' + x[2]).join(' ')}><div className="bd-seg sm">{FILL_SHAPES.map(([v, l, h]) => <button key={v} className={shape === v ? 'on' : ''} title={h} onClick={() => setShape(v)}>{l}</button>)}</div></ARow>
         <div className="c4-btnrow">
-          <button className="c4-btn sm prim" disabled={!ok || !core.link.connected} onClick={() => core.regionOp('fill', { block: bc.block })} {...hp('Заполнить всю область блоком «Чем» (можно отменить).')}><I name="block" size={12} /> Заполнить</button>
-          <button className="c4-btn sm" disabled={!ok || !core.link.connected} onClick={() => core.regionOp('replace', { block: bc.block, what: bc.what || null })} {...hp('Заменить в области «Что заменить» на «Чем» (можно отменить).')}><I name="loop" size={12} /> Заменить</button>
-          <button className="c4-btn sm danger" disabled={!ok || !core.link.connected} onClick={() => core.regionOp('clear')} {...hp('Очистить область — поставить воздух (можно отменить).')}><I name="trash" size={12} /> Очистить</button>
+          <button className="c4-btn sm prim" disabled={!live} onClick={() => core.regionOp('fill', { block: bc.block, shape })} {...hp('Заполнить рамку блоком «Чем» выбранной формой (можно отменить).' + boxHint)}><I name="block" size={12} /> Заполнить</button>
+          <button className="c4-btn sm" disabled={!live} onClick={() => core.regionOp('replace', { block: bc.block, ...(bc.what ? { find: bc.what } : {}) })} {...hp('Заменить в рамке «Что заменить» на «Чем» (можно отменить).' + boxHint)}><I name="loop" size={12} /> Заменить</button>
+          <button className="c4-btn sm danger" disabled={!live} onClick={() => core.regionOp('clear', bc.what ? { find: bc.what } : {})} {...hp('Очистить рамку — воздух (только «Что заменить», если задано). Можно отменить.' + boxHint)}><I name="trash" size={12} /> Очистить</button>
         </div>
-        {big && <div className="c4-iss w">Большая область — игра будет ставить блоки по частям, несколько секунд.</div>}
+        {big && <div className="c4-iss w">Большая рамка — игра ставит блоки по частям, несколько секунд.</div>}
       </div>
-      <div className="bd-col" style={{ width: 290 }}>
-        <div className="bd-h">Копия и поворот</div>
+      <div className="bd-col" style={{ width: 300 }}>
+        <div className="bd-h">Копия и поворот <span className="dim">{core.clipboard && core.clipboard.size ? 'в буфере ' + core.clipboard.size.join('×') : 'буфер пуст'}</span></div>
         <div className="c4-btnrow">
-          <button className="c4-btn sm" disabled={!ok || !core.link.connected} onClick={() => core.regionOp('copy')} {...hp('Запомнить область (временный шаблон в игре).')}><I name="copy" size={12} /> Копировать</button>
-          <button className="c4-btn sm" disabled={!core.link.connected} onClick={() => core.regionOp('paste', { at: null, rot: 0 })} {...hp('Вставить скопированное туда, куда смотришь в игре (призрак видно до щелчка). Можно отменить.')}><I name="template" size={12} /> Вставить</button>
+          <button className="c4-btn sm" disabled={!live} onClick={() => core.regionOp('copy', {})} {...hp('Скопировать рамку в буфер (с содержимым сундуков).')}><I name="copy" size={12} /> Копировать</button>
+          <button className="c4-btn sm" disabled={!live} onClick={() => core.regionOp('copy', { cut: true })} {...hp('Вырезать: в буфер, а рамку очистить (можно отменить).')}><I name="trash" size={12} /> Вырезать</button>
+          <button className="c4-btn sm" disabled={!live} onClick={() => core.regionOp('paste', {})} {...hp('Вставить буфер под прицелом в игре (с поворотом и отражением буфера). Можно отменить.')}><I name="template" size={12} /> Вставить</button>
         </div>
-        <ARow label="Повернуть" hint="Повернуть содержимое области вокруг её центра (вертикальная ось).">
+        <ARow label="Что крутить" hint="Рамку — блоки на месте (с отменой); буфер — копию перед вставкой."><div className="bd-seg sm"><button className={target === 'box' ? 'on' : ''} onClick={() => setTarget('box')}>рамку</button><button className={target === 'clipboard' ? 'on' : ''} onClick={() => setTarget('clipboard')}>буфер</button></div></ARow>
+        <ARow label="Повернуть" hint="Поворот вокруг вертикали (для рамки — вокруг её центра).">
           <select className="c4-text" value={rot} onChange={(e) => setRot(Number(e.target.value))}>{[90, 180, 270].map((r) => <option key={r} value={r}>{r}°</option>)}</select>
-          <button className="c4-btn sm" disabled={!ok || !core.link.connected} onClick={() => core.regionOp('rotate', { rot })}><I name="rotate" size={12} /></button>
+          <button className="c4-btn sm" disabled={!live} onClick={() => core.regionOp('rotate', { deg: rot, target })}><I name="rotate" size={12} /></button>
         </ARow>
-        <ARow label="Отразить" hint="Отразить содержимое области зеркально.">
-          <button className="c4-btn sm" disabled={!ok || !core.link.connected} onClick={() => core.regionOp('mirror', { axis: 'x' })}>по X</button>
-          <button className="c4-btn sm" disabled={!ok || !core.link.connected} onClick={() => core.regionOp('mirror', { axis: 'z' })}>по Z</button>
+        <ARow label="Отразить" hint="Зеркально по оси.">
+          <button className="c4-btn sm" disabled={!live} onClick={() => core.regionOp('mirror', { axis: 'x', target })}>по X</button>
+          <button className="c4-btn sm" disabled={!live} onClick={() => core.regionOp('mirror', { axis: 'z', target })}>по Z</button>
         </ARow>
       </div>
       <div className="bd-col grow">
         <div className="bd-h">Сохранить как шаблон</div>
         <ARow label="Название" hint="Как назвать постройку в библиотеке (id файла придумается сам латиницей)."><input className="c4-text" value={tpl.name} placeholder="Например: Хижина рыбака" onChange={(e) => setTpl({ ...tpl, name: e.target.value })} onKeyDown={(e) => e.stopPropagation()} /></ARow>
         <ARow label="С мобами" hint="Сохранить вместе с сущностями внутри (рамки, стойки, животные)."><span className={'c4-check' + (tpl.ents ? ' on' : '')} onClick={() => setTpl({ ...tpl, ents: !tpl.ents })}>{tpl.ents ? '✓' : ''}</span></ARow>
-        <div className="c4-btnrow"><button className="c4-btn sm prim" disabled={!ok || !core.link.connected} onClick={capture} {...hp('Игра сохранит область в studio/structures/<id>.nbt (обычный шаблон Minecraft) + описание и картинку. Появится во вкладке «Постройки».')}><I name="build" size={12} /> Сохранить шаблон</button>
+        <ARow label="С воздухом" hint="Воздух тоже часть постройки (при установке вычистит место). Выключи — на месте воздуха останется то, что было."><span className={'c4-check' + (tpl.air ? ' on' : '')} onClick={() => setTpl({ ...tpl, air: !tpl.air })}>{tpl.air ? '✓' : ''}</span></ARow>
+        <div className="c4-btnrow"><button className="c4-btn sm prim" disabled={!live} onClick={capture} {...hp('Игра сохранит рамку в studio/structures/<id>.nbt (обычный шаблон Minecraft) + описание с видом сверху. Появится во вкладке «Постройки».' + boxHint)}><I name="build" size={12} /> Сохранить шаблон</button>
           <button className="c4-btn sm" onClick={() => bc.setVox(true)} {...hp('Сделать постройку из 3D-модели (OBJ, glTF, GLB): модель превратится в блоки.')}><I name="block" size={12} /> Из 3D-модели…</button></div>
         <div className="c4-ahint">Шаблоны уходят игрокам при «Собрать» (config/kokkstory/studio/structures).</div>
       </div>
@@ -240,38 +250,41 @@ function BrushPanel() {
   const core = useStudio();
   const bc = useBuild();
   const { hp } = core;
-  const [b, setB] = useState(() => lsGet('brush', { shape: 'sphere', size: 3, mode: 'place', mask: '' }));
-  const set = (p) => { const n = { ...b, ...p }; setB(n); lsSet('brush', n); if (core.brushOn) send(n, true); };
-  const send = (n, on) => {
-    const msg = on ? { t: 'brush', on: true, shape: n.shape, size: n.size, block: bc.block, mode: n.mode } : { t: 'brush', on: false };
-    if (on && n.mask) msg.mask = n.mask;
+  const [b, setB] = useState(() => lsGet('brush', { shape: 'sphere', size: 5, mode: 'place', mask: '' }));
+  const set = (p) => { const n = { ...b, ...p }; setB(n); lsSet('brush', n); if (core.brushOn) send(n, true, false); };
+  // {t:'brush', shape, size (диаметр), block, mode, mask?, activate?} — игра включает Камеру Студии с кистью; выключаем инструментом «Выбор»
+  const send = (n, on, activate) => {
+    if (!on) { call('studio:send', { t: 'tool', tool: 'select' }).catch(() => {}); return; }
+    const msg = { t: 'brush', shape: n.shape, size: n.size, block: bc.block, mode: n.mode };
+    if (n.mask) msg.mask = n.mask;
+    if (activate === false) msg.activate = false;
     call('studio:send', msg).catch((e) => core.toast(e.message, 'error'));
   };
-  useEffect(() => { if (core.brushOn) send(b, true); }, [bc.block]); // eslint-disable-line
+  useEffect(() => { if (core.brushOn) send(b, true, false); }, [bc.block]); // eslint-disable-line
+  useEffect(() => { if (core.brushState && core.brushState.size && core.brushState.size !== b.size) setB((x) => ({ ...x, size: core.brushState.size })); }, [core.brushState]); // eslint-disable-line
   const toggle = () => {
     if (!core.link.connected) { core.toast('Нет связи с игрой', 'warn'); return; }
     const on = !core.brushOn;
     core.setBrushOn(on);
-    send(b, on);
-    if (on && !core.game.editorCam) core.gameCmd.editorCam(true);
+    send(b, on, true);
   };
   return (
     <div className="bd-body">
       <div className="bd-col" style={{ width: 330 }}>
         <div className="bd-h">Кисть <span className="dim">{core.brushOn ? 'рисует в игре' : 'выключена'}</span></div>
         <div className="bd-seg">{SHAPES.map(([v, l]) => <button key={v} className={b.shape === v ? 'on' : ''} onClick={() => set({ shape: v })} {...hp('Форма кисти: ' + l.toLowerCase() + '.')}>{l}</button>)}</div>
-        <ARow label="Размер" hint="Радиус кисти в блоках (для куба — половина стороны). В игре: Ctrl+колесо."><Num value={b.size} int min={1} max={32} onChange={(v) => set({ size: v })} unit="бл" /></ARow>
+        <ARow label="Диаметр" hint="Размер кисти в блоках (1–64). В игре: Ctrl+колесо."><Num value={b.size} int min={1} max={64} onChange={(v) => set({ size: v })} unit="бл" /></ARow>
         <div className="bd-seg">{MODES.map(([v, l, h]) => <button key={v} className={b.mode === v ? 'on' : ''} onClick={() => set({ mode: v })} {...hp(l + ': ' + h)}>{l}</button>)}</div>
         <div className="c4-btnrow"><button className={'c4-btn' + (core.brushOn ? ' danger' : ' prim')} disabled={!core.link.connected} onClick={toggle} {...hp(core.brushOn ? 'Выключить кисть в игре.' : 'Включить кисть: в Камере Студии ЛКМ рисует, Ctrl+колесо — размер. Каждый мазок можно отменить.')}><I name="brush" size={13} /> {core.brushOn ? 'Выключить кисть' : 'Рисовать в игре'}</button></div>
       </div>
       <div className="bd-col" style={{ width: 330 }}>
         <div className="bd-h">Блоки кисти</div>
         <ARow label="Чем" hint="Каким блоком рисовать — щелчок в палитре слева или перетащи сюда."><BlockField value={bc.block} onChange={bc.setBlock} /></ARow>
-        <ARow label="Маска" hint="Необязательно: кисть трогает только этот блок (например, рисовать мхом только по камню). Пусто — всё."><BlockField value={b.mask} onChange={(v) => set({ mask: v })} placeholder="без маски" /></ARow>
+        <ARow label="Маска" hint="Необязательно: кисть трогает только подходящие блоки — id, #тег, !… (кроме). Например, рисовать мхом только по камню. Пусто — всё."><BlockField value={b.mask} onChange={(v) => set({ mask: v })} placeholder="без маски" /></ARow>
       </div>
       <div className="bd-col grow">
         <div className="bd-h">Как рисовать</div>
-        <div className="c4-ahint" style={{ lineHeight: 1.6 }}>1. Включи кисть — игра перейдёт в Камеру Студии.<br />2. Призрак кисти виден под прицелом. <b>ЛКМ</b> — мазок, можно вести мышью.<br />3. <b>Ctrl+колесо</b> — размер, <b>Esc</b> — выйти.<br />Каждый мазок попадает в «Отменить в мире» (справа сверху).</div>
+        <div className="c4-ahint" style={{ lineHeight: 1.6 }}>1. Включи кисть — игра перейдёт в Камеру Студии (там же клавиша <b>N</b>).<br />2. Контур кисти под прицелом: зелёный — ставит, жёлтый — заменяет, красный — стирает. <b>ЛКМ</b> — мазок.<br />3. <b>Ctrl+колесо</b> — размер, <b>Esc</b> — выйти.<br />Каждый мазок (от нажатия до отпускания) — одна отмена в «Отменить в мире».</div>
       </div>
     </div>
   );
@@ -301,10 +314,10 @@ export function StructLibrary() {
     core.edit((sc) => { const r = addStructure(sc, s, pos); id = r.id; return r.scene; });
     if (id) core.setSel({ objs: [id] });
   };
-  const ghost = async (s) => { const pos = await at(); call('studio:ghost', { id: 'lib_' + s.id, placements: [{ pos, rot: 0, template: s.id }] }).then(() => core.toast('Призрак «' + s.name + '» в игре у прицела', 'ok', 2000)).catch((e) => core.toast(e.message, 'error')); };
+  const ghost = async (s) => { const pos = await at(); call('studio:ghost', { id: 'lib_' + s.id, placements: [{ pos, rot: 0, structure: s.id, anchor: 'center' }] }).then(() => core.toast('Призрак «' + s.name + '» в игре у прицела', 'ok', 2000)).catch((e) => core.toast(e.message, 'error')); };
   const bake = async (s) => {
     const pos = await at();
-    try { const r = await call('studio:bake', { id: 'lib_' + s.id, placements: [{ pos, rot: 0, template: s.id }] }); core.noteBuildOp({ undoId: r.undoId, op: 'bake', n: s.blocks }); core.toast('Ставлю «' + s.name + '» в мир (можно отменить)', 'ok', 2500); } catch (e) { core.toast(e.message, 'error'); }
+    try { await call('studio:send', { t: 'structure', id: s.id, pos, rot: 0, anchor: 'center' }); call('studio:ghost', { id: 'lib_' + s.id, placements: [] }).catch(() => {}); core.toast('Ставлю «' + s.name + '» в мир (можно отменить)', 'ok', 2500); } catch (e) { core.toast(e.message, 'error'); }
   };
   const cur = list.find((x) => x.id === sel);
   return (
@@ -335,7 +348,7 @@ export function StructLibrary() {
           <div key={s.id} className={'bd-card' + (sel === s.id ? ' on' : '')} onClick={() => setSel(s.id)} onDoubleClick={() => toScene(s)} draggable
             onDragStart={(e) => { e.dataTransfer.setData('text/c4struct', s.id); }}
             onMouseEnter={() => core.setHint((s.name || s.id) + ' — ' + (s.size ? s.size.join('×') + ', ' : '') + (s.blocks != null ? s.blocks + ' блоков. ' : '') + 'Двойной щелчок — в сцену. ' + (s.source === 'voxel' ? 'Из 3D-модели.' : s.source === 'capture' ? 'Снято в игре.' : ''))}>
-            <div className="th">{pngs[s.id] ? <img src={pngs[s.id]} alt="" draggable={false} /> : <I name="template" size={30} color="#666" />}</div>
+            <div className="th">{pngs[s.id] || topUrl(s) ? <img src={pngs[s.id] || topUrl(s)} alt="" draggable={false} className={pngs[s.id] ? '' : 'px'} /> : <I name="template" size={30} color="#666" />}</div>
             <div className="nm">{s.name || s.id}</div>
             <div className="sz dim">{(s.size || []).join('×') || s.id}</div>
           </div>
@@ -357,4 +370,33 @@ export function addStructure(scene, s, pos) {
   for (let k = 2; names.has(name); k++) name = (s.name || s.id) + ' ' + k;
   const o = { id, type: 'structure', name, parent: null, enabled: true, visible: true, anim: {}, props: { pos: pos.slice(), structure: s.id, rot: 0, mirror: false, preview: true, appearAt: null, removeAtEnd: true } };
   return { scene: { ...scene, objects: [...(scene.objects || []), o] }, id };
+}
+
+// вид сверху из описания постройки (игра пишет preview:{ w, d, y:[высота], rgb:"rrggbb…" по строкам z, внутри по x}) → картинка
+const topCache = new Map();
+export function topUrl(meta) {
+  const p = meta && meta.preview;
+  if (!p || !(p.w > 0) || !(p.d > 0) || typeof p.rgb !== 'string' || p.rgb.length < p.w * p.d * 6) return null;
+  const key = meta.id + ':' + (meta.mtime || '') + ':' + p.rgb.length;
+  if (topCache.has(key)) return topCache.get(key);
+  let url = null;
+  try {
+    const c = document.createElement('canvas');
+    c.width = p.w; c.height = p.d;
+    const g = c.getContext('2d');
+    const img = g.createImageData(p.w, p.d);
+    const ys = Array.isArray(p.y) ? p.y : null;
+    const lo = ys ? Math.min(...ys.filter((v) => v >= 0)) : 0, hi = ys ? Math.max(...ys) : 1;
+    for (let i = 0; i < p.w * p.d; i++) {
+      const top = Array.isArray(p.top) ? p.top[i] : 0;
+      const h = p.rgb.substr(i * 6, 6);
+      const sh = ys && hi > lo ? 0.7 + 0.3 * ((ys[i] - lo) / (hi - lo)) : 1;
+      img.data[i * 4] = parseInt(h.slice(0, 2), 16) * sh; img.data[i * 4 + 1] = parseInt(h.slice(2, 4), 16) * sh; img.data[i * 4 + 2] = parseInt(h.slice(4, 6), 16) * sh;
+      img.data[i * 4 + 3] = top === -1 ? 0 : 255;
+    }
+    g.putImageData(img, 0, 0);
+    url = c.toDataURL('image/png');
+  } catch (_) {}
+  topCache.set(key, url);
+  return url;
 }
