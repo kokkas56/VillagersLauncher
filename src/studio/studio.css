@@ -446,3 +446,14 @@ form.sim-row { grid-template-columns: minmax(0, 1fr) auto; }
 .vt-name { display: flex; flex-direction: column; gap: 3px; }
 .vt-note.input.sm { font-size: 11px; padding: 2px 7px; color: var(--muted); background: transparent; border-color: transparent; }
 .vt-note.input.sm:hover, .vt-note.input.sm:focus { border-color: var(--line); color: var(--text); }
+
+/* вкладка «Студия»: кнопка «Открыть Студию» */
+.st-landing { flex: 1; display: grid; place-items: center; overflow: auto; }
+.st-landing-card { width: 560px; max-width: 94%; display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; padding: 30px 32px; }
+.st-landing-card h2 { margin: 0; font-size: 22px; }
+.st-landing-card p { margin: 0; line-height: 1.55; }
+.st-landing-icon { width: 64px; height: 64px; border-radius: 18px; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, #6b7cff, #3442b8); box-shadow: 0 10px 30px rgba(80, 100, 240, 0.35); }
+.st-landing-list { text-align: left; margin: 0; padding-left: 18px; line-height: 1.6; }
+.st-classic-wrap { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.st-classic-wrap > .studio { flex: 1; min-height: 0; }
+.st-classic-bar { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); }

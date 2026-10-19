@@ -26,7 +26,7 @@ export const VERBS = {
     particles: { need: ['name', 'pos'] }, story_fx: { need: ['name'] }, title: { need: ['text'] }
   },
   sound: { sound: { need: ['id'] }, music: { need: ['id'] }, music_fade: { need: [] } },
-  world: { time: { need: ['value'] }, weather: { need: ['value'] }, block: { need: ['pos', 'state'] }, var: { need: ['name'] }, dialog: { need: ['id'] } }
+  world: { time: { need: ['value'] }, weather: { need: ['value'] }, block: { need: ['pos', 'state'] }, var: { need: ['name'] }, dialog: { need: ['id'] }, bake: { need: ['placements'] } }
 };
 
 export const TRACK_LABEL = { camera: 'Камера', actor: 'Актёр', fx: 'Эффекты', sound: 'Звук', subtitles: 'Субтитры', world: 'Мир' };
@@ -36,7 +36,7 @@ export const VERB_LABEL = {
   sit: 'Сесть', stand: 'Встать', pose: 'Поза',
   fade_in: 'Из темноты', fade_out: 'В темноту', flash: 'Вспышка', shake: 'Тряска', particles: 'Частицы', story_fx: 'Сюжетный эффект', title: 'Заголовок',
   sound: 'Звук', music: 'Музыка', music_fade: 'Музыка затихает',
-  time: 'Время суток', weather: 'Погода', block: 'Блок', var: 'Переменная', dialog: 'Открыть диалог'
+  time: 'Время суток', weather: 'Погода', block: 'Блок', var: 'Переменная', dialog: 'Открыть диалог', bake: 'Клонер появляется'
 };
 export const FIELD_LABEL = {
   path: 'путь', name: 'название', at: 'на кого смотреть', text: 'текст', pos: 'место', id: 'звук', value: 'значение', state: 'блок'
@@ -75,7 +75,9 @@ export function validateScene(scene, ctx) {
     validateObjects(scene, (sev, msg, sel) => res.push({ sev, msg, sel: sel || null, scene: scene.id || null }), ERR, WARN);
     let comp;
     try { comp = compileScene(scene); } catch (e) { res.push({ sev: ERR, msg: 'Сцена не собирается из объектов: ' + e.message, sel: null, scene: scene.id || null }); return res; }
-    for (const x of validateScene(comp, ctx)) {
+    const compNoObj = { ...comp };
+    delete compNoObj.objects;
+    for (const x of validateScene(compNoObj, ctx)) {
       if (x.sel && x.sel.track === 'camera') continue; // ключи камеры сгенерированы — ошибки уже у объектов
       if (!x.sel && /ключ(а|ей)? камеры/.test(x.msg)) continue;
       if (x.sel && x.sel.track) {
@@ -326,6 +328,8 @@ export function normalizeScene(scene) {
     tracks: []
   };
   if (s.note) out.note = s.note;
+  // фаза 3: светильники (игра ставит блоки света сама и возвращает всё в конце сцены)
+  if (Array.isArray(s.objects) && s.objects.length) out.objects = s.objects.map(dropGen);
   const merged = {};
   for (const tr of s.tracks || []) {
     if (!tr || !TRACK_KINDS.includes(tr.kind)) continue;

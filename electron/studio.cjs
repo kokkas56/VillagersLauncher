@@ -427,24 +427,29 @@ module.exports = function setupStudio({ handle, send, store }) {
   // ---------- фаза 3: редактор в игре, клонеры ----------
   // шейдеры: игра отвечает {t:'shaders', on, available}
   handle('studio:shaders', (on) => request({ t: 'shaders', on: !!on }, 'shaders', 4000));
-  // призрачные блоки клонера: { id, placements } (не больше 20000), placements:null — убрать
+  // призрачные блоки клонера: { id, placements } (не больше 20000), пустые placements — убрать призрак
   handle('studio:ghost', ({ id, placements }) => {
-    if (!id) throw new Error('Нет id клонера');
-    return write({ t: 'ghost', id: String(id), placements: Array.isArray(placements) ? placements.slice(0, V.MAX_SEND) : null });
+    if (!id) return write({ t: 'ghostClear' });
+    if (!Array.isArray(placements) || !placements.length) return write({ t: 'ghost', id: String(id), placements: [] });
+    return write({ t: 'ghost', id: String(id), placements: placements.slice(0, V.MAX_SEND) });
   });
-  // «Запечь в мир»: игра ставит блоки и отвечает {t:'baked', undoId, ok, count, error?}
-  handle('studio:bake', async ({ id, placements, undoId }) => {
+  // «Запечь в мир»: игра ставит блоки по тикам и шлёт {t:'bake', undoId, state:'progress'|'done'|'error', done, total}
+  handle('studio:bake', ({ id, placements, undoId, replace }) => {
     if (!Array.isArray(placements) || !placements.length) throw new Error('Клонер ничего не создаёт — запекать нечего');
     const u = String(undoId || ('bake_' + Date.now().toString(36)));
-    write({ t: 'bake', id: String(id || ''), placements: placements.slice(0, V.MAX_SEND), undoId: u });
-    try { return await request(null, 'baked', 30000); } catch (e) { return { t: 'baked', undoId: u, ok: null, pending: true, error: e.message }; }
+    const msg = { t: 'bake', id: String(id || ''), placements: placements.slice(0, V.MAX_SEND), undoId: u };
+    if (replace === false) msg.replace = false;
+    write(msg);
+    return { sent: true, undoId: u, count: msg.placements.length };
   });
-  // «Отменить запекание»: игра возвращает блоки как были и отвечает {t:'undone', undoId, ok}
-  handle('studio:undoBake', async (undoId) => {
+  // «Отменить запекание»: игра отвечает {t:'undo', undoId, state:'progress'|'done'|'error', …}
+  handle('studio:undoBake', (undoId) => {
     if (!undoId) throw new Error('Нечего отменять');
     write({ t: 'undo', undoId: String(undoId) });
-    try { return await request(null, 'undone', 30000); } catch (e) { return { t: 'undone', undoId, ok: null, pending: true, error: e.message }; }
+    return { sent: true, undoId };
   });
+  // список запечек, которые игра может отменить: ответ {t:'undoList', items:[…]}
+  handle('studio:undoList', () => request({ t: 'undoList' }, 'undoList', 4000));
   handle('studio:setVar', ({ name, value }) => {
     if (!V.isVarName(name)) throw new Error('Имя переменной — латиница, цифры, _ . -');
     return write({ t: 'setVar', name, value });

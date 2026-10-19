@@ -8,10 +8,10 @@ const __mograph = (function () {
 //
 // Клонер раскладывает копии (линия / сетка / круг / по пути / случайно), эффекторы двигают, крутят, масштабируют
 // и прячут копии по номеру. На выходе — список «размещений» для игры:
-//   { pos:[x,y,z], rot:0..3, block:'minecraft:oak_log[axis=x]' }   — блок (поворот уже применён к состоянию)
-//   { pos, rot, template:'id' }                                       — шаблон постройки (поворот на 90°·rot)
-//   { pos, rot, yaw, scale, actor:{ kind, type, who, ref, name } }   — актёр/сущность
-//   { pos, rot, light: 0..15 }                                        — блок света
+//   { pos:[x,y,z], rot:0, block:'minecraft:oak_log[axis=x]' }       — блок (поворот уже применён к состоянию, поэтому rot 0)
+//   { pos, rot:0|90|180|270, template:'id' }                          — шаблон постройки, поворот в градусах
+//   { pos, yaw, scale, actor:{ kind, type, who, ref, name } }        — актёр/сущность
+//   { pos, light: 0..15 }                                             — блок света
 // Повороты блоков — только по 90° вокруг Y.
 
 const CLONER_MODES = ['linear', 'grid', 'radial', 'spline', 'random'];
@@ -227,14 +227,15 @@ function clonerPlacements(cl, sources, effectors, ctx) {
     const s = src[si];
     const pos = c.p.map(rint);
     const q = quarter(c.rot);
+    const rd = q * 90; // игре — градусы
     if (s.block !== undefined) {
       const k = Math.max(1, Math.min(8, Math.round(c.scale)));
       const b = rotateBlockState(s.block, q);
-      if (k === 1) put({ pos, rot: q, block: b });
-      else for (let y = 0; y < k; y++) for (let z = 0; z < k; z++) for (let x = 0; x < k; x++) put({ pos: [pos[0] + x, pos[1] + y, pos[2] + z], rot: q, block: b });
-    } else if (s.template !== undefined) put({ pos, rot: q, template: s.template });
-    else if (s.light !== undefined) put({ pos, rot: q, light: s.light });
-    else if (s.actor) put({ pos: c.p.map((v) => Math.round(v * 100) / 100), rot: q, yaw: Math.round(c.rot * 10) / 10, scale: Math.round(c.scale * 100) / 100, actor: s.actor });
+      if (k === 1) put({ pos, rot: 0, block: b });
+      else for (let y = 0; y < k; y++) for (let z = 0; z < k; z++) for (let x = 0; x < k; x++) put({ pos: [pos[0] + x, pos[1] + y, pos[2] + z], rot: 0, block: b });
+    } else if (s.template !== undefined) put({ pos, rot: rd, template: s.template });
+    else if (s.light !== undefined) put({ pos, light: s.light });
+    else if (s.actor) put({ pos: c.p.map((v) => Math.round(v * 100) / 100), yaw: Math.round(c.rot * 10) / 10, scale: Math.round(c.scale * 100) / 100, actor: s.actor });
     if (out.length > MAX_CLONES) break;
   }
   return out;
@@ -274,7 +275,7 @@ const INTERP_LABEL = { bezier: 'Безье (плавно)', linear: 'Линей�
 
 // анимируемые каналы по видам объектов
 const CHANNELS = {
-  camera: ['pos.x', 'pos.y', 'pos.z', 'yaw', 'pitch', 'roll', 'fov', 'shake'],
+  camera: ['pos.x', 'pos.y', 'pos.z', 'rot.h', 'rot.p', 'rot.b', 'fov', 'shake'],
   light: ['pos.x', 'pos.y', 'pos.z', 'on', 'level'],
   sound: ['pos.x', 'pos.y', 'pos.z', 'play', 'vol'],
   marker: ['pos.x', 'pos.y', 'pos.z'],
@@ -287,7 +288,7 @@ const CHANNELS = {
 // каналы-«переключатели»: всегда ступенькой
 const STEP_CHANNELS = ['on', 'level', 'play', 'look'];
 const CHANNEL_LABEL = {
-  'pos.x': 'Позиция X', 'pos.y': 'Позиция Y', 'pos.z': 'Позиция Z', yaw: 'Поворот (H)', pitch: 'Наклон (P)', roll: 'Крен (B)',
+  'pos.x': 'Позиция X', 'pos.y': 'Позиция Y', 'pos.z': 'Позиция Z', 'rot.h': 'Поворот H (yaw)', 'rot.p': 'Наклон P (pitch)', 'rot.b': 'Крен B (roll)',
   fov: 'Угол обзора', shake: 'Дрожание', on: 'Включён', level: 'Яркость', play: 'Играть', vol: 'Громкость', strength: 'Сила', look: 'Смотреть на'
 };
 
@@ -298,9 +299,9 @@ const clone = (o) => JSON.parse(JSON.stringify(o));
 
 function defaultProps(type) {
   switch (type) {
-    case 'camera': return { pos: [0, 70, 0], yaw: 0, pitch: 0, roll: 0, fov: 70, shake: 0, look: null };
+    case 'camera': return { pos: [0, 70, 0], rot: [0, 0, 0], fov: 70, shake: 0, look: null };
     case 'actor': return {};
-    case 'light': return { pos: [0, 65, 0], points: [], level: 15, on: true };
+    case 'light': return { pos: [0, 65, 0], positions: [], level: 15, on: true };
     case 'sound': return { pos: null, id: 'minecraft:block.bell.use', vol: 1, pitch: 1, play: 0 };
     case 'marker': return { pos: [0, 64, 0], label: '' };
     case 'path': return { pos: [0, 0, 0], points: [[0, 64, 0], [8, 64, 0]], closed: false, smooth: true };
@@ -333,11 +334,12 @@ function uniqueObjId(scene, base) {
 function chanGet(props, ch) {
   if (!props) return undefined;
   if (ch.startsWith('pos.')) { const p = props.pos; return Array.isArray(p) ? p['xyz'.indexOf(ch[4])] : undefined; }
+  if (ch.startsWith('rot.')) { const p = props.rot; return Array.isArray(p) ? p['hpb'.indexOf(ch[4])] : undefined; }
   return props[ch];
 }
 function chanSet(props, ch, v) {
   const c = { ...props };
-  if (ch.startsWith('pos.')) { const p = Array.isArray(c.pos) ? c.pos.slice() : [0, 0, 0]; p['xyz'.indexOf(ch[4])] = v; c.pos = p; } else c[ch] = v;
+  if (ch.startsWith('pos.')) { const p = Array.isArray(c.pos) ? c.pos.slice() : [0, 0, 0]; p['xyz'.indexOf(ch[4])] = v; c.pos = p; } else if (ch.startsWith('rot.')) { const p = Array.isArray(c.rot) ? c.rot.slice() : [0, 0, 0]; p['hpb'.indexOf(ch[4])] = v; c.rot = p; } else c[ch] = v;
   return c;
 }
 function isStepChannel(ch) { return STEP_CHANNELS.includes(ch); }
@@ -482,12 +484,14 @@ function activeCamera(scene, t) {
 function cameraPose(scene, cam, t) {
   const p = propsAt(cam, t);
   const pos = worldPos(scene, cam, t) || [0, 64, 0];
-  return { pos: pos.map((n) => r3(n)), yaw: r3(p.yaw || 0), pitch: r3(p.pitch || 0), roll: r3(p.roll || 0), fov: r3(p.fov || 70), shake: r3(p.shake || 0), look: p.look == null ? null : p.look };
+  const rot = Array.isArray(p.rot) ? p.rot : [0, 0, 0];
+  return { pos: pos.map((n) => r3(n)), yaw: r3(rot[0] || 0), pitch: r3(rot[1] || 0), roll: r3(rot[2] || 0), fov: r3(p.fov || 70), shake: r3(p.shake || 0), look: p.look == null ? null : p.look };
 }
 
 // ---------------- старая сцена → объекты ----------------
 const EASE2INTERP = { smooth: 'bezier', linear: 'linear', in: 'bezier', out: 'bezier' };
-function hasObjects(scene) { return !!scene && Array.isArray(scene.objects); }
+// сцена редактора: есть и objects, и stage (у собранной для игры stage нет, а objects — только светильники)
+function hasObjects(scene) { return !!scene && Array.isArray(scene.objects) && Array.isArray(scene.stage); }
 
 // Открыть сцену в новой Студии: старые сцены превращаются в объекты (камера-дорожка → объект «Камера 1» + «Монтаж»).
 function toObjectScene(raw) {
@@ -502,7 +506,8 @@ function toObjectScene(raw) {
   if (!Array.isArray(s.actors)) s.actors = [];
   const len = isNum(s.length) && s.length > 0 ? s.length : 200;
   if (!hasObjects(s)) {
-    s.objects = [];
+    const keep = Array.isArray(s.objects) ? s.objects.filter((o) => o && o.type === 'light') : [];
+    s.objects = keep;
     const camTr = s.tracks.find((tr) => tr.kind === 'camera');
     const keys = (camTr && Array.isArray(camTr.keys) ? camTr.keys : []).filter((k) => k && isNum(k.t)).slice().sort((a, b) => a.t - b.t);
     s.stage = [];
@@ -510,13 +515,13 @@ function toObjectScene(raw) {
     if (keys.length) {
     const cam = makeObject('camera', 'cam1', 'Камера 1');
     const k0 = keys.find((k) => isP3(k.pos)) || keys[0];
-    if (k0) cam.props = { ...cam.props, pos: isP3(k0.pos) ? k0.pos.slice() : cam.props.pos, yaw: k0.yaw || 0, pitch: k0.pitch || 0, roll: k0.roll || 0, fov: k0.fov || 70, shake: k0.shake || 0, look: k0.look == null ? null : k0.look };
+    if (k0) cam.props = { ...cam.props, pos: isP3(k0.pos) ? k0.pos.slice() : cam.props.pos, rot: [k0.yaw || 0, k0.pitch || 0, k0.roll || 0], fov: k0.fov || 70, shake: k0.shake || 0, look: k0.look == null ? null : k0.look };
     if (keys.length > 1) {
       const anim = {};
       const put = (ch, k, v) => { (anim[ch] = anim[ch] || []).push({ t: Math.round(k.t), v, interp: EASE2INTERP[k.ease] || 'bezier' }); };
       for (const k of keys) {
         if (isP3(k.pos)) { put('pos.x', k, k.pos[0]); put('pos.y', k, k.pos[1]); put('pos.z', k, k.pos[2]); }
-        put('yaw', k, k.yaw || 0); put('pitch', k, k.pitch || 0); put('roll', k, k.roll || 0); put('fov', k, k.fov || 70); put('shake', k, k.shake || 0);
+        put('rot.h', k, k.yaw || 0); put('rot.p', k, k.pitch || 0); put('rot.b', k, k.roll || 0); put('fov', k, k.fov || 70); put('shake', k, k.shake || 0);
       }
       // ease ключа в старом формате — «как подлетаем к ключу»: переносим на исходящий предыдущего
       for (const ch of Object.keys(anim)) {
@@ -596,31 +601,22 @@ function lightPositions(scene, o, t) {
   const off = parentOffset(scene, o, t);
   const out = [];
   if (isP3(p.pos)) out.push(p.pos.map((v, i) => Math.floor(v + off[i])));
-  for (const q of Array.isArray(p.points) ? p.points : []) if (isP3(q)) out.push(q.map((v, i) => Math.floor(v + off[i])));
+  for (const q of Array.isArray(p.positions) ? p.positions : []) if (isP3(q)) out.push(q.map((v, i) => Math.floor(v + off[i])));
   return out;
 }
-function compileLights(scene) {
-  const len = Math.max(1, Math.round(scene.length || 1));
-  const ev = [];
+// Свет в сцене: игра (фаза 3) сама ставит minecraft:light у объектов-светильников и всё возвращает в конце сцены.
+// Отдаём ей объекты света в её формате: мировые позиции (с учётом групп), level/on и их анимация (ступенькой).
+function lightObjects(scene) {
+  const out = [];
   for (const o of (scene.objects || []).filter((x) => x.type === 'light' && isActive(scene, x))) {
-    const times = new Set([0]);
-    for (const ch of ['on', 'level']) for (const k of (o.anim && o.anim[ch]) || []) if (k.t >= 0 && k.t < len) times.add(Math.round(k.t));
-    let was = null; // { on, level, at: [поз] }
-    for (const t of [...times].sort((a, b) => a - b)) {
-      const p = propsAt(o, t);
-      const on = !!p.on && (p.level == null || p.level > 0);
-      const level = Math.max(0, Math.min(15, Math.round(isNum(p.level) ? p.level : 15)));
-      const at = lightPositions(scene, o, t);
-      const key = on ? level + '|' + JSON.stringify(at) : 'off';
-      if (was && was.key === key) continue;
-      if (was && was.on) for (const q of was.at) if (!on || !at.some((x) => x.join() === q.join())) ev.push({ t, do: 'block', pos: q, state: 'minecraft:air', gen: true, src: o.id });
-      if (on) for (const q of at) ev.push({ t, do: 'block', pos: q, state: 'minecraft:light[level=' + level + ']', gen: true, src: o.id });
-      was = { on, at, key };
-    }
-    // убрать свет к концу сцены (игра фазы 1 сама блоки не возвращает)
-    if (was && was.on) for (const q of was.at) ev.push({ t: Math.max(0, len - 1), do: 'block', pos: q, state: 'minecraft:air', gen: true, src: o.id });
+    const p = propsAt(o, 0);
+    const at = lightPositions(scene, o, 0);
+    if (!at.length) continue;
+    const anim = {};
+    for (const ch of ['on', 'level']) if (o.anim && Array.isArray(o.anim[ch]) && o.anim[ch].length) anim[ch] = o.anim[ch].map((k) => ({ t: Math.round(k.t), v: ch === 'on' ? !!k.v : Math.max(0, Math.min(15, Math.round(Number(k.v) || 0))), interp: 'step' }));
+    out.push({ id: o.id, type: 'light', name: o.name, enabled: true, visible: true, props: { pos: at[0], positions: at.slice(1), level: Math.max(0, Math.min(15, Math.round(isNum(p.level) ? p.level : 15))), on: p.on !== false }, anim });
   }
-  return ev;
+  return out;
 }
 function compileSounds(scene) {
   const ev = [];
@@ -637,17 +633,16 @@ function compileSounds(scene) {
   }
   return ev;
 }
-// клонер «появляется в момент t»: блоки ставятся событиями «Блок» (до 2000 на клонер)
-const SCENE_CLONE_MAX = 2000;
+// клонер «появляется в момент t»: событие мира «bake» (игра ставит блоки сама, по тикам; removeAtEnd — вернуть в конце)
+const SCENE_CLONE_MAX = 20000;
 function compileCloners(scene) {
-  const len = Math.max(1, Math.round(scene.length || 1));
   const ev = [];
   for (const o of (scene.objects || []).filter((x) => x.type === 'cloner' && isActive(scene, x))) {
     const at = o.props && o.props.appearAt;
     if (!isNum(at) || at < 0) continue;
-    const pl = clonerOutput(scene, o, at).filter((p) => p.block).slice(0, SCENE_CLONE_MAX);
-    for (const p of pl) ev.push({ t: Math.round(at), do: 'block', pos: p.pos, state: p.block, gen: true, src: o.id });
-    if (o.props.removeAtEnd !== false) for (const p of pl) ev.push({ t: Math.max(0, len - 1), do: 'block', pos: p.pos, state: 'minecraft:air', gen: true, src: o.id });
+    const pl = clonerOutput(scene, o, at).slice(0, SCENE_CLONE_MAX);
+    if (!pl.length) continue;
+    ev.push({ t: Math.round(at), do: 'bake', id: o.id, placements: pl, removeAtEnd: o.props.removeAtEnd !== false, gen: true, src: o.id });
   }
   return ev;
 }
@@ -682,7 +677,8 @@ function clonerOutput(scene, cl, t) {
     effectors.map((e) => ({ ...propsAt(e, t || 0), id: e.id })), { path: pathPts, smooth: pathObj ? propsAt(pathObj, 0).smooth !== false : true });
 }
 
-// Главное: сцена с объектами → сцена фазы 1 (objects/stage убираются, дорожки дописываются).
+// Главное: сцена с объектами → сцена для игры: дорожка камеры по «Монтажу», звуки и «bake» клонеров в событиях,
+// из объектов остаются только светильники (их игра обрабатывает сама), stage убирается.
 function compileScene(scene) {
   if (!hasObjects(scene)) return scene;
   const s = toObjectScene(scene); // снять старые gen-события, привести объекты
@@ -698,9 +694,11 @@ function compileScene(scene) {
     if (!tr) { tr = { kind, events: [] }; tracks.push(tr); }
     tr.events = [...(tr.events || []), ...evs].sort((a, b) => a.t - b.t);
   };
-  addEv('world', [...compileLights(s), ...compileCloners(s)]);
+  addEv('world', compileCloners(s));
   addEv('sound', compileSounds(s));
   out.tracks = tracks;
+  const lights = lightObjects(s);
+  if (lights.length) out.objects = lights;
   return out;
 }
 
@@ -713,30 +711,62 @@ function sceneForDisk(scene) {
 }
 
 // ---------------- для игры: объекты в момент t (живая связь {t:'objects'}) ----------------
+// Формат игры: { id, type, name, parent, enabled, visible, props:{…}, anim:{} } — все pos МИРОВЫЕ (группы учтены здесь),
+// rot = [yaw, pitch, roll]. Анимацию не шлём: в момент t игра получает готовые позы ({t:'time', poses}).
+function lookPoint(scene, look, t) {
+  if (isP3(look)) return look;
+  if (typeof look === 'string' && look.startsWith('actor:')) { const ap = actorPosAt(scene, look.slice(6), t); return ap ? [ap.pos[0], ap.pos[1] + 1.6, ap.pos[2]] : null; }
+  return null;
+}
+function gameObject(scene, o, t, selected) {
+  const p = propsAt(o, t);
+  const props = {};
+  const wp = worldPos(scene, o, t);
+  if (wp) props.pos = wp.map(r3);
+  switch (o.type) {
+    case 'camera': {
+      props.rot = (Array.isArray(p.rot) ? p.rot : [0, 0, 0]).map((v) => r3(v || 0));
+      props.fov = r3(p.fov || 70);
+      const lp = lookPoint(scene, p.look, t);
+      if (lp) props.look = lp.map(r3);
+      break;
+    }
+    case 'light': { const at = lightPositions(scene, o, t); props.pos = at[0] || props.pos; props.positions = at.slice(1); props.level = p.level; props.on = p.on !== false; break; }
+    case 'path': { const off = wp || [0, 0, 0]; props.points = (p.points || []).filter(isP3).map((q) => q.map((v, i) => r3(v + off[i]))); props.closed = !!p.closed; delete props.pos; break; }
+    case 'marker': props.label = p.label || o.name; break;
+    case 'sound': props.sound = p.id; if (!isP3(p.pos)) delete props.pos; break;
+    case 'cloner': props.mode = p.mode; break;
+    case 'effector': props.kind = p.kind; { const cl = o.parent && objById(scene, o.parent); const cp = cl && worldPos(scene, cl, t); if (!props.pos && cp) props.pos = cp.map(r3); } break;
+    case 'actor': {
+      const ap = actorPosAt(scene, o.actor, t);
+      if (ap) { props.pos = ap.pos; props.rot = [ap.yaw, 0, 0]; }
+      props.actor = o.actor;
+      break;
+    }
+    default:
+  }
+  return { id: o.id, type: o.type, name: o.name, parent: o.parent || null, enabled: isActive(scene, o), visible: o.visible !== false, selected: !!selected, props, anim: {} };
+}
 function objectsSnapshot(scene, t, selIds) {
   const sel = new Set(selIds || []);
-  const out = [];
+  return (scene.objects || []).filter((o) => !['block', 'template'].includes(o.type)).map((o) => gameObject(scene, o, t, sel.has(o.id)));
+}
+// позы для {t:'time', poses}: камеры, актёры и всё, что анимировано (само или через группу)
+function posesAt(scene, t) {
+  const poses = {};
   for (const o of scene.objects || []) {
-    if (o.visible === false || !isActive(scene, o)) continue;
-    const p = propsAt(o, t);
-    const it = { id: o.id, type: o.type, name: o.name, selected: sel.has(o.id) };
-    const wp = worldPos(scene, o, t);
-    if (wp) it.pos = wp.map(r3);
-    if (o.type === 'camera') { Object.assign(it, { yaw: r3(p.yaw || 0), pitch: r3(p.pitch || 0), roll: r3(p.roll || 0), fov: r3(p.fov || 70) }); it.active = (activeCamera(scene, t) || {}).id === o.id; }
-    else if (o.type === 'light') { it.level = p.level; it.on = !!p.on; it.points = lightPositions(scene, o, t); }
-    else if (o.type === 'path') { const off = parentOffset(scene, o, t); const pp = p.pos || [0, 0, 0]; it.points = (p.points || []).filter(isP3).map((q) => q.map((v, i) => r3(v + pp[i] + off[i]))); it.closed = !!p.closed; }
-    else if (o.type === 'marker') it.label = p.label || o.name;
-    else if (o.type === 'sound') { it.sound = p.id; if (!wp) delete it.pos; }
-    else if (o.type === 'cloner') { it.mode = p.mode; }
-    else if (o.type === 'actor') {
-      const a = (scene.actors || []).find((x) => x.id === o.actor);
-      const ap = a && actorPosAt(scene, a.id, t);
-      if (ap) { it.pos = ap.pos; it.yaw = ap.yaw; }
-      it.actor = o.actor;
-    }
-    out.push(it);
+    if (!isActive(scene, o)) continue;
+    const moving = o.type === 'camera' || o.type === 'actor' || Object.keys(o.anim || {}).length || ancestors(scene, o).some((a) => Object.keys(a.anim || {}).length);
+    if (!moving) continue;
+    const g = gameObject(scene, o, t, false).props;
+    if (!g.pos) continue;
+    const ps = { pos: g.pos };
+    if (g.rot) ps.rot = g.rot;
+    if (g.fov) ps.fov = g.fov;
+    if (g.look) ps.look = g.look;
+    poses[o.id] = ps;
   }
-  return out;
+  return poses;
 }
 
 // где актёр в момент t: старт → «Идти» по пути (примерно по скорости) → «Переместить»
@@ -807,7 +837,7 @@ function validateObjects(scene, add, E, W) {
     if (o.type === 'light') {
       const lv = p.level;
       if (lv !== undefined && (!isNum(lv) || lv < 0 || lv > 15)) add(E, 'Свет ' + nm + ': яркость — от 0 до 15', sel);
-      if (!isP3(p.pos) && !(p.points || []).length) add(E, 'Свет ' + nm + ': не задано, где он стоит', sel);
+      if (!isP3(p.pos) && !(p.positions || []).length) add(E, 'Свет ' + nm + ': не задано, где он стоит', sel);
     }
     if (o.type === 'sound') {
       if (!p.id || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(p.id)) add(E, 'Звук ' + nm + ': id звука пиши вида minecraft:block.bell.use', sel);
@@ -855,9 +885,9 @@ function validateObjects(scene, add, E, W) {
   if (cams.length > 1 && !st.length) add(W, 'Камер несколько, а «Монтаж» пуст — будет первая камера. Перетащи камеры на дорожку «Монтаж»');
 }
 
-return { OBJ_TYPES, OBJ_LABEL, INTERPS, INTERP_LABEL, CHANNELS, STEP_CHANNELS, CHANNEL_LABEL, defaultProps, makeObject, uniqueObjId, chanGet, chanSet, isStepChannel, keySlopes, evalKeys, propsAt, isAnimated, keyAt, setKey, removeKey, setChannel, moveKeys, allKeyTimes, objById, childrenOf, ancestors, isDescendant, isActive, parentOffset, worldPos, stageAt, activeCamera, cameraPose, hasObjects, toObjectScene, compileCamera, compileLights, compileSounds, SCENE_CLONE_MAX, compileCloners, clonerInputs, clonerOutput, compileScene, sceneForDisk, objectsSnapshot, actorPosAt, validateObjects };
+return { OBJ_TYPES, OBJ_LABEL, INTERPS, INTERP_LABEL, CHANNELS, STEP_CHANNELS, CHANNEL_LABEL, defaultProps, makeObject, uniqueObjId, chanGet, chanSet, isStepChannel, keySlopes, evalKeys, propsAt, isAnimated, keyAt, setKey, removeKey, setChannel, moveKeys, allKeyTimes, objById, childrenOf, ancestors, isDescendant, isActive, parentOffset, worldPos, stageAt, activeCamera, cameraPose, hasObjects, toObjectScene, compileCamera, lightObjects, compileSounds, SCENE_CLONE_MAX, compileCloners, clonerInputs, clonerOutput, compileScene, sceneForDisk, gameObject, objectsSnapshot, posesAt, actorPosAt, validateObjects };
 })();
-const { OBJ_TYPES, OBJ_LABEL, INTERPS, INTERP_LABEL, CHANNELS, STEP_CHANNELS, CHANNEL_LABEL, defaultProps, makeObject, uniqueObjId, chanGet, chanSet, isStepChannel, keySlopes, evalKeys, propsAt, isAnimated, keyAt, setKey, removeKey, setChannel, moveKeys, allKeyTimes, objById, childrenOf, ancestors, isDescendant, isActive, parentOffset, worldPos, stageAt, activeCamera, cameraPose, hasObjects, toObjectScene, compileCamera, compileLights, compileSounds, SCENE_CLONE_MAX, compileCloners, clonerInputs, clonerOutput, compileScene, sceneForDisk, objectsSnapshot, actorPosAt, validateObjects } = __scene3d;
+const { OBJ_TYPES, OBJ_LABEL, INTERPS, INTERP_LABEL, CHANNELS, STEP_CHANNELS, CHANNEL_LABEL, defaultProps, makeObject, uniqueObjId, chanGet, chanSet, isStepChannel, keySlopes, evalKeys, propsAt, isAnimated, keyAt, setKey, removeKey, setChannel, moveKeys, allKeyTimes, objById, childrenOf, ancestors, isDescendant, isActive, parentOffset, worldPos, stageAt, activeCamera, cameraPose, hasObjects, toObjectScene, compileCamera, lightObjects, compileSounds, SCENE_CLONE_MAX, compileCloners, clonerInputs, clonerOutput, compileScene, sceneForDisk, gameObject, objectsSnapshot, posesAt, actorPosAt, validateObjects } = __scene3d;
 
 // ===== validate.js =====
 const __validate = (function () {
@@ -888,7 +918,7 @@ const VERBS = {
     particles: { need: ['name', 'pos'] }, story_fx: { need: ['name'] }, title: { need: ['text'] }
   },
   sound: { sound: { need: ['id'] }, music: { need: ['id'] }, music_fade: { need: [] } },
-  world: { time: { need: ['value'] }, weather: { need: ['value'] }, block: { need: ['pos', 'state'] }, var: { need: ['name'] }, dialog: { need: ['id'] } }
+  world: { time: { need: ['value'] }, weather: { need: ['value'] }, block: { need: ['pos', 'state'] }, var: { need: ['name'] }, dialog: { need: ['id'] }, bake: { need: ['placements'] } }
 };
 
 const TRACK_LABEL = { camera: 'Камера', actor: 'Актёр', fx: 'Эффекты', sound: 'Звук', subtitles: 'Субтитры', world: 'Мир' };
@@ -898,7 +928,7 @@ const VERB_LABEL = {
   sit: 'Сесть', stand: 'Встать', pose: 'Поза',
   fade_in: 'Из темноты', fade_out: 'В темноту', flash: 'Вспышка', shake: 'Тряска', particles: 'Частицы', story_fx: 'Сюжетный эффект', title: 'Заголовок',
   sound: 'Звук', music: 'Музыка', music_fade: 'Музыка затихает',
-  time: 'Время суток', weather: 'Погода', block: 'Блок', var: 'Переменная', dialog: 'Открыть диалог'
+  time: 'Время суток', weather: 'Погода', block: 'Блок', var: 'Переменная', dialog: 'Открыть диалог', bake: 'Клонер появляется'
 };
 const FIELD_LABEL = {
   path: 'путь', name: 'название', at: 'на кого смотреть', text: 'текст', pos: 'место', id: 'звук', value: 'значение', state: 'блок'
@@ -937,7 +967,9 @@ function validateScene(scene, ctx) {
     validateObjects(scene, (sev, msg, sel) => res.push({ sev, msg, sel: sel || null, scene: scene.id || null }), ERR, WARN);
     let comp;
     try { comp = compileScene(scene); } catch (e) { res.push({ sev: ERR, msg: 'Сцена не собирается из объектов: ' + e.message, sel: null, scene: scene.id || null }); return res; }
-    for (const x of validateScene(comp, ctx)) {
+    const compNoObj = { ...comp };
+    delete compNoObj.objects;
+    for (const x of validateScene(compNoObj, ctx)) {
       if (x.sel && x.sel.track === 'camera') continue; // ключи камеры сгенерированы — ошибки уже у объектов
       if (!x.sel && /ключ(а|ей)? камеры/.test(x.msg)) continue;
       if (x.sel && x.sel.track) {
@@ -1188,6 +1220,8 @@ function normalizeScene(scene) {
     tracks: []
   };
   if (s.note) out.note = s.note;
+  // фаза 3: светильники (игра ставит блоки света сама и возвращает всё в конце сцены)
+  if (Array.isArray(s.objects) && s.objects.length) out.objects = s.objects.map(dropGen);
   const merged = {};
   for (const tr of s.tracks || []) {
     if (!tr || !TRACK_KINDS.includes(tr.kind)) continue;
@@ -1664,4 +1698,4 @@ return { ERR, WARN, TRACK_KINDS, ACTOR_KINDS, EASES, WEATHERS, END_MODES, SUB_MA
 })();
 const { ERR, WARN, TRACK_KINDS, ACTOR_KINDS, EASES, WEATHERS, END_MODES, SUB_MAX, VERBS, TRACK_LABEL, VERB_LABEL, FIELD_LABEL, isResId, isSceneId, isActorId, isPos, isNum, trackKeyOf, itemsOfTrack, verbOf, isTarget, validateScene, validateProject, cleanScene, cleanProject, DEFAULT_UI, defaultProject, defaultScene, normalizeScene, normalizeProject, VAR_TYPES, OPS, NODE_TYPES, NODE_LABEL, TRIGGERS, COND_KINDS, COND_LABEL, ACTION_KINDS, ACTION_LABEL, QUEST_STATES, QUEST_OPS, GOAL_TYPES, GOAL_LABEL, VAR_SCOPES, TEXT_MAX, isDocId, isVarName, condKind, actionKind, nodeOutputs, getOut, setOut, isEndRef, checkSpeaker, checkConds, checkActions, validateDialog, describeGoal, validateQuest, validateVars, varDefault, defaultDialog, defaultQuest, cleanDoc, normalizeDialog, normalizeQuest } = __validate;
 
-module.exports = { CLONER_MODES, CLONER_MODE_LABEL, EFFECTOR_KINDS, EFFECTOR_LABEL, MAX_CLONES, MAX_SEND, hash01, noise2, smoothPath, samplePath, clonerLayout, applyEffector, rotateBlockState, quarter, clonerPlacements, placementsBox, OBJ_TYPES, OBJ_LABEL, INTERPS, INTERP_LABEL, CHANNELS, STEP_CHANNELS, CHANNEL_LABEL, defaultProps, makeObject, uniqueObjId, chanGet, chanSet, isStepChannel, keySlopes, evalKeys, propsAt, isAnimated, keyAt, setKey, removeKey, setChannel, moveKeys, allKeyTimes, objById, childrenOf, ancestors, isDescendant, isActive, parentOffset, worldPos, stageAt, activeCamera, cameraPose, hasObjects, toObjectScene, compileCamera, compileLights, compileSounds, SCENE_CLONE_MAX, compileCloners, clonerInputs, clonerOutput, compileScene, sceneForDisk, objectsSnapshot, actorPosAt, validateObjects, ERR, WARN, TRACK_KINDS, ACTOR_KINDS, EASES, WEATHERS, END_MODES, SUB_MAX, VERBS, TRACK_LABEL, VERB_LABEL, FIELD_LABEL, isResId, isSceneId, isActorId, isPos, isNum, trackKeyOf, itemsOfTrack, verbOf, isTarget, validateScene, validateProject, cleanScene, cleanProject, DEFAULT_UI, defaultProject, defaultScene, normalizeScene, normalizeProject, VAR_TYPES, OPS, NODE_TYPES, NODE_LABEL, TRIGGERS, COND_KINDS, COND_LABEL, ACTION_KINDS, ACTION_LABEL, QUEST_STATES, QUEST_OPS, GOAL_TYPES, GOAL_LABEL, VAR_SCOPES, TEXT_MAX, isDocId, isVarName, condKind, actionKind, nodeOutputs, getOut, setOut, isEndRef, checkSpeaker, checkConds, checkActions, validateDialog, describeGoal, validateQuest, validateVars, varDefault, defaultDialog, defaultQuest, cleanDoc, normalizeDialog, normalizeQuest };
+module.exports = { CLONER_MODES, CLONER_MODE_LABEL, EFFECTOR_KINDS, EFFECTOR_LABEL, MAX_CLONES, MAX_SEND, hash01, noise2, smoothPath, samplePath, clonerLayout, applyEffector, rotateBlockState, quarter, clonerPlacements, placementsBox, OBJ_TYPES, OBJ_LABEL, INTERPS, INTERP_LABEL, CHANNELS, STEP_CHANNELS, CHANNEL_LABEL, defaultProps, makeObject, uniqueObjId, chanGet, chanSet, isStepChannel, keySlopes, evalKeys, propsAt, isAnimated, keyAt, setKey, removeKey, setChannel, moveKeys, allKeyTimes, objById, childrenOf, ancestors, isDescendant, isActive, parentOffset, worldPos, stageAt, activeCamera, cameraPose, hasObjects, toObjectScene, compileCamera, lightObjects, compileSounds, SCENE_CLONE_MAX, compileCloners, clonerInputs, clonerOutput, compileScene, sceneForDisk, gameObject, objectsSnapshot, posesAt, actorPosAt, validateObjects, ERR, WARN, TRACK_KINDS, ACTOR_KINDS, EASES, WEATHERS, END_MODES, SUB_MAX, VERBS, TRACK_LABEL, VERB_LABEL, FIELD_LABEL, isResId, isSceneId, isActorId, isPos, isNum, trackKeyOf, itemsOfTrack, verbOf, isTarget, validateScene, validateProject, cleanScene, cleanProject, DEFAULT_UI, defaultProject, defaultScene, normalizeScene, normalizeProject, VAR_TYPES, OPS, NODE_TYPES, NODE_LABEL, TRIGGERS, COND_KINDS, COND_LABEL, ACTION_KINDS, ACTION_LABEL, QUEST_STATES, QUEST_OPS, GOAL_TYPES, GOAL_LABEL, VAR_SCOPES, TEXT_MAX, isDocId, isVarName, condKind, actionKind, nodeOutputs, getOut, setOut, isEndRef, checkSpeaker, checkConds, checkActions, validateDialog, describeGoal, validateQuest, validateVars, varDefault, defaultDialog, defaultQuest, cleanDoc, normalizeDialog, normalizeQuest };

@@ -78,6 +78,7 @@ const P = {
   mouse: <><rect x="7" y="3" width="10" height="18" rx="5" /><path d="M12 7v4" /></>,
   lock: <><rect x="5" y="11" width="14" height="9" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></>,
   grid: <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />,
+  layers: <><path d="m12 4 9 5-9 5-9-5z" /><path d="m3 14 9 5 9-5" /></>,
   top: <><rect x="4" y="4" width="16" height="16" /><path d="M12 8v8M8 12h8" /></>
 };
 

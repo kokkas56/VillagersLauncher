@@ -6,7 +6,7 @@ import { useApp } from '../../lib/app.jsx';
 import { validateScene, normalizeScene, defaultScene, varDefault, ERR } from '../validate.js';
 import { prepareScene, slug, uniqueId, fmtTicks, getItem } from '../model.js';
 import {
-  toObjectScene, objById, propsAt, activeCamera, cameraPose, objectsSnapshot, actorPosAt, worldPos, clonerOutput,
+  toObjectScene, objById, propsAt, activeCamera, objectsSnapshot, posesAt, actorPosAt, worldPos, clonerOutput,
   isActive, CHANNELS
 } from '../scene3d.js';
 import { MAX_SEND, placementsBox } from '../mograph.js';
@@ -20,7 +20,7 @@ export const lsGet = (k, d) => { try { const v = localStorage.getItem('studio3.'
 export const lsSet = (k, v) => { try { localStorage.setItem('studio3.' + k, JSON.stringify(v)); } catch (_) {} };
 const r2 = (n) => Math.round(n * 100) / 100;
 const QSTATE_RU = { not_started: 'не начато', active: 'идёт', done: 'сделано', failed: 'провалено' };
-export const DEFAULT_HINT = 'Наведи мышку на кнопку или поле — здесь будет подсказка. Alt+ЛКМ/СКМ/ПКМ в игре — вращать, двигать, приближать камеру Студии.';
+export const DEFAULT_HINT = 'Наведи мышку на кнопку или поле — здесь будет подсказка. В игре: F6 — Камера Студии, ПКМ+WASD/QE — полёт (Shift — быстрее), Alt+ЛКМ/СКМ/ПКМ — вращать/двигать/приближать, E/R/T — инструменты.';
 
 export function prepareObjScene(raw, id) { return toObjectScene(prepareScene(raw, id)); }
 
@@ -49,7 +49,10 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
   const [logs, setLogs] = useState([]);
   const [hint, setHint] = useState(DEFAULT_HINT);
   const [saveState, setSaveState] = useState('saved');
-  const [game, setGame] = useState({ editorCam: false, lookThrough: null, shaders: null, shadersAvail: null, lights: true, hud: false });
+  const [game, setGame] = useState({ editorCam: false, lookThrough: null, shaders: null, shadersAvail: null, lights: false, hud: false });
+  const [bakeJob, setBakeJob] = useState(null); // { kind:'bake'|'undo', undoId, id, done, total, state }
+  const keyActionRef = useRef(null); // команды Студии для клавиш, нажатых в игре (ставит окно)
+  const dragTr = useRef(new Set()); // объекты, которые сейчас тянут гизмо в игре (история — одна запись на жест)
   const [gameVars, setGameVarsState] = useState(null);
   const [questStates, setQuestStates] = useState({});
   const [camStep] = useState(() => lsGet('camStep', 40));
@@ -225,14 +228,42 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
       case 'result':
         addLog(m.ok ? 'ok' : 'error', (m.op || 'Команда') + (m.id ? ' «' + m.id + '»' : '') + ': ' + (m.ok ? 'готово' : 'не вышло — ' + (m.error || '?')));
         break;
-      case 'editorCam': setGame((g) => ({ ...g, editorCam: !!m.on })); break;
+      case 'editorCam': setGame((g) => ({ ...g, editorCam: !!m.on, lookThrough: m.lookThrough !== undefined ? m.lookThrough || null : g.lookThrough })); break;
+      case 'lookThrough': setGame((g) => ({ ...g, lookThrough: m.id || null })); if (!m.id && m.reason) addLog('info', 'Взгляд через камеру снят: камеру Студии сдвинули в игре'); break;
+      case 'lights': setGame((g) => ({ ...g, lights: !!m.on })); if (m.on && m.blocked) addLog('warn', 'Свет: ' + m.blocked + ' блок(ов) не поставлено — там твёрдый блок'); break;
+      case 'tool':
+        if (m.tool && ['select', 'move', 'rotate', 'scale'].includes(m.tool)) setToolState(m.tool);
+        if (m.axes && typeof m.axes === 'object') setAxes({ x: m.axes.x !== false, y: m.axes.y !== false, z: m.axes.z !== false });
+        if (m.space === 'world' || m.space === 'object') setSpace(m.space);
+        break;
+      case 'ghost': if (m.cut) addLog('warn', 'Призрак «' + m.id + '»: не поместилось ' + m.cut + ' блоков (предел ' + (m.max || 20000) + ')'); break;
+      case 'bake': case 'undo': {
+        const kind = m.t;
+        if (m.state === 'progress') setBakeJob({ kind, undoId: m.undoId, id: m.id, done: m.done || 0, total: m.total || 0, state: 'progress' });
+        else {
+          setBakeJob(null);
+          if (m.state === 'error') { addLog('error', (kind === 'bake' ? 'Запекание' : 'Отмена запекания') + ' не удалась: ' + (m.error || '?')); toast((kind === 'bake' ? 'Запекание' : 'Отмена') + ' не удалась: ' + (m.error || '?'), 'error', 7000); if (kind === 'bake' && m.undoId) edit((sc) => ({ ...sc, bakes: (sc.bakes || []).filter((b) => b.undoId !== m.undoId) }), { silent: true }); }
+          else if (m.state === 'done') {
+            const txt = kind === 'bake' ? 'Запечено в мир: ' + (m.placed != null ? m.placed : m.done || 0) + ' блоков' + (m.skipped ? ', пропущено ' + m.skipped : '') : 'Запекание отменено' + (m.restored != null ? ': возвращено ' + m.restored : '');
+            addLog('ok', txt); toast(txt, 'ok', 3500);
+          }
+        }
+        break;
+      }
+      case 'undoList': addLog('info', 'В игре можно отменить запечек: ' + ((m.items || []).length)); break;
       case 'shaders': setGame((g) => ({ ...g, shaders: m.on == null ? g.shaders : !!m.on, shadersAvail: m.available == null ? g.shadersAvail : !!m.available })); break;
       case 'baked': addLog(m.ok === false ? 'error' : 'ok', m.ok === false ? 'Запекание не удалось: ' + (m.error || '?') : 'Запечено в мир: ' + (m.count || 0) + ' блоков'); break;
       case 'undone': addLog(m.ok === false ? 'error' : 'ok', m.ok === false ? 'Отмена запекания не удалась: ' + (m.error || '?') : 'Запекание отменено'); break;
       case 'select': {
         if (!s) break;
         const ids = (Array.isArray(m.ids) ? m.ids : m.id ? [m.id] : []).filter((id) => objById(s, id));
-        setSel({ objs: ids });
+        if (m.add) {
+          const cur = selRef.current.objs;
+          const next = cur.slice();
+          for (const id of ids) { const i = next.indexOf(id); if (i >= 0) next.splice(i, 1); else next.push(id); }
+          setSel({ objs: next });
+        } else setSel({ objs: ids });
+        if (!ids.length && (m.block || m.entity)) setHint('В игре выбран ' + (m.entity ? 'моб ' + (m.entity.name || m.entity.type || '') : 'блок ' + (m.blockId || '') + ' ' + (m.block || []).join(' ')) + ' — это не объект Студии');
         break;
       }
       case 'transform': {
@@ -241,6 +272,11 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
         break;
       }
       case 'key':
+        if (['undo', 'redo', 'delete', 'clone', 'group', 'save', 'keyAll'].includes(m.name)) {
+          if (Array.isArray(m.ids) && s) { const ids = m.ids.filter((id) => objById(s, id)); if (ids.length) setSel({ objs: ids }); }
+          if (keyActionRef.current) keyActionRef.current(m.name);
+          break;
+        }
         if (!s) { toast('Открой сцену, чтобы ставить ключи из игры', 'warn'); break; }
         if (m.name === 'camKey') camKeyFromGame(m.view);
         else if (m.name === 'pathPoint') pathPointFromGame(m);
@@ -264,35 +300,53 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
   useEffect(() => on('studio-embed', (e) => { if (e) { setEmbed(e); if (e.why) addLog(e.mode === 'embedded' ? 'ok' : 'warn', e.why); } }), [addLog]);
   useEffect(() => on('studio-win', (w) => { if (w && w.type === 'pops') setPops(w.pops || []); }), []);
 
-  // игра двигает объект гизмо: { id, pos:[x,y,z], rot:[yaw,pitch,roll] | {yaw,pitch,roll} }
+  // игра двигает гизмо: { id, pos:[x,y,z] (мировые), rot:[yaw,pitch,roll], point?, final } — не чаще раза в 50 мс;
+  // в историю правок жест попадает одной записью (в начале), final:true — отпустили мышь
   const applyTransform = (m) => {
     const s = sceneRef.current;
     const o = objById(s, m.id);
     if (!o) return;
     const t = timeRef.current;
     const ak = autoKeyRef.current;
+    if (!dragTr.current.has(o.id)) { gesture(); dragTr.current.add(o.id); }
+    if (m.final) dragTr.current.delete(o.id);
+    const rot = Array.isArray(m.rot) ? { h: m.rot[0], p: m.rot[1], b: m.rot[2] } : m.rot && typeof m.rot === 'object' ? { h: m.rot.yaw, p: m.rot.pitch, b: m.rot.roll } : null;
     edit((sc) => {
       let x = sc;
+      const cur = objById(sc, o.id);
       if (o.type === 'actor') {
         const a = (sc.actors || []).find((q) => q.id === o.actor);
         if (!a) return sc;
         const spawn = { ...(a.spawn || {}) };
         if (Array.isArray(m.pos)) spawn.pos = m.pos.map(r2);
-        const yaw = Array.isArray(m.rot) ? m.rot[0] : m.rot && m.rot.yaw;
-        if (typeof yaw === 'number') spawn.yaw = r2(yaw);
+        if (rot && typeof rot.h === 'number') spawn.yaw = r2(rot.h);
         return { ...sc, actors: sc.actors.map((q) => (q.id === a.id ? { ...q, spawn } : q)) };
       }
-      if (Array.isArray(m.pos) && m.pos.length === 3) {
-        // игра шлёт мировые координаты — вычитаем смещение групп-родителей
-        const wp = worldPos(sc, o, t) || [0, 0, 0];
-        const own = propsAt(o, t).pos || [0, 0, 0];
-        const local = m.pos.map((v, i) => r2(v - (wp[i] - own[i])));
-        ['x', 'y', 'z'].forEach((ax, i) => { x = setChan(x, o.id, 'pos.' + ax, t, local[i], ak); });
+      const wp = worldPos(sc, cur, t) || [0, 0, 0];
+      const own = propsAt(cur, t).pos || [0, 0, 0];
+      const parentOff = wp.map((v, i) => v - own[i]);
+      // точка пути / дополнительная позиция света
+      if (Number.isInteger(m.point) && Array.isArray(m.pos)) {
+        if (cur.type === 'path') {
+          const pts = (cur.props.points || []).slice();
+          if (!pts[m.point]) return sc;
+          pts[m.point] = m.pos.map((v, i) => r2(v - wp[i]));
+          return patchObj(sc, cur.id, { props: { ...cur.props, points: pts } });
+        }
+        if (cur.type === 'light') {
+          const ps = (cur.props.positions || []).slice();
+          if (!ps[m.point]) return sc;
+          ps[m.point] = m.pos.map((v, i) => Math.floor(v - parentOff[i]));
+          return patchObj(sc, cur.id, { props: { ...cur.props, positions: ps } });
+        }
       }
-      const rot = Array.isArray(m.rot) ? { yaw: m.rot[0], pitch: m.rot[1], roll: m.rot[2] } : m.rot || null;
-      if (rot && o.type === 'camera') for (const k of ['yaw', 'pitch', 'roll']) if (typeof rot[k] === 'number') x = setChan(x, o.id, k, t, r2(rot[k]), ak);
+      if (Array.isArray(m.pos) && m.pos.length === 3) {
+        const local = m.pos.map((v, i) => r2(v - parentOff[i]));
+        ['x', 'y', 'z'].forEach((ax, i) => { if (local[i] !== own[i]) x = setChan(x, o.id, 'pos.' + ax, t, local[i], ak); });
+      }
+      if (rot && cur.type === 'camera') for (const k of ['h', 'p', 'b']) if (typeof rot[k] === 'number') x = setChan(x, o.id, 'rot.' + k, t, r2(rot[k]), ak);
       return x;
-    }, { key: 'tr:' + o.id });
+    }, { silent: true });
   };
   // F8 в игре: ключ выбранной (или активной) камеры из вида игрока
   const camKeyFromGame = async (view) => {
@@ -303,7 +357,7 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
     let cam = selRef.current.objs.map((id) => objById(s, id)).find((o) => o && o.type === 'camera') || activeCamera(s, t);
     let next = s;
     if (!cam) { const r = addObject(s, 'camera', { props: { pos: v.pos } }); next = r.scene; cam = objById(next, r.id); }
-    const vals = { 'pos.x': r2(v.pos[0]), 'pos.y': r2(v.pos[1]), 'pos.z': r2(v.pos[2]), yaw: Math.round((v.yaw || 0) * 10) / 10, pitch: Math.round((v.pitch || 0) * 10) / 10, fov: Math.round(v.fov || 70) };
+    const vals = { 'pos.x': r2(v.pos[0]), 'pos.y': r2(v.pos[1]), 'pos.z': r2(v.pos[2]), 'rot.h': Math.round((v.yaw || 0) * 10) / 10, 'rot.p': Math.round((v.pitch || 0) * 10) / 10, fov: Math.round(v.fov || 70) };
     for (const ch of Object.keys(vals)) next = setChan(next, cam.id, ch, t, vals[ch], true);
     edit(() => next);
     setSel({ objs: [cam.id] });
@@ -365,33 +419,29 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
   // ---------- живая связь: объекты, время, выделение, инструменты ----------
   const connected = !!link.connected;
   const selKey = sel.objs.join(',');
+  // объекты в момент бегунка (мировые координаты); при проигрывании — только позы через {t:'time'}
   useEffect(() => {
-    if (!connected || !scene) return undefined;
+    if (!connected || !scene || playing) return undefined;
     const tm = setTimeout(() => {
       const t = timeRef.current;
       const cam = activeCamera(scene, t);
-      send({ t: 'objects', data: { scene: scene.id, t, length: scene.length, active: cam ? cam.id : null, objects: objectsSnapshot(scene, t, selRef.current.objs) } });
-    }, 120);
+      send({ t: 'objects', data: { scene: scene.id, time: t, length: scene.length, active: cam ? cam.id : null, objects: objectsSnapshot(scene, t, selRef.current.objs) } });
+    }, 150);
     return () => clearTimeout(tm);
-  }, [connected, scene, selKey, send]);
-  // время: поза камеры (той, через которую смотрим, или активной по «Монтажу») и актёры-призраки
-  const lookId = game.lookThrough;
+  }, [connected, scene, selKey, time, playing, send]);
+  // время: готовые позы камер, актёров и анимированных объектов — игра берёт их вместо своего расчёта
   useEffect(() => {
     if (!connected || !scene) return undefined;
     const tm = setTimeout(() => {
       const t = timeRef.current;
-      const cam = (lookId && objById(scene, lookId)) || activeCamera(scene, t);
-      send({
-        t: 'time', t, playing,
-        camera: cam ? { id: cam.id, ...cameraPose(scene, cam, t) } : null,
-        look: lookId || null,
-        actors: (scene.actors || []).map((a) => { const p = actorPosAt(scene, a.id, t); return p ? { id: a.id, name: a.name || a.id, pos: p.pos, yaw: p.yaw } : null; }).filter(Boolean)
-      });
-    }, playing ? 0 : 40);
+      // поле «t» занято типом сообщения, поэтому время — в «time» (и «tick» на всякий случай)
+      send({ t: 'time', time: t, tick: t, playing, poses: posesAt(scene, t) });
+    }, playing ? 0 : 30);
     return () => clearTimeout(tm);
-  }, [connected, scene, time, lookId, playing, send]);
+  }, [connected, scene, time, playing, send]);
   useEffect(() => { if (connected) send({ t: 'select', ids: sel.objs }); }, [connected, selKey, send]); // eslint-disable-line
-  useEffect(() => { if (connected) send({ t: 'tool', tool, axes, space, snap }); }, [connected, tool, axes, space, snap, send]);
+  // snap для игры — шаг в блоках (0 — без привязки), rotSnap — шаг поворота в градусах
+  useEffect(() => { if (connected) send({ t: 'tool', tool, axes, space, snap: snap ? 1 : 0, rotSnap: snap ? 15 : 0 }); }, [connected, tool, axes, space, snap, send]);
   // призраки клонеров (props.preview): обновляются после правок; выключенный клонер — убрать
   const ghostSent = useRef(new Set());
   useEffect(() => {
@@ -405,7 +455,7 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
         try { pl = clonerOutput(scene, o, timeRef.current).slice(0, MAX_SEND); } catch (_) {}
         call('studio:ghost', { id: o.id, placements: pl }).catch(() => {});
       }
-      for (const id of ghostSent.current) if (!want.has(id)) call('studio:ghost', { id, placements: null }).catch(() => {});
+      for (const id of ghostSent.current) if (!want.has(id)) call('studio:ghost', { id, placements: [] }).catch(() => {});
       ghostSent.current = want;
     }, 300);
     return () => clearTimeout(tm);
@@ -415,10 +465,8 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
   const gameCmd = useMemo(() => ({
     editorCam: (on) => { setGame((g) => ({ ...g, editorCam: on })); send({ t: 'editorCam', on }); },
     lookThrough: (id) => {
-      setGame((g) => ({ ...g, lookThrough: id }));
-      const s = sceneRef.current;
-      const cam = id && s && objById(s, id);
-      send({ t: 'lookThrough', id: id || null, pose: cam ? cameraPose(s, cam, timeRef.current) : null });
+      setGame((g) => ({ ...g, lookThrough: id, editorCam: id ? true : g.editorCam }));
+      send({ t: 'lookThrough', id: id || null });
     },
     shaders: async (on) => {
       setGame((g) => ({ ...g, shaders: on }));
@@ -442,7 +490,7 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
       }
       if (!pts.length) { toast('У выбранного нет места в мире', 'warn'); return; }
       const b = placementsBox(pts.map((p) => ({ pos: p })));
-      send({ t: 'frame', ids, id: ids[0], center: b.center.map(r2), radius: r2(b.radius) });
+      send({ t: 'frame', ids, id: ids[0], pos: b.center.map(r2), dist: r2(Math.max(6, b.radius * 2.5)) });
       if (!linkRef.current.connected) toast('Нет связи с игрой — показать выбранное негде', 'warn');
     },
     keyAll: () => {
@@ -465,8 +513,8 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
     openScene, createScene, setScene: (s) => { setScene(s); }, markDirty,
     sel, setSel, selRef, selKeys, setSelKeys, time, setTime, timeRef, playing, setPlaying, autoKey, setAutoKey,
     tool, setTool, toggleLastTool, axes, setAxes, space, setSpace, snap: snap, setSnap: (v) => { setSnap(v); lsSet('snap', v); },
-    link, api, send, embed, embedCmd, pops, logs, addLog, hint, setHint, hp, toast, game, gameCmd, gameState,
-    issues, nErr, playInGame, stopInGame, gameVars, setGameVars, setGameVarsState, questStates,
+    link, setLink, api, send, embed, embedCmd, pops, logs, addLog, hint, setHint, hp, toast, game, gameCmd, gameState,
+    issues, nErr, playInGame, stopInGame, gameVars, setGameVars, setGameVarsState, questStates, bakeJob, keyActionRef,
     channelsOf: (o) => (o ? CHANNELS[o.type] || [] : [])
   };
 }

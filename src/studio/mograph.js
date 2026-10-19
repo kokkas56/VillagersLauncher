@@ -3,10 +3,10 @@
 //
 // Клонер раскладывает копии (линия / сетка / круг / по пути / случайно), эффекторы двигают, крутят, масштабируют
 // и прячут копии по номеру. На выходе — список «размещений» для игры:
-//   { pos:[x,y,z], rot:0..3, block:'minecraft:oak_log[axis=x]' }   — блок (поворот уже применён к состоянию)
-//   { pos, rot, template:'id' }                                       — шаблон постройки (поворот на 90°·rot)
-//   { pos, rot, yaw, scale, actor:{ kind, type, who, ref, name } }   — актёр/сущность
-//   { pos, rot, light: 0..15 }                                        — блок света
+//   { pos:[x,y,z], rot:0, block:'minecraft:oak_log[axis=x]' }       — блок (поворот уже применён к состоянию, поэтому rot 0)
+//   { pos, rot:0|90|180|270, template:'id' }                          — шаблон постройки, поворот в градусах
+//   { pos, yaw, scale, actor:{ kind, type, who, ref, name } }        — актёр/сущность
+//   { pos, light: 0..15 }                                             — блок света
 // Повороты блоков — только по 90° вокруг Y.
 
 export const CLONER_MODES = ['linear', 'grid', 'radial', 'spline', 'random'];
@@ -222,14 +222,15 @@ export function clonerPlacements(cl, sources, effectors, ctx) {
     const s = src[si];
     const pos = c.p.map(rint);
     const q = quarter(c.rot);
+    const rd = q * 90; // игре — градусы
     if (s.block !== undefined) {
       const k = Math.max(1, Math.min(8, Math.round(c.scale)));
       const b = rotateBlockState(s.block, q);
-      if (k === 1) put({ pos, rot: q, block: b });
-      else for (let y = 0; y < k; y++) for (let z = 0; z < k; z++) for (let x = 0; x < k; x++) put({ pos: [pos[0] + x, pos[1] + y, pos[2] + z], rot: q, block: b });
-    } else if (s.template !== undefined) put({ pos, rot: q, template: s.template });
-    else if (s.light !== undefined) put({ pos, rot: q, light: s.light });
-    else if (s.actor) put({ pos: c.p.map((v) => Math.round(v * 100) / 100), rot: q, yaw: Math.round(c.rot * 10) / 10, scale: Math.round(c.scale * 100) / 100, actor: s.actor });
+      if (k === 1) put({ pos, rot: 0, block: b });
+      else for (let y = 0; y < k; y++) for (let z = 0; z < k; z++) for (let x = 0; x < k; x++) put({ pos: [pos[0] + x, pos[1] + y, pos[2] + z], rot: 0, block: b });
+    } else if (s.template !== undefined) put({ pos, rot: rd, template: s.template });
+    else if (s.light !== undefined) put({ pos, light: s.light });
+    else if (s.actor) put({ pos: c.p.map((v) => Math.round(v * 100) / 100), yaw: Math.round(c.rot * 10) / 10, scale: Math.round(c.scale * 100) / 100, actor: s.actor });
     if (out.length > MAX_CLONES) break;
   }
   return out;

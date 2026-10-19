@@ -150,6 +150,7 @@ function createHelper(log) {
         waiting.clear();
         finish(false, 'PowerShell закрылся (код ' + code + ')');
       });
+      proc.stdin.on('error', () => {}); // PowerShell закрылся — запись в трубу не должна ронять лаунчер
       proc.stderr.setEncoding('utf8');
       proc.stderr.on('data', (d) => log && log('embed: ' + String(d).trim().slice(0, 300)));
       proc.stdout.setEncoding('utf8');

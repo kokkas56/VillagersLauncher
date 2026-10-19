@@ -86,7 +86,8 @@ module.exports = function setupStudioWindow({ handle, store, dev, getGame, linkI
     const saved = (store.get().studioPops || {})[tab];
     const w = makeWin({ ...(boundsOk(saved) ? saved : { width: 1240, height: 780 }), minWidth: 900, minHeight: 560, title: 'Студия Кокка — ' + POP_TITLE[tab] }, 'studio-pop=' + tab);
     pops.set(tab, w);
-    const remember = () => { if (w.isDestroyed() || w.isMinimized() || w.isMaximized()) return; store.set({ studioPops: { ...(store.get().studioPops || {}), [tab]: w.getBounds() } }); };
+    let tm = null;
+    const remember = () => { clearTimeout(tm); tm = setTimeout(() => { if (w.isDestroyed() || w.isMinimized() || w.isMaximized()) return; store.set({ studioPops: { ...(store.get().studioPops || {}), [tab]: w.getBounds() } }); }, 500); };
     w.on('resize', remember); w.on('move', remember);
     w.on('closed', () => { if (pops.get(tab) === w) pops.delete(tab); emitWin(); });
     emitWin();

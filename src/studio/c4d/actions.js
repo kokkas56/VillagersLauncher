@@ -129,11 +129,10 @@ export function makeActions(core) {
       if (pl.length > 20000 && !window.confirm('Копий ' + pl.length + ' — запекутся только первые 20000. Продолжить?')) return;
       const undoId = 'bake_' + o.id + '_' + Date.now().toString(36);
       try {
-        const r = await call('studio:bake', { id: o.id, placements: pl, undoId });
+        await call('studio:bake', { id: o.id, placements: pl, undoId });
         const rec = { undoId, obj: o.id, n: Math.min(pl.length, 20000), at: Date.now() };
         edit((sc) => ({ ...sc, bakes: [...(sc.bakes || []), rec].slice(-50) }));
-        if (r && r.ok === false) toast('Игра не запекла: ' + (r.error || '?'), 'error', 7000);
-        else toast(r && r.pending ? 'Отправил в игру — блоки ставятся постепенно' : 'Запечено в мир: ' + ((r && r.count) || rec.n) + ' блоков', 'ok', 4000);
+        toast('Запекаю в мир: ' + rec.n + ' размещений — игра ставит их по тикам', 'ok', 3000);
       } catch (e) { toast(e.message, 'error'); }
     },
     async unbake(id) {
@@ -142,10 +141,9 @@ export function makeActions(core) {
       const last = list[list.length - 1];
       if (!last) { toast('Этот клонер ещё не запекался', 'warn'); return; }
       try {
-        const r = await call('studio:undoBake', last.undoId);
-        if (r && r.ok === false) { toast('Игра не смогла отменить: ' + (r.error || '?'), 'error', 7000); return; }
+        await call('studio:undoBake', last.undoId);
         edit((sc) => ({ ...sc, bakes: (sc.bakes || []).filter((b) => b.undoId !== last.undoId) }));
-        toast('Запекание отменено — блоки вернулись как были', 'ok');
+        toast('Отменяю запекание — игра возвращает блоки как были', 'ok', 3000);
       } catch (e) { toast(e.message, 'error'); }
     }
   };
