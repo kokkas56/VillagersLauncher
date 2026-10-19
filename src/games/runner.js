@@ -201,7 +201,7 @@ export default {
     };
 
     const reset = () => {
-      mode = 'ready';
+      mode = 'run';
       time = 0; dist = 0; gems = 0; speedMul = 1; nextRow = 30; laneT = 1; laneX = 1; h = 0; vy = 0; slide = 0;
       bootsT = 0; invuln = 0; lastStumble = -100; near = 0; shake = 0; caughtT = 0;
       ents.length = 0;
@@ -234,7 +234,9 @@ export default {
       mode = 'run';
       sfx('click');
     };
+    const isAuto = () => typeof api.auto === 'function' && !!api.auto();
     const act = (a) => {
+      if (isAuto()) return;
       if (mode === 'ready') { start(); return; }
       if (mode !== 'run') return;
       if (a === 'L') doLeft();
@@ -250,6 +252,7 @@ export default {
       if (!a) return;
       e.preventDefault();
       if (e.repeat) return;
+      if (isAuto()) return;
       if (a === 'S') { if (mode === 'ready') start(); return; }
       act(a);
     };
@@ -319,8 +322,34 @@ export default {
     const playerScreenX = () => camX() + (laneX - 1) * LW;
     const camX = () => Math.round(W / 2 - (laneX - 1) * 14);
 
+    // автоигра: житель сам уворачивается пару секунд, потом спотыкается дважды и орда его ловит
+    let autoT = -1;
+    const autoPilot = (dt) => {
+      if (mode !== 'run') return;
+      if (autoT < 0) autoT = 0;
+      autoT += dt;
+      const lane = Math.round(laneX);
+      const ahead = (l, z0, z1) => ents.find((e) => e.lane === l && !e.hit && e.k !== 'gem' && e.k !== 'boots' && e.k !== 'deco' && e.z > z0 && e.z < z1);
+      if (autoT < 2.6) {
+        const e = ahead(lane, 0, 3.2);
+        if (!e) return;
+        if (e.k === 'fence' && e.z < 2.2) doJump();
+        else if (e.k === 'beam' && e.z < 1.6 && slide <= 0) doDuck();
+        else if (e.k === 'cart' || e.k === 'gap') {
+          const free = [lane - 1, lane + 1].filter((l) => l >= 0 && l <= 2 && !ahead(l, -1, 4));
+          if (free.length) laneT = free[0];
+          else if (e.k === 'gap' && e.z < 1.2) doJump();
+        }
+        return;
+      }
+      // дальше устал: не уворачивается; если долго не на что наткнуться — спотыкается сам
+      if (autoT > 3.6 && time - lastStumble > 1.4 && invuln <= 0) stumble();
+      if (autoT > 6.5) { invuln = 0; lastStumble = time; stumble(); }
+    };
+
     const update = (dt) => {
       clock += dt;
+      if (isAuto()) autoPilot(dt);
       // частицы
       for (const p of parts) {
         if (!p.on) continue;

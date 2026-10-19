@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useApp } from '../lib/app.jsx';
 import Icon from './Icon.jsx';
 import { SCENES } from './SceneHost.jsx';
+import { GAMES } from './GamesPanel.jsx';
 import * as music from '../lib/music.js';
 
 // Нижняя полоска главного экрана: сцена на фоне (◀ имя ▶, автосмена), музыка (нота + громкость), «Поиграть».
@@ -15,9 +16,10 @@ export function useMusic(settingsIn, gameRunning) {
   }, [settings.musicOn, settings.musicVol, settings.sfxVol, gameRunning]);
 }
 
-export default function FunBar({ onGames }) {
+export default function FunBar({ onPlay }) {
   const { t, settings, saveSettings } = useApp();
   const [volOpen, setVolOpen] = useState(false);
+  const [pick, setPick] = useState(false);
   const idx = Math.max(0, SCENES.findIndex((s) => s.id === (settings.scene || 'village')));
   const setScene = (i) => saveSettings({ scene: SCENES[(i + SCENES.length) % SCENES.length].id });
 
@@ -47,7 +49,17 @@ export default function FunBar({ onGames }) {
             onChange={(e) => saveSettings({ musicVol: +e.target.value / 100 })} />
         )}
       </div>
-      <button className="fun-play" onClick={onGames}><Icon name="star" size={12} /> {t('Поиграть')}</button>
+      <button className={'fun-play' + (pick ? ' on' : '')} onClick={() => setPick(!pick)}><Icon name="star" size={12} /> {t('Поиграть')}</button>
+      {pick && (
+        <div className="fun-games">
+          {GAMES.map((g) => (
+            <button key={g.id} className="fun-game" title={t(g.desc)} onClick={() => { setPick(false); onPlay(g.id); }}>
+              <b>{t(g.title)}</b>
+              <span className="muted">★ {(settings.gameBest || {})[g.id] || 0}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

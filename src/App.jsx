@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useApp } from './lib/app.jsx';
 import { call } from './lib/api.js';
 import SceneHost from './components/SceneHost.jsx';
 import { useMusic } from './components/FunBar.jsx';
-import GamesPanel from './components/GamesPanel.jsx';
+import GameStage from './components/GamesPanel.jsx';
 import Icon from './components/Icon.jsx';
 import Head from './components/Head.jsx';
 import { TitleBar, Toasts, Modal } from './components/ui.jsx';
@@ -40,7 +40,9 @@ export default function App() {
   const [donateOpen, setDonateOpen] = useState(false);
   const [crash, setCrash] = useState(null);
   const [consoleOpen, setConsoleOpen] = useState(false);
-  const [gamesOpen, setGamesOpen] = useState(false);
+  const [game, setGame] = useState(null); // { id, key, active }
+  const playing = !!(game && game.active);
+  const exitGame = useCallback(() => setGame((g) => (g ? { ...g, active: false } : g)), []);
   useMusic(settings, gameState.state === 'running' || gameState.state === 'starting');
   const [skin, setSkin] = useState(null);
   const [skinTick, setSkinTick] = useState(0);
@@ -67,13 +69,13 @@ export default function App() {
   const go = (p) => { setPage(p); };
   const openEditor = (initial) => setEditor(initial || {});
 
-  const pageProps = { go, openEditor, openAccounts: () => setAccountsOpen(true), openDonate: () => setDonateOpen(true), openGames: () => setGamesOpen(true), skin, refreshSkin: () => setSkinTick((n) => n + 1) };
+  const pageProps = { go, openEditor, openAccounts: () => setAccountsOpen(true), openDonate: () => setDonateOpen(true), playGame: (id) => setGame({ id, key: Date.now(), active: true }), skin, refreshSkin: () => setSkinTick((n) => n + 1) };
 
   return (
-    <div className={'app' + (settings.animations === false ? ' no-anim' : '')}>
-      <SceneHost sceneId={settings.scene || 'village'} paused={gameState.state === 'running' || !!editor || gamesOpen} animations={settings.animations !== false} hourOverride={settings.theme === 'day' ? 12 : settings.theme === 'night' ? 23 : settings.theme === 'evening' ? 19.2 : null} />
+    <div className={'app' + (settings.animations === false ? ' no-anim' : '') + (playing ? ' playing' : '')}>
+      <SceneHost sceneId={settings.scene || 'village'} paused={gameState.state === 'running' || !!editor || playing} animations={settings.animations !== false} hourOverride={settings.theme === 'day' ? 12 : settings.theme === 'night' ? 23 : settings.theme === 'evening' ? 19.2 : null} />
       <TitleBar />
-      {gamesOpen && <GamesPanel onClose={() => setGamesOpen(false)} />}
+      {game && <GameStage key={game.key} gameId={game.id} active={game.active} onExit={exitGame} onDone={() => setGame((g) => (g && !g.active ? null : g))} />}
       {editor ? (
         <SkinEditor initial={editor} onClose={() => setEditor(null)} />
       ) : (

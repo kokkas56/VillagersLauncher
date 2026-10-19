@@ -195,7 +195,9 @@ export default {
     // ---- ввод ----
     const KEYS_HIT = { Space: 1, Enter: 1, ArrowUp: 1, KeyW: 1 };
     const KEYS_DIG = { ArrowDown: 1, KeyS: 1 };
+    const isAuto = () => typeof api.auto === 'function' && !!api.auto();
     const onKeyDown = (e) => {
+      if (isAuto()) return;
       if (KEYS_HIT[e.code]) {
         e.preventDefault();
         if (e.repeat) return;
@@ -219,6 +221,7 @@ export default {
     let digPtrId = null;
     const onDown = (e) => {
       e.preventDefault();
+      if (isAuto()) return;
       if (mode === 'ready') { start(); return; }
       const p = toLocal(e);
       if (p.x >= BTN.x - 4 && p.y >= BTN.y - 4) {
@@ -281,7 +284,27 @@ export default {
       digHoldPtr = false;
       sfx('hit');
       pop(DIG_X, FLOOR - 40, '-1', '#ff7070');
-      if (lives <= 0) finish();
+      if (lives <= 0 || isAuto()) { if (isAuto()) lives = 0; finish(); }
+    };
+
+    // автоигра: пару раз бьёт по наковальне, потом лезет копать — стражник замечает и идёт к нему
+    let autoT = -1;
+    let autoDig = false;
+    const autoPilot = (dt) => {
+      if (mode !== 'run') return;
+      if (autoT < 0) { autoT = 0; digHoldKey = false; digHoldPtr = false; }
+      autoT += dt;
+      if (autoT < 2.4) {
+        if (order && orderGap <= 0 && hitCd <= 0 && Math.abs(marker - zoneC) < zoneW() / 2 * 0.8) hit();
+        return;
+      }
+      autoDig = true;
+      if (autoT > 3.4 && guard.state !== 'alert') {
+        guard.dir = DIG_X < guard.x ? -1 : 1;
+        if (guard.state !== 'walk') { guard.state = 'walk'; guard.t = 0; }
+        if (Math.abs(guard.x - DIG_X) <= VIS) { guard.state = 'look'; guard.t = 0; guard.look = 3; }
+      }
+      if (autoT > 7.5) { lives = 0; finish(); }
     };
 
     // ---- обновление ----
@@ -333,7 +356,9 @@ export default {
       }
 
       // подкоп
-      const want = (digHoldKey || digHoldPtr) && guard.state !== 'alert';
+      if (isAuto()) autoPilot(dt);
+      if (mode !== 'run') return;
+      const want = (digHoldKey || digHoldPtr || autoDig) && guard.state !== 'alert';
       digging = want;
       if (digging) {
         prog += dt / segTime();
@@ -732,6 +757,7 @@ export default {
       draw();
       raf = requestAnimationFrame(loop);
     };
+    start(); // сразу в смену, без экрана «Нажми, чтобы начать»
     raf = requestAnimationFrame(loop);
 
     return () => {

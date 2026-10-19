@@ -562,19 +562,30 @@ input[type='range'] { accent-color: var(--emerald); width: 100%; }
 .fun-vol { width: 90px; accent-color: var(--gold); }
 .fun-play { display: flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--line-2); color: var(--gold-2); border-radius: 999px; padding: 6px 12px; font-size: 12px; cursor: pointer; backdrop-filter: blur(6px); }
 .fun-play:hover { border-color: var(--gold); }
-.games-overlay { position: fixed; inset: 0; z-index: 55; background: rgba(6, 4, 3, 0.65); backdrop-filter: blur(4px); display: grid; place-items: center; animation: fade 0.2s; }
-.games-panel { width: min(1000px, calc(100vw - 40px)); max-height: calc(100vh - 60px); display: flex; flex-direction: column; gap: 10px; background: var(--panel-solid); border: 1px solid var(--line-2); border-radius: 18px; padding: 14px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6); }
-.games-head { display: flex; align-items: center; gap: 10px; }
-.games-head .grow { flex: 1; text-align: center; }
-.games-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-.game-card { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 16px; border-radius: 14px; background: var(--panel-2); border: 1px solid var(--line); color: var(--text); cursor: pointer; }
-.game-card:hover { border-color: var(--gold); }
-.games-share { grid-column: 1 / -1; }
-.game-stage { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.game-canvas { width: min(960px, calc(100vw - 80px), calc((100vh - 190px) * 16 / 9)); aspect-ratio: 16 / 9; image-rendering: pixelated; border-radius: 10px; background: #000; outline: none; }
-.game-result { position: absolute; inset: 0 0 24px 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; background: rgba(10, 7, 5, 0.78); border-radius: 10px; animation: fade 0.2s; }
+.fun-play.on { border-color: var(--gold); }
+.fun-games { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; width: 100%; animation: pageIn 0.25s ease both; }
+.fun-game { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); color: var(--text); font-size: 12px; cursor: pointer; backdrop-filter: blur(6px); }
+.fun-game:hover { border-color: var(--gold); transform: translateY(-1px); }
+/* игра вместо фона: кнопки лаунчера плавно уходят и так же возвращаются */
+.shell { transition: opacity 0.5s ease; }
+.app.playing .shell { opacity: 0; pointer-events: none; }
+.game-layer { position: fixed; inset: 0; z-index: 1; background: var(--bg); animation: gameIn 0.6s ease both; transition: opacity 0.9s ease; }
+.game-layer.active { z-index: 3; }
+.game-layer.auto { pointer-events: none; }
+.game-layer.fading { opacity: 0; }
+@keyframes gameIn { from { opacity: 0; } to { opacity: 1; } }
+.game-canvas { position: absolute; top: 34px; left: 0; width: 100%; height: calc(100% - 34px); object-fit: fill; image-rendering: pixelated; outline: none; }
+:fullscreen .game-canvas { top: 0; height: 100%; object-fit: contain; background: #000; }
+.game-top { position: absolute; bottom: 12px; left: 14px; right: 14px; display: flex; align-items: center; gap: 12px; pointer-events: none; }
+.game-top > * { pointer-events: auto; }
+.game-back { background: var(--panel); border: 1px solid var(--line-2); color: var(--text); border-radius: 999px; padding: 6px 12px; font-size: 12px; cursor: pointer; backdrop-filter: blur(6px); }
+.game-back:hover { border-color: var(--gold); }
+.game-title { font-size: 13px; text-shadow: 0 1px 3px #000; }
+.game-hint { text-shadow: 0 1px 3px #000; max-width: 55%; animation: hintOut 0.8s ease 7s both; }
+@keyframes hintOut { to { opacity: 0; visibility: hidden; } }
+.game-result { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); min-width: 300px; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px 24px; background: rgba(10, 7, 5, 0.82); border: 1px solid var(--line-2); border-radius: 16px; backdrop-filter: blur(6px); animation: pop 0.3s cubic-bezier(0.2, 1.4, 0.4, 1); }
 .game-score { font-family: var(--pixel); font-size: 34px; color: var(--gold-2); }
-.game-board { width: min(300px, 80%); display: flex; flex-direction: column; gap: 3px; margin: 6px 0; max-height: 200px; overflow: auto; }
+.game-board { width: 100%; display: flex; flex-direction: column; gap: 3px; margin: 6px 0; max-height: 200px; overflow: auto; }
 .board-row { display: flex; gap: 8px; font-size: 12px; }
 .board-row .grow { flex: 1; }
 .board-row.me { color: var(--emerald-2); }
