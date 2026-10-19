@@ -23,7 +23,7 @@ async function ghJson(method, url, token, body, extra) {
   return data;
 }
 
-/** {worker, repo, boosty} из публичного репозитория (кэш 5 минут). */
+/** {worker, boosty, latest} из публичного репозитория (кэш 5 минут). */
 async function config(force) {
   if (!force && cfgCache && Date.now() - cfgCache.t < 5 * 60e3) return cfgCache.c;
   let c = {};
@@ -37,7 +37,7 @@ async function config(force) {
   return c;
 }
 
-/** Автор: записать early.json (адрес воркера, закрытый репозиторий, Boosty). */
+/** Автор: записать early.json (адрес воркера, Boosty, какой выпуск сейчас ранний). */
 async function setConfig(patch) {
   const token = store.getSecret('githubToken');
   if (!token) throw new Error('Нужен токен GitHub (раздел «Автор»)');
@@ -76,7 +76,7 @@ async function login(force) {
   const res = await workerFetch('/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nick: acc.name, ticket: ch.ticket }) });
   const d = await res.json();
   if (!res.ok) throw new Error('Ранний доступ: ' + (d.error || res.status));
-  session = { accountId: accId, token: d.token, exp: Date.now() + 11 * 3600e3, nick: d.nick, access: !!d.access, until: d.until || null, friend: !!d.friend };
+  session = { accountId: accId, token: d.token, exp: Date.now() + 11 * 3600e3, nick: d.nick, access: !!d.access, live: !!d.live, until: d.until || null, friend: !!d.friend, forever: !!d.forever, versions: d.versions || [] };
   return session;
 }
 
@@ -92,7 +92,7 @@ async function status() {
   try {
     const s = await login();
     if (s.offline) return { ...out, offline: true, access: false };
-    return { ...out, nick: s.nick, access: s.access, until: s.until, friend: s.friend };
+    return { ...out, nick: s.nick, access: s.access, live: s.live, until: s.until, friend: s.friend, forever: s.forever, versions: s.versions || [] };
   } catch (e) {
     return { ...out, access: false, error: e.message };
   }
@@ -130,34 +130,46 @@ async function fileHeaders(url) {
   return headers();
 }
 
-// ---------- автор: список доступа (access.json в закрытом репозитории) ----------
-async function earlyRepo() {
-  const c = await config();
-  return c.repo || null;
-}
+// ---------- автор: управление через воркер (ключ автора) ----------
+function adminKey() { return store.getSecret('earlyAdminKey') || null; }
 
-async function getAccess() {
-  const token = store.getSecret('githubToken');
-  const repo = await earlyRepo();
-  if (!token || !repo) return { list: [], sha: null };
-  try {
-    const d = await ghJson('GET', `/repos/${repo}/contents/access.json?_=${Date.now()}`, token, null, { 'Cache-Control': 'no-cache' });
-    const v = JSON.parse(Buffer.from(d.content || '', 'base64').toString('utf8') || '[]');
-    return { list: Array.isArray(v) ? v : (v.people || []), sha: d.sha };
-  } catch (e) {
-    if (e.status === 404) return { list: [], sha: null };
-    throw e;
+async function admin(path, { method = 'GET', body, raw } = {}) {
+  const key = adminKey();
+  if (!key) throw new Error('Нужен ключ автора раннего доступа (ADMIN_KEY воркера) — вставь его в «Автор» → «Ранний доступ»');
+  const res = await workerFetch('/admin' + path, {
+    method,
+    headers: { Authorization: 'Admin ' + key, ...(body && !raw ? { 'Content-Type': 'application/json' } : {}) },
+    body: raw ? body : body ? JSON.stringify(body) : undefined
+  });
+  if (method === 'GET' && path.startsWith('/file/')) {
+    if (!res.ok) throw new Error('Воркер: файл не найден (' + res.status + ')');
+    return Buffer.from(await res.arrayBuffer());
   }
+  const text = await res.text();
+  let d = null;
+  try { d = text ? JSON.parse(text) : null; } catch (_) { d = text; }
+  if (res.status === 401) throw new Error('Воркер не принял ключ автора — проверь ADMIN_KEY');
+  if (!res.ok) throw new Error('Воркер: ' + ((d && (d.message || d.error)) || res.status));
+  return d;
 }
 
-async function setAccess(list) {
-  const token = store.getSecret('githubToken');
-  const repo = await earlyRepo();
-  if (!token || !repo) throw new Error('Сначала укажи закрытый репозиторий раннего доступа');
-  const cur = await getAccess();
-  const clean = list.map((x) => ({ nick: String(x.nick || '').trim(), until: x.until || null, friend: !!x.friend, note: x.note || '' })).filter((x) => x.nick);
-  await ghJson('PUT', `/repos/${repo}/contents/access.json`, token, { message: 'Ранний доступ: список', content: Buffer.from(JSON.stringify(clean, null, 2) + '\n').toString('base64'), ...(cur.sha ? { sha: cur.sha } : {}) });
-  return clean;
+async function people(q = '', offset = 0) { return admin(`/people?q=${encodeURIComponent(q)}&offset=${offset}`); }
+async function savePeople(list) { return admin('/people', { method: 'POST', body: list }); }
+async function deletePerson(nick) { return admin('/people/' + encodeURIComponent(nick), { method: 'DELETE' }); }
+async function codes() { return admin('/codes'); }
+async function saveCode(c) { return admin('/codes', { method: 'POST', body: c }); }
+async function deleteCode(code) { return admin('/codes/' + encodeURIComponent(code), { method: 'DELETE' }); }
+async function stats() { return admin('/stats'); }
+
+/** Игрок: активировать код (с Boosty). */
+async function redeem(code) {
+  await login();
+  if (!session || !session.token) throw new Error('Ранний доступ работает только с аккаунтом Ely.by');
+  const res = await workerFetch('/redeem', { method: 'POST', headers: { ...headers(), 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+  const d = await res.json();
+  if (!res.ok) throw new Error(d.error || ('HTTP ' + res.status));
+  session = null; // права изменились — войдём заново
+  return d;
 }
 
-module.exports = { config, setConfig, login, status, releases, manifest, latest, fileHeaders, earlyRepo, getAccess, setAccess, ghJson, reset: () => { session = null; cfgCache = null; } };
+module.exports = { config, setConfig, login, status, releases, manifest, latest, fileHeaders, admin, adminKey, people, savePeople, deletePerson, codes, saveCode, deleteCode, stats, redeem, ghJson, reset: () => { session = null; cfgCache = null; } };

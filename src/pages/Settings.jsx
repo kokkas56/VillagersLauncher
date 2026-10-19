@@ -11,6 +11,7 @@ export default function Settings() {
   const [javas, setJavas] = useState(null);
   const [releases, setReleases] = useState(null);
   const [earlyRels, setEarlyRels] = useState([]);
+  const [code, setCode] = useState('');
   const [checking, setChecking] = useState(false);
   const s = settings;
   const total = (info && info.totalMb) || 8192;
@@ -149,16 +150,19 @@ export default function Settings() {
         {pack && pack.early && pack.early.enabled && (
           <div className="field">
             <span>{t('Ранний доступ')}</span>
-            {pack.early.access ? (
+            {pack.early.access && (
               <>
-                <div className="ok-box"><Icon name="star" /> {pack.early.friend ? t('Доступ открыт (друг сборки)') : pack.early.until ? `${t('Доступ до')} ${pack.early.until}` : t('Доступ открыт')} · {pack.early.nick}</div>
+                <div className="ok-box"><Icon name="star" /> {pack.early.friend ? t('Друг сборки: все ранние версии') : pack.early.forever ? t('Навсегда: все ранние версии') : [pack.early.until ? (pack.early.live ? `${t('Подписка до')} ${pack.early.until}` : `${t('Подписка закончилась')} ${pack.early.until} — ${t('вышедшие за неё версии остаются твоими')}`) : null, (pack.early.versions || []).length ? `${t('Твои версии')}: ${pack.early.versions.map((v) => v.replace('pack-', '#')).join(', ')}` : null].filter(Boolean).join(' · ')} · {pack.early.nick}</div>
                 <Toggle checked={s.useEarly !== false} onChange={(v) => set({ useEarly: v })} label={t('Получать ранние версии')} hint={t('Новые сборки приходят раньше, чем ко всем. Если выключить — будешь на общих.')} />
               </>
-            ) : (
+            )}
+            {!pack.early.access && <span className="muted small">{pack.early.offline ? t('Ранний доступ работает только с аккаунтом Ely.by.') : t('Новые версии сначала выходят для тех, кто поддерживает сборку, потом — для всех бесплатно.')}{pack.early.nick ? ` (${pack.early.nick})` : ''}</span>}
+            {!pack.early.offline && (
               <div className="row">
-                <span className="muted small grow">{pack.early.offline ? t('Ранний доступ работает только с аккаунтом Ely.by.') : t('Новые версии сначала выходят для тех, кто поддерживает сборку, потом — для всех бесплатно.')}{pack.early.nick ? ` (${pack.early.nick})` : ''}</span>
-                {pack.early.boosty && <button className="btn sm primary" onClick={() => call('shell:open', pack.early.boosty)}>{t('Поддержать на Boosty')}</button>}
-                <button className="btn sm ghost" onClick={async () => { await call('early:status'); refreshPack(); }}><Icon name="refresh" size={12} /></button>
+                <input className="input sm mono grow" placeholder={t('Код с Boosty')} value={code} onChange={(e) => setCode(e.target.value)} />
+                <button className="btn sm primary" disabled={!code.trim()} onClick={async () => { try { const r = await call('early:redeem', code.trim()); toast(r.what || t('Код принят'), 'ok', 9000); setCode(''); await call('early:status'); refreshPack(); call('early:releases').then(setEarlyRels).catch(() => {}); } catch (e) { toast(e.message, 'error', 8000); } }}>{t('Активировать')}</button>
+                {pack.early.boosty && <button className="btn sm" onClick={() => call('shell:open', pack.early.boosty)}>{t('Boosty')}</button>}
+                <button className="btn sm ghost" title={t('Проверить доступ')} onClick={async () => { await call('early:status'); refreshPack(); }}><Icon name="refresh" size={12} /></button>
               </div>
             )}
           </div>

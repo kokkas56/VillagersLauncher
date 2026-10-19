@@ -548,3 +548,4 @@ input[type='range'] { accent-color: var(--emerald); width: 100%; }
 .rel .rel-actions { display: flex; gap: 4px; flex-wrap: wrap; }
 .rel.hidden-rel { opacity: .55; }
 .rel { flex-wrap: wrap; }
+.row.wrap { flex-wrap: wrap; }
