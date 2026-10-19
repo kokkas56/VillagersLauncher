@@ -4,6 +4,7 @@ import { GAMES } from '../games/index.js';
 import * as music from '../lib/music.js';
 import { call } from '../lib/api.js';
 import { REWARDS, AUTHOR_NICK } from '../games/rewards.js';
+import { KOKK_SKIN } from '../games/kokkSkin.js';
 
 // Фоны лаунчера: деревня + каждая мини-игра в спокойном режиме (жизнь идёт своим чередом)
 // + фоны-награды (отдельные сцены из игр, только спокойная жизнь).
@@ -22,7 +23,8 @@ const skinCache = {};
 function loadSkin(nick) {
   if (!nick) return Promise.resolve(null);
   if (!skinCache[nick]) {
-    skinCache[nick] = call('skin:ely', nick).then((e) => new Promise((res) => {
+    const src = nick === AUTHOR_NICK ? Promise.resolve({ dataUrl: KOKK_SKIN }) : call('skin:ely', nick);
+    skinCache[nick] = src.then((e) => new Promise((res) => {
       if (!e || !e.dataUrl) return res(null);
       const img = new Image();
       img.onload = () => res(img);
