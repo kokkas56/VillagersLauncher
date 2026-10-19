@@ -177,7 +177,7 @@ handle('early:status', async () => { early.reset(); return early.status(); });
 handle('early:releases', () => early.releases());
 handle('early:config', () => early.config(true));
 handle('early:setConfig', (patch) => early.setConfig(patch));
-handle('early:people', ({ q, offset } = {}) => early.people(q || '', offset || 0));
+handle('early:people', ({ q, after } = {}) => early.people(q || '', after || null));
 handle('early:savePeople', (list) => early.savePeople(list));
 handle('early:deletePerson', (nick) => early.deletePerson(nick));
 handle('early:codes', () => early.codes());

@@ -233,9 +233,9 @@ async function sync(manifest, gameDir, progress, { verify = false } = {}) {
   }
   cache.save();
   if (toGet.length) {
-    const ecfg = await early.config();
-    const hdr = ecfg.worker && toGet.some((f) => f.url && f.url.startsWith(ecfg.worker)) ? await early.fileHeaders(ecfg.worker) : null;
-    await netu.downloadAll(toGet.map((f) => ({ url: f.url, file: f.file, sha1: f.sha1, size: f.size, name: f.path, headers: hdr && f.url.startsWith(ecfg.worker) ? hdr : undefined })), {
+    // ранние выпуски: адреса в манифесте меняются на подписанные ссылки хранилища (на час)
+    const items = await early.resolveUrls(toGet.map((f) => ({ url: f.url, file: f.file, sha1: f.sha1, size: f.size, name: f.path })));
+    await netu.downloadAll(items, {
       threads: s.downloadThreads || 8,
       onProgress: (p) => progress({ stage: 'pack', text: `Скачиваю сборку: ${p.files}/${p.filesTotal}`, bytes: p.bytes, total: p.total })
     });
@@ -298,7 +298,7 @@ async function publish({ title, text, noNews, early: isEarly, freeAt }, progress
   const token = store.getSecret('githubToken');
   if (!token) throw new Error('Добавь токен GitHub в разделе «Автор»');
   const ecfg = await early.config(true);
-  if (isEarly && (!ecfg.worker || !early.adminKey())) throw new Error('Ранний доступ не настроен: укажи адрес воркера и ключ автора в разделе «Автор»');
+  if (isEarly && (!ecfg.worker || !early.adminKey())) throw new Error('Ранний доступ не настроен: укажи адрес функции и ключ автора в разделе «Автор»');
   const R = repo();
   const isWorkerUrl = (u) => !!(ecfg.worker && u && u.startsWith(ecfg.worker));
   progress({ stage: 'publish', text: 'Сравниваю с опубликованной сборкой…', indeterminate: true });
@@ -339,7 +339,7 @@ async function publish({ title, text, noNews, early: isEarly, freeAt }, progress
       let name = safeAssetName(f.sha1, f.path);
       while (usedNames.has(name.toLowerCase())) name = 'x' + name;
       usedNames.add(name.toLowerCase());
-      entry.url = isEarly ? `${ecfg.worker}/file/${tag}/${name}` : `https://github.com/${R}/releases/download/${tag}/${name}`;
+      entry.url = isEarly ? early.fileUrl(ecfg.worker, tag, name) : `https://github.com/${R}/releases/download/${tag}/${name}`;
       uploads.push({ name, abs: path.join(s.authorSourceDir, f.path), size: f.size });
     }
     files.push(entry);
@@ -490,18 +490,18 @@ async function openEarly(tag, progress = () => {}) {
   try { pr = await gh('GET', `/repos/${pub}/releases/tags/${tag}`, token); } catch (_) {}
   if (!pr) pr = await gh('POST', `/repos/${pub}/releases`, token, { tag_name: tag, name: rel.name, body: text, draft: true });
   const have = new Set((pr.assets || []).map((a) => a.name));
-  const prefix = ecfg.worker + '/file/';
-  const mine = m.files.filter((f) => f.url && f.url.startsWith(prefix + tag + '/'));
+  const mine = m.files.filter((f) => { const x = early.parseFileUrl(ecfg.worker, f.url); return x && x.tag === tag; });
   let n = 0;
   for (const f of m.files) {
-    if (!f.url || !f.url.startsWith(prefix)) continue;
-    const [, t, name] = f.url.slice(prefix.length - 1).match(/^\/([^/]+)\/(.+)$/) || [];
-    if (t === tag && !have.has(decodeURIComponent(name))) {
-      const buf = await early.admin(`/file/${tag}/${name}`);
-      await gh('POST', `https://uploads.github.com/repos/${pub}/releases/${pr.id}/assets?name=${name}`, token, buf, { 'Content-Type': 'application/octet-stream' });
+    const x = early.parseFileUrl(ecfg.worker, f.url);
+    if (!x) continue;
+    if (x.tag === tag && !have.has(x.name)) {
+      const buf = await early.admin(`/file/${tag}/${encodeURIComponent(x.name)}`);
+      await gh('POST', `https://uploads.github.com/repos/${pub}/releases/${pr.id}/assets?name=${encodeURIComponent(x.name)}`, token, buf, { 'Content-Type': 'application/octet-stream' });
+      have.add(x.name);
       progress({ stage: 'publish', text: `Открываю ${tag} для всех: ${++n}/${mine.length}`, bytes: n, total: mine.length || 1 });
     }
-    f.url = `https://github.com/${pub}/releases/download/${t}/${name}`;
+    f.url = `https://github.com/${pub}/releases/download/${x.tag}/${x.name}`;
   }
   delete m.early;
   const old = (pr.assets || []).find((a) => a.name === 'manifest.json');

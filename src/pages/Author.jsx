@@ -95,7 +95,14 @@ function EarlyAccess({ t, toast, refreshPack }) {
   const [np, setNp] = useState({ nick: '', kind: 'sub', until: new Date(Date.now() + 31 * 864e5).toISOString().slice(0, 10), note: '' });
   const [nc, setNc] = useState({ kind: 'sub', days: 31, maxUses: 1000, expires: new Date(Date.now() + 40 * 864e5).toISOString().slice(0, 10), note: '', code: '' });
   const err = (e) => toast(e.message, 'error', 9000);
-  const loadPeople = async (qq = q) => { try { setPeople(await call('early:people', { q: qq })); } catch (e) { err(e); } };
+  const [nextPage, setNextPage] = useState(null);
+  const loadPeople = async (qq = q, more = false) => {
+    try {
+      const r = await call('early:people', { q: qq, after: more ? nextPage : null });
+      setPeople(more ? [...people, ...(r.items || [])] : (r.items || []));
+      setNextPage(r.next || null);
+    } catch (e) { err(e); }
+  };
   const load = async () => {
     try { setCfg(await call('early:config')); } catch (e) { setCfg({}); }
     const k = await call('early:hasKey');
@@ -114,19 +121,20 @@ function EarlyAccess({ t, toast, refreshPack }) {
   const rightsText = (x) => x.friend ? t('друг') : x.forever ? t('навсегда ко всему') : [x.until ? (x.until >= today ? t('подписка до') + ' ' + x.until : t('подписка истекла') + ' ' + x.until) : null, x.versions && x.versions.length ? t('версии') + ': ' + x.versions.map((v) => v.replace('pack-', '#')).join(', ') : null].filter(Boolean).join(' · ') || '—';
   return (
     <div className="form">
-      <p className="muted small">{t('Новые сборки сначала выходят только для поддержавших и друзей, в назначенный день — для всех. Файлы ранних версий лежат в хранилище Cloudflare, лаунчер отдаёт их только тем, у кого есть права (вход через Ely.by). Как включить — в инструкции early-worker/README.md.')}</p>
-      <label>{t('Адрес воркера')}<input className="input mono" placeholder="https://villagers-early.<имя>.workers.dev" value={cfg.worker || ''} onChange={(e) => setCfg({ ...cfg, worker: e.target.value })} /></label>
+      <p className="muted small">{t('Новые сборки сначала выходят только для поддержавших и друзей, в назначенный день — для всех. Файлы ранних версий лежат в твоём хранилище Яндекс Облака, лаунчер выдаёт ссылки на них только тем, у кого есть права (вход через Ely.by). Как включить — в инструкции early-yandex/README.md.')}</p>
+      <label>{t('Адрес функции')}<input className="input mono" placeholder="https://functions.yandexcloud.net/d4e…" value={cfg.worker || ''} onChange={(e) => setCfg({ ...cfg, worker: e.target.value })} /></label>
       <label>{t('Ссылка на Boosty')}<input className="input mono" placeholder="https://boosty.to/…" value={cfg.boosty || ''} onChange={(e) => setCfg({ ...cfg, boosty: e.target.value })} /></label>
       <button className="btn sm" onClick={saveCfg}>{t('Сохранить настройки')}</button>
-      <label>{t('Ключ автора (ADMIN_KEY воркера)')}
+      <label>{t('Ключ автора (ADMIN_KEY функции)')}
         <div className="row">
           <input className="input mono grow" type="password" placeholder={hasKey ? t('сохранён — введи новый, чтобы заменить') : ''} value={key} onChange={(e) => setKey(e.target.value)} />
           <button className="btn sm" disabled={!key.trim()} onClick={async () => { await call('early:setKey', key.trim()); setKey(''); load(); }}>{t('Сохранить')}</button>
         </div>
       </label>
+      {(!hasKey || !stats) && <div className="muted small">{t('Добавление людей, «друзья» и коды для Boosty появятся здесь, когда будут сохранены адрес функции и ключ автора и функция ответит. Как её создать — инструкция early-yandex/README.md (Яндекс Облако, ~20 минут).')}</div>}
       {hasKey && stats && (
         <>
-          <div className="ok-box"><Icon name="star" /> {t('Людей')}: {stats.people} · {t('с доступом сейчас')}: {stats.active} · {t('кодов')}: {stats.codes} · {t('ранних выпусков')}: {stats.early}</div>
+          <div className="ok-box"><Icon name="star" /> {t('Людей в списке')}: {stats.people} · {t('кодов')}: {stats.codes} · {t('ранних выпусков')}: {stats.early}</div>
 
           <h4>{t('Добавить человека')}</h4>
           <div className="row wrap">
@@ -143,7 +151,7 @@ function EarlyAccess({ t, toast, refreshPack }) {
 
           <h4>{t('Люди')}</h4>
           <div className="row">
-            <input className="input sm grow" placeholder={t('поиск по нику или заметке')} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && loadPeople()} />
+            <input className="input sm grow" placeholder={t('поиск по началу ника')} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && loadPeople()} />
             <button className="btn sm" onClick={() => loadPeople()}><Icon name="refresh" size={12} /></button>
           </div>
           <div className="rel-list">
@@ -160,7 +168,7 @@ function EarlyAccess({ t, toast, refreshPack }) {
               );
             })}
             {people.length === 0 && <span className="muted small">{t('Никого не найдено.')}</span>}
-            {people.length === 100 && <span className="muted small">{t('Показаны первые 100 — уточни поиск.')}</span>}
+            {nextPage && <button className="btn sm ghost" onClick={() => loadPeople(q, true)}>{t('Показать ещё')}</button>}
           </div>
 
           <h4>{t('Коды для Boosty')}</h4>

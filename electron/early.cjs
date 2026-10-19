@@ -1,5 +1,5 @@
 'use strict';
-// Ранний доступ: выпуски сборки сначала в закрытом репозитории, их отдаёт воркер Cloudflare тем, кто в списке доступа.
+// Ранний доступ: файлы ранних выпусков лежат в бакете Яндекс Облака, ссылки на них выдаёт функция (early-yandex/index.js) тем, у кого есть права.
 // Настройка (адрес воркера, закрытый репозиторий, ссылка на Boosty) лежит в публичном репозитории сборки: early.json.
 // Личность игрока: вход на «сервер» через Ely.by (session/join) — воркер проверяет hasJoined, пароли не передаются.
 const store = require('./store.cjs');
@@ -52,10 +52,54 @@ async function setConfig(patch) {
   return next;
 }
 
+/** Адрес функции + маршрут (функция Яндекса принимает маршрут в параметре r). */
+function routeUrl(base, path) {
+  const i = path.indexOf('?');
+  const route = i < 0 ? path : path.slice(0, i);
+  const rest = i < 0 ? '' : '&' + path.slice(i + 1);
+  return base + (base.includes('?') ? '&' : '?') + 'r=' + encodeURIComponent(route) + rest;
+}
+
 async function workerFetch(path, opts = {}) {
   const c = await config();
   if (!c.worker) throw new Error('Ранний доступ не настроен');
-  return netu.fetchRaw(c.worker + path, opts);
+  return netu.fetchRaw(routeUrl(c.worker, path), opts);
+}
+
+/** Адрес файла раннего выпуска в манифесте (сам файл скачивается по подписанной ссылке). */
+function fileUrl(base, tag, name) { return routeUrl(base, `/file/${tag}/${name}`); }
+function parseFileUrl(base, url) {
+  if (!base || !url || !url.startsWith(base)) return null;
+  try {
+    const r = new URL(url).searchParams.get('r') || '';
+    const m = r.match(/^\/file\/([^/]+)\/(.+)$/);
+    return m ? { tag: m[1], name: m[2] } : null;
+  } catch (_) { return null; }
+}
+
+/** Игрок: подписанные ссылки на файлы ранних выпусков (по выпускам, пачками). items: [{url, ...}] — url заменяется. */
+async function resolveUrls(items) {
+  const c = await config();
+  if (!c.worker) return items;
+  const byTag = new Map();
+  for (const it of items) {
+    const f = parseFileUrl(c.worker, it.url);
+    if (!f) continue;
+    if (!byTag.has(f.tag)) byTag.set(f.tag, []);
+    byTag.get(f.tag).push([it, f.name]);
+  }
+  if (!byTag.size) return items;
+  await login();
+  for (const [tag, list] of byTag) {
+    for (let i = 0; i < list.length; i += 1000) {
+      const part = list.slice(i, i + 1000);
+      const res = await workerFetch('/sign', { method: 'POST', headers: { ...headers(), 'Content-Type': 'application/json' }, body: JSON.stringify({ tag, names: part.map((x) => x[1]) }) });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error === 'no_access' ? 'Нет доступа к ранней версии ' + tag.replace('pack-', '#') + ' — проверь права в «Настройки → Сборка»' : 'Ранний доступ: ' + (d.error || res.status));
+      for (const [it, name] of part) if (d.urls[name]) it.url = d.urls[name];
+    }
+  }
+  return items;
 }
 
 /** Вход: join через Ely.by → токен воркера на 12 часов (для выбранного аккаунта). */
@@ -108,8 +152,10 @@ async function releases() {
 }
 
 async function manifest(tag) {
-  await login();
-  const res = await workerFetch('/manifest/' + encodeURIComponent(tag), { headers: headers() });
+  const c = await config();
+  const it = { url: fileUrl(c.worker, tag, 'manifest.json') };
+  await resolveUrls([it]);
+  const res = await netu.fetchRaw(it.url);
   if (!res.ok) throw new Error('Ранний выпуск недоступен: HTTP ' + res.status);
   return res.json();
 }
@@ -122,38 +168,41 @@ async function latest() {
   return manifest(top.tag);
 }
 
-/** Заголовки для загрузки файла (только для адресов воркера). */
-async function fileHeaders(url) {
-  const c = await config();
-  if (!c.worker || !url || !url.startsWith(c.worker)) return null;
-  await login();
-  return headers();
-}
-
 // ---------- автор: управление через воркер (ключ автора) ----------
 function adminKey() { return store.getSecret('earlyAdminKey') || null; }
 
 async function admin(path, { method = 'GET', body, raw } = {}) {
+  // файлы: напрямую в хранилище по подписанной ссылке (функция только выдаёт ссылку)
+  const fm = path.match(/^\/file\/([^/]+)\/(.+)$/);
+  if (fm) {
+    const tag = fm[1]; const name = decodeURIComponent(fm[2]);
+    if (method === 'PUT') {
+      const { url } = await admin('/upload', { method: 'POST', body: { tag, name } });
+      const res = await netu.fetchRaw(url, { method: 'PUT', body });
+      if (!res.ok) throw new Error('Хранилище не приняло файл ' + name + ': HTTP ' + res.status);
+      return true;
+    }
+    const { url } = await admin('/download', { method: 'POST', body: { tag, name } });
+    const res = await netu.fetchRaw(url);
+    if (!res.ok) throw new Error('Хранилище: файл не найден ' + name + ' (' + res.status + ')');
+    return Buffer.from(await res.arrayBuffer());
+  }
   const key = adminKey();
-  if (!key) throw new Error('Нужен ключ автора раннего доступа (ADMIN_KEY воркера) — вставь его в «Автор» → «Ранний доступ»');
+  if (!key) throw new Error('Нужен ключ автора раннего доступа (ADMIN_KEY функции) — вставь его в «Автор» → «Ранний доступ»');
   const res = await workerFetch('/admin' + path, {
     method,
     headers: { Authorization: 'Admin ' + key, ...(body && !raw ? { 'Content-Type': 'application/json' } : {}) },
     body: raw ? body : body ? JSON.stringify(body) : undefined
   });
-  if (method === 'GET' && path.startsWith('/file/')) {
-    if (!res.ok) throw new Error('Воркер: файл не найден (' + res.status + ')');
-    return Buffer.from(await res.arrayBuffer());
-  }
   const text = await res.text();
   let d = null;
   try { d = text ? JSON.parse(text) : null; } catch (_) { d = text; }
-  if (res.status === 401) throw new Error('Воркер не принял ключ автора — проверь ADMIN_KEY');
-  if (!res.ok) throw new Error('Воркер: ' + ((d && (d.message || d.error)) || res.status));
+  if (res.status === 401) throw new Error('Функция не приняла ключ автора — проверь ADMIN_KEY');
+  if (!res.ok) throw new Error('Ранний доступ: ' + ((d && (d.message || d.error)) || res.status));
   return d;
 }
 
-async function people(q = '', offset = 0) { return admin(`/people?q=${encodeURIComponent(q)}&offset=${offset}`); }
+async function people(q = '', after = null) { return admin(`/people?q=${encodeURIComponent(q)}${after ? '&after=' + encodeURIComponent(after) : ''}`); }
 async function savePeople(list) { return admin('/people', { method: 'POST', body: list }); }
 async function deletePerson(nick) { return admin('/people/' + encodeURIComponent(nick), { method: 'DELETE' }); }
 async function codes() { return admin('/codes'); }
@@ -172,4 +221,4 @@ async function redeem(code) {
   return d;
 }
 
-module.exports = { config, setConfig, login, status, releases, manifest, latest, fileHeaders, admin, adminKey, people, savePeople, deletePerson, codes, saveCode, deleteCode, stats, redeem, ghJson, reset: () => { session = null; cfgCache = null; } };
+module.exports = { config, setConfig, login, status, releases, manifest, latest, fileUrl, parseFileUrl, resolveUrls, routeUrl, admin, adminKey, people, savePeople, deletePerson, codes, saveCode, deleteCode, stats, redeem, ghJson, reset: () => { session = null; cfgCache = null; } };
