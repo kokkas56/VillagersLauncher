@@ -32,7 +32,10 @@ export default function Graph({ dialog, refs, sel, onSelect, edit, gesture, hp, 
     return m;
   }, [nodes, refs]);
 
-  const fit = () => {
+  const latest = useRef(null);
+  latest.current = { nodes, boxes, size };
+  const fit = (all) => {
+    const { nodes, boxes, size } = latest.current; // eslint-disable-line no-shadow
     const ids = Object.keys(nodes);
     if (!ids.length) { setView({ x: 40, y: 40, k: 1 }); return; }
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -41,8 +44,10 @@ export default function Graph({ dialog, refs, sel, onSelect, edit, gesture, hp, 
       x0 = Math.min(x0, n.x || 0); y0 = Math.min(y0, (n.y || 0) - 18);
       x1 = Math.max(x1, (n.x || 0) + b.w); y1 = Math.max(y1, (n.y || 0) + b.h);
     }
-    const k = Math.max(0.3, Math.min(1.15, (size.w - 50) / (x1 - x0 || 1), (size.h - 40) / (y1 - y0 || 1)));
-    setView({ k, x: (size.w - (x1 - x0) * k) / 2 - x0 * k, y: Math.max(14, (size.h - (y1 - y0) * k) / 2) - y0 * k });
+    // «Всё видно» — целиком; при открытии — не мельче 55%, чтобы читалось (тогда видно начало слева)
+    const k = Math.max(all ? 0.25 : 0.55, Math.min(1.1, (size.w - 50) / (x1 - x0 || 1), (size.h - 40) / (y1 - y0 || 1)));
+    const fx = (size.w - (x1 - x0) * k) / 2, fy = (size.h - (y1 - y0) * k) / 2;
+    setView({ k, x: Math.max(20, fx) - x0 * k, y: Math.max(20, fy) - y0 * k });
   };
   const fitKey = dialog.id + ':' + (size.w > 300 ? 1 : 0);
   useEffect(() => { fit(); }, [fitKey]); // eslint-disable-line
@@ -198,7 +203,7 @@ export default function Graph({ dialog, refs, sel, onSelect, edit, gesture, hp, 
         <button className="btn sm ghost icon-btn" onClick={() => setView((v) => ({ ...v, k: Math.max(0.25, v.k / 1.25), x: size.w / 2 - (size.w / 2 - v.x) / 1.25, y: size.h / 2 - (size.h / 2 - v.y) / 1.25 }))} {...hp('Отдалить (или колесо мыши вниз).')}>−</button>
         <span className="gr-zoom mono small" {...hp('Масштаб графа.')}>{Math.round(view.k * 100)}%</span>
         <button className="btn sm ghost icon-btn" onClick={() => setView((v) => ({ ...v, k: Math.min(2, v.k * 1.25), x: size.w / 2 - (size.w / 2 - v.x) * 1.25, y: size.h / 2 - (size.h / 2 - v.y) * 1.25 }))} {...hp('Приблизить (или колесо мыши вверх).')}>+</button>
-        <button className="btn sm ghost" onClick={fit} {...hp('Показать весь диалог целиком.')}>Всё видно</button>
+        <button className="btn sm ghost" onClick={() => fit(true)} {...hp('Показать весь диалог целиком.')}>Всё видно</button>
       </div>
       <div className="gr-wrap" ref={wrapRef}>
         <svg ref={svgRef} className="gr-svg" width={size.w} height={size.h} onPointerDown={startBg} onContextMenu={onCtx}>
@@ -285,7 +290,8 @@ const Node = React.memo(function Node({ id, n, b, start, sel, bad, onDown, onPor
         <g key={r.key} className="gn-row">
           <line x1={8} x2={b.w - 8} y1={r.y - 11} y2={r.y - 11} className="gn-sep" />
           {n.type === 'choice' && <text x={11} y={r.y + 4} className="gn-num">{i + 1}.</text>}
-          {r.cond && <g><circle cx={b.w - 22} cy={r.y} r={6} className="gn-qc" /><text x={b.w - 22} y={r.y + 3.5} textAnchor="middle" className="gn-q">?</text></g>}
+          {r.cond && <g><circle cx={b.w - 22} cy={r.y} r={6} className="gn-qc" /><text x={b.w - 22} y={r.y + 3.5} textAnchor="middle" className="gn-q">?</text><title>У варианта есть условие</title></g>}
+          {r.act && <g><circle cx={b.w - (r.cond ? 37 : 22)} cy={r.y} r={6} className="gn-ac" /><text x={b.w - (r.cond ? 37 : 22)} y={r.y + 3.5} textAnchor="middle" className="gn-a">⚙</text><title>При выборе выполняются действия</title></g>}
           <text x={n.type === 'choice' ? 26 : 11} y={r.y + 4} className={'gn-opt' + (n.type === 'cond' ? (r.key === 'then' ? ' yes' : ' no') : '')}>{n.type === 'cond' ? (r.key === 'then' ? '✓ да' : '✕ нет') : r.label}</text>
           <circle cx={b.w} cy={r.y} r={5.5} className="gn-port" data-port={r.key} onPointerDown={(e) => onPort(e, id, r.key)} style={{ fill: def.color }}>
             <title>Тяни отсюда стрелку к следующему узлу</title>

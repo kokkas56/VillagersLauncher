@@ -65,7 +65,7 @@ export function nodeBox(n, refs) {
     }
     case 'choice': {
       if (n.text) wrap(n.text, CPL, 2).forEach((t) => lines.push({ t, cls: 'dim' }));
-      (n.options || []).forEach((o, i) => rows.push({ key: 'opt:' + i, label: clip((o && o.text) || 'вариант ' + (i + 1), 27), cond: !!(o && Array.isArray(o.when) && o.when.length) }));
+      (n.options || []).forEach((o, i) => rows.push({ key: 'opt:' + i, label: clip((o && o.text) || 'вариант ' + (i + 1), 25), cond: !!(o && Array.isArray(o.when) && o.when.length), act: !!(o && Array.isArray(o.do) && o.do.length) }));
       break;
     }
     case 'cond': {
@@ -204,7 +204,7 @@ const QOP = { start: 'начать', advance: 'продвинуть', complete: 
 const short = (id) => String(id || '?').replace(/^minecraft:/, '');
 export function condText(c, refs) {
   switch (condKind(c)) {
-    case 'var': return (c.var || '?') + ' ' + (OP_RU[c.op || '=='] || c.op) + ' ' + valText(c.value);
+    case 'var': return (c.var || '?') + ' ' + (OP_RU[c.op || '=='] || c.op) + ' ' + valText(c.value === undefined ? true : c.value);
     case 'quest': return 'задание «' + docTitle(refs && refs.quests, c.quest) + '» ' + (QSTATE[c.state || 'active'] || c.state) + (c.step ? ', шаг ' + c.step : '');
     case 'item': return 'есть ' + (c.count || 1) + ' × ' + short(c.item);
     case 'trust': return 'доверие ' + actorNm(refs, c.trust) + ' ' + (OP_RU[c.op || '>='] || c.op) + ' ' + c.value;
@@ -213,6 +213,7 @@ export function condText(c, refs) {
     case 'chance': return 'шанс ' + Math.round((c.chance || 0) * 100) + '%';
     case 'not': return 'НЕ (' + condText(c.not, refs) + ')';
     case 'any': return 'любое из: ' + (c.any || []).map((x) => condText(x, refs)).join(' | ');
+    case 'all': return 'все из: ' + (c.all || []).map((x) => condText(x, refs)).join(' и ');
     default: return '?';
   }
 }
@@ -226,6 +227,7 @@ export function actionText(a, refs) {
     case 'memory': return 'запомнить «' + (a.memory || '?') + '»';
     case 'quest': return (QOP[a.do] || a.do) + ' «' + docTitle(refs && refs.quests, a.quest) + '»' + (a.step ? ' → ' + a.step : '');
     case 'scene': return 'сцена ' + docTitle(refs && refs.scenes, a.scene);
+    case 'dialog': return 'диалог «' + docTitle(refs && refs.dialogs, a.dialog) + '»';
     case 'sound': return 'звук ' + short(a.sound);
     case 'xp': return (a.xp > 0 ? '+' : '') + a.xp + ' опыта';
     case 'command': return a.command || '/?';
@@ -260,7 +262,7 @@ function cmp(a, op, b) {
 }
 export function evalCond(c, w) {
   switch (condKind(c)) {
-    case 'var': return cmp(w.vars[c.var] === undefined ? null : w.vars[c.var], c.op, c.value);
+    case 'var': return cmp(w.vars[c.var] === undefined ? null : w.vars[c.var], c.op, c.value === undefined ? true : c.value);
     case 'quest': {
       const q = w.quests[c.quest] || { state: 'not_started' };
       if ((c.state || 'active') !== (q.state || 'not_started')) return false;
@@ -273,6 +275,7 @@ export function evalCond(c, w) {
     case 'chance': return w.chance === 'yes' ? true : w.chance === 'no' ? false : Math.random() < (c.chance || 0);
     case 'not': return !evalCond(c.not, w);
     case 'any': return (c.any || []).some((x) => evalCond(x, w));
+    case 'all': return (c.all || []).every((x) => evalCond(x, w));
     default: return false;
   }
 }
@@ -307,6 +310,7 @@ export function applyAction(a, w0, refs) {
       break;
     }
     case 'scene': text += ' (в игре проиграется катсцена)'; break;
+    case 'dialog': text = 'откроется диалог «' + docTitle(refs && refs.dialogs, a.dialog) + '» (после этого)'; break;
     case 'sound': text += ' (в игре прозвучит)'; break;
     case 'xp': text += ' (в игре)'; break;
     case 'command': text = 'команда ' + a.command + ' (выполнится только в игре)'; break;

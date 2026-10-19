@@ -182,6 +182,10 @@ module.exports = function setupStudio({ handle, send, store }) {
     if (!V.isVarName(from) || !V.isVarName(to)) throw new Error('Имя переменной — латиница, цифры, _ . -');
     const esc = from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp('\\{var:' + esc + '\\}', 'g');
+    try { // и в project.json
+      const pr = readProject();
+      if ((pr.vars || []).some((v) => v && v.name === from) && !(pr.vars || []).some((v) => v && v.name === to)) writeJson(projectFile(), V.cleanProject({ ...pr, vars: pr.vars.map((v) => (v && v.name === from ? { ...v, name: to } : v)) }));
+    } catch (_) {}
     return { refs: fixRefs((o) => {
       let c = o;
       if (c.var === from) c = { ...c, var: to };
@@ -416,4 +420,8 @@ module.exports = function setupStudio({ handle, send, store }) {
     return write(msg);
   });
   handle('studio:vars', () => request({ t: 'vars' }, 'vars', 4000));
+  handle('studio:setVar', ({ name, value }) => {
+    if (!V.isVarName(name)) throw new Error('Имя переменной — латиница, цифры, _ . -');
+    return write({ t: 'setVar', name, value });
+  });
 };

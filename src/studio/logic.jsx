@@ -13,7 +13,8 @@ export const COND_HINT = {
   memory: 'Помнит ли житель факт — например saw_fire. Факт записывается действием «Запомнить факт».',
   chance: 'Случайность: 0.3 — выполнится в 30% случаев. В «Прочитать как игрок» можно выбрать «всегда да / всегда нет».',
   not: 'Наоборот: выполняется, когда внутреннее условие НЕ выполняется.',
-  any: 'Хотя бы одно из списка. (Обычный список условий — это «всё сразу».)'
+  any: 'Хотя бы одно из списка. (Обычный список условий — это «всё сразу».)',
+  all: 'Все условия списка сразу. Нужно внутри «Любое из» или «НЕ», чтобы собрать группу: например «НЕ (ночь и нет фонаря)».'
 };
 export const ACTION_HINT = {
   set: 'Записать значение в переменную сюжета — потом его проверят условия в диалогах и заданиях.',
@@ -24,7 +25,8 @@ export const ACTION_HINT = {
   memory: 'Житель запомнит факт (ValleyMemory) — потом можно проверить условием «Память жителя».',
   quest: 'Начать, продвинуть (на следующий или указанный шаг), завершить или провалить задание.',
   scene: 'Проиграть катсцену из вкладки «Сцены».',
-  sound: 'Проиграть звук у игрока.',
+  dialog: 'Открыть игроку другой диалог (после того, как этот закроется). Удобно из шага задания или из награды.',
+  sound: 'Проиграть звук у игрока. Громкость 1 — обычная, высота 0.5…2.',
   xp: 'Дать опыт (минус — забрать).',
   command: 'Выполнить команду сервера с правами оператора, например /time set day. Сильный инструмент — проверяй в игре.'
 };
@@ -48,6 +50,7 @@ export function condDefault(k, refs) {
     case 'memory': return { memory: '' };
     case 'chance': return { chance: 0.5 };
     case 'not': return { not: { time: 'night' } };
+    case 'all': return { all: [{ time: 'night' }, { item: 'minecraft:torch', count: 1 }] };
     default: return { any: [{ time: 'day' }, { time: 'night' }] };
   }
 }
@@ -65,7 +68,8 @@ export function actionDefault(k, refs) {
     case 'memory': return { memory: '' };
     case 'quest': return { quest: q ? q.id : '', do: 'start' };
     case 'scene': return { scene: s ? s.id : '' };
-    case 'sound': return { sound: 'minecraft:entity.player.levelup' };
+    case 'dialog': return { dialog: ((refs.dialogs || [])[0] || {}).id || '' };
+    case 'sound': return { sound: 'minecraft:entity.player.levelup', vol: 1, pitch: 1 };
     case 'xp': return { xp: 10 };
     default: return { command: '/time set day' };
   }
@@ -215,12 +219,13 @@ function CondFields({ c, set, refs, hp, depth }) {
     );
     case 'not': return <CondList value={c.not ? [c.not] : []} onChange={(l) => set({ not: l[0] || { time: 'night' } })} refs={refs} hp={hp} depth={depth + 1} max={1} />;
     case 'any': return <CondList value={c.any || []} onChange={(l) => set({ any: l })} refs={refs} hp={hp} depth={depth + 1} addLabel="+ ещё вариант" />;
+    case 'all': return <CondList value={c.all || []} onChange={(l) => set({ all: l })} refs={refs} hp={hp} depth={depth + 1} joiner="и" addLabel="+ ещё условие" />;
     default: return <span className="small muted">Непонятное условие: {JSON.stringify(c)}</span>;
   }
 }
 
 // список условий (все должны выполняться)
-export function CondList({ value, onChange, refs, hp, depth = 0, max, addLabel = '+ условие', emptyText }) {
+export function CondList({ value, onChange, refs, hp, depth = 0, max, addLabel = '+ условие', emptyText, joiner }) {
   const list = Array.isArray(value) ? value : [];
   const setAt = (i, c) => onChange(list.map((x, j) => (j === i ? c : x)));
   return (
@@ -232,9 +237,9 @@ export function CondList({ value, onChange, refs, hp, depth = 0, max, addLabel =
           <div key={i} className="lg-item" {...hp(COND_HINT[k] || '')}>
             <div className="lg-head">
               {i > 0 && depth === 0 && <span className="lg-and">и</span>}
-              {i > 0 && depth > 0 && max !== 1 && <span className="lg-and">или</span>}
+              {i > 0 && depth > 0 && max !== 1 && <span className="lg-and">{joiner || 'или'}</span>}
               <select className="input sm lg-kind" value={k || ''} onChange={(e) => setAt(i, condDefault(e.target.value, refs))}>
-                {COND_KINDS.filter((x) => depth < 2 || (x !== 'not' && x !== 'any')).map((x) => <option key={x} value={x}>{COND_LABEL[x]}</option>)}
+                {COND_KINDS.filter((x) => depth < 2 || (x !== 'not' && x !== 'any' && x !== 'all')).map((x) => <option key={x} value={x}>{COND_LABEL[x]}</option>)}
               </select>
               {max !== 1 && <button className="btn sm ghost icon-btn" title="Убрать условие" onClick={() => onChange(list.filter((_, j) => j !== i))}><Icon name="close" size={9} /></button>}
             </div>
@@ -284,7 +289,14 @@ function ActionFields({ a, set, refs, hp }) {
       </div>
     </>);
     case 'scene': return <RefSelect list={refs.scenes} value={a.scene} onChange={(id) => set({ scene: id || '' })} />;
-    case 'sound': return <input className="input sm mono" list="sl-sounds" value={a.sound || ''} onChange={(e) => set({ sound: e.target.value.trim() })} />;
+    case 'dialog': return <RefSelect list={refs.dialogs} value={a.dialog} onChange={(id) => set({ dialog: id || '' })} />;
+    case 'sound': return (<>
+      <input className="input sm mono" list="sl-sounds" value={a.sound || ''} onChange={(e) => set({ ...a, sound: e.target.value.trim() })} />
+      <div className="lg-two">
+        <Row label="громк."><NumInput value={a.vol == null ? 1 : a.vol} step={0.1} min={0} max={10} onChange={(n) => set({ ...a, vol: n == null ? 1 : n })} /></Row>
+        <Row label="высота"><NumInput value={a.pitch == null ? 1 : a.pitch} step={0.05} min={0.5} max={2} onChange={(n) => set({ ...a, pitch: n == null ? 1 : n })} /></Row>
+      </div>
+    </>);
     case 'xp': return <NumInput value={a.xp} int step={1} onChange={(n) => set({ xp: n || 0 })} />;
     case 'command': return <input className="input sm mono" value={a.command || ''} placeholder="/time set day" onChange={(e) => set({ command: e.target.value })} />;
     default: return <span className="small muted">Непонятное действие: {JSON.stringify(a)}</span>;

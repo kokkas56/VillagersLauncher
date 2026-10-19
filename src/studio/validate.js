@@ -214,6 +214,7 @@ export function validateScene(scene, ctx) {
           break;
         case 'dialog':
           if (ev.id && ctx.dialogIds && !ctx.dialogIds.includes(ev.id)) add(ERR, where + ': в проекте нет диалога «' + ev.id + '»', sel);
+          if (ev.actor && !actorIds.includes(ev.actor)) add(ERR, where + ': говорящий «' + ev.actor + '» — такого актёра нет в сцене', sel);
           break;
         default:
       }
@@ -266,7 +267,8 @@ function strip(v) {
 export function cleanScene(scene) { return strip(scene); }
 export function cleanProject(p) { return strip(p); }
 
-export function defaultProject() { return { v: 1, name: 'Мой сюжет', actors: [], vars: [], templates: [] }; }
+export const DEFAULT_UI = { hud: true, markers: true, chat: false };
+export function defaultProject() { return { v: 1, name: 'Мой сюжет', actors: [], vars: [], templates: [], talkPriority: 0, ui: { ...DEFAULT_UI } }; }
 
 export function defaultScene(id, title) {
   return {
@@ -313,7 +315,7 @@ export function normalizeScene(scene) {
 
 export function normalizeProject(p) {
   const s = strip(p || {});
-  return { v: 1, name: s.name || 'Сюжет', actors: s.actors || [], vars: s.vars || [], templates: s.templates || [] };
+  return { v: 1, name: s.name || 'Сюжет', actors: s.actors || [], vars: (s.vars || []).map((v) => ({ scope: 'world', ...v })), templates: s.templates || [], talkPriority: isNum(s.talkPriority) ? s.talkPriority : 0, ui: { ...DEFAULT_UI, ...(s.ui || {}) } };
 }
 
 // ======================= Фаза 2: диалоги, задания, переменные =======================
@@ -323,15 +325,16 @@ export const OPS = ['==', '!=', '>', '<', '>=', '<='];
 export const NODE_TYPES = ['line', 'choice', 'cond', 'action', 'scene', 'jump', 'end'];
 export const NODE_LABEL = { line: 'Реплика', choice: 'Выбор', cond: 'Условие', action: 'Действие', scene: 'Сцена', jump: 'Переход', end: 'Конец' };
 export const TRIGGERS = ['talk', 'scene', 'quest', 'command'];
-export const COND_KINDS = ['var', 'quest', 'item', 'trust', 'time', 'memory', 'chance', 'not', 'any'];
-export const COND_LABEL = { var: 'Переменная', quest: 'Задание', item: 'Есть предмет', trust: 'Доверие', time: 'Время суток', memory: 'Память жителя', chance: 'Случайно', not: 'НЕ (наоборот)', any: 'Любое из' };
+export const COND_KINDS = ['var', 'quest', 'item', 'trust', 'time', 'memory', 'chance', 'not', 'any', 'all'];
+export const COND_LABEL = { var: 'Переменная', quest: 'Задание', item: 'Есть предмет', trust: 'Доверие', time: 'Время суток', memory: 'Память жителя', chance: 'Случайно', not: 'НЕ (наоборот)', any: 'Любое из', all: 'Все из' };
 // порядок важен: { trust, add } — это доверие, а не «прибавить к переменной»
-export const ACTION_KINDS = ['trust', 'set', 'add', 'give', 'take', 'memory', 'quest', 'scene', 'sound', 'xp', 'command'];
-export const ACTION_LABEL = { set: 'Записать переменную', add: 'Прибавить к переменной', give: 'Дать предмет', take: 'Забрать предмет', trust: 'Доверие', memory: 'Запомнить факт', quest: 'Задание', scene: 'Сцена', sound: 'Звук', xp: 'Опыт', command: 'Команда' };
+export const ACTION_KINDS = ['trust', 'set', 'add', 'give', 'take', 'memory', 'quest', 'scene', 'dialog', 'sound', 'xp', 'command'];
+export const ACTION_LABEL = { set: 'Записать переменную', add: 'Прибавить к переменной', give: 'Дать предмет', take: 'Забрать предмет', trust: 'Доверие', memory: 'Запомнить факт', quest: 'Задание', scene: 'Сцена', dialog: 'Открыть диалог', sound: 'Звук', xp: 'Опыт', command: 'Команда' };
 export const QUEST_STATES = ['not_started', 'active', 'done', 'failed'];
 export const QUEST_OPS = ['start', 'advance', 'complete', 'fail'];
-export const GOAL_TYPES = ['item', 'talk', 'reach', 'kill', 'wait', 'var', 'scene'];
-export const GOAL_LABEL = { item: 'Принести предмет', talk: 'Поговорить', reach: 'Дойти до места', kill: 'Победить мобов', wait: 'Дождаться', var: 'Условие', scene: 'Посмотреть сцену' };
+export const GOAL_TYPES = ['item', 'talk', 'reach', 'kill', 'wait', 'var', 'scene', 'none'];
+export const GOAL_LABEL = { item: 'Принести предмет', talk: 'Поговорить', reach: 'Дойти до места', kill: 'Победить мобов', wait: 'Дождаться', var: 'Условие', scene: 'Посмотреть сцену', none: 'Без цели' };
+export const VAR_SCOPES = ['world', 'player'];
 export const TEXT_MAX = 300;
 const DOC_ID = /^[a-z0-9_-]{1,64}$/;
 const NODE_ID = /^[A-Za-z0-9_-]{1,40}$/;
@@ -402,10 +405,11 @@ function checkCond(c, where, add, R, sel) {
     case 'var':
       if (!isVarName(c.var)) { add(ERR, w + ': имя переменной — латиница, цифры, _ . -', sel); return; }
       if (c.op !== undefined && !OPS.includes(c.op)) add(ERR, w + ': сравнение «' + c.op + '» — бывает ==, !=, >, <, >=, <=', sel);
-      if (c.value === undefined || c.value === null || c.value === '') add(ERR, w + ' «' + c.var + '»: не задано, с чем сравнивать', sel);
+      if (c.value === null || c.value === '') add(ERR, w + ' «' + c.var + '»: не задано, с чем сравнивать', sel);
       if (R.vars) {
         const t = R.vars[c.var];
         if (!t) add(WARN, w + ': переменная «' + c.var + '» не заведена во вкладке «Переменные»', sel);
+        else if (c.value === undefined && t !== 'bool') add(WARN, w + ' «' + c.var + '»: без значения проверяется «= да», а переменная — ' + TYPE_RU[t], sel);
         else if (c.value !== undefined && c.value !== null && typeOfValue(c.value) !== t) add(WARN, w + ' «' + c.var + '»: переменная — ' + TYPE_RU[t] + ', а сравнивается с ' + TYPE_RU[typeOfValue(c.value)], sel);
         else if (t !== 'int' && ['>', '<', '>=', '<='].includes(c.op)) add(WARN, w + ' «' + c.var + '»: больше/меньше имеет смысл только для чисел', sel);
       }
@@ -433,6 +437,10 @@ function checkCond(c, where, add, R, sel) {
     case 'any':
       if (!Array.isArray(c.any) || !c.any.length) add(ERR, w + ': список пуст', sel);
       else c.any.forEach((x) => checkCond(x, where + ' → любое из', add, R, sel));
+      return;
+    case 'all':
+      if (!Array.isArray(c.all) || !c.all.length) add(ERR, w + ': список пуст', sel);
+      else c.all.forEach((x) => checkCond(x, where + ' → все из', add, R, sel));
       return;
     default:
   }
@@ -480,7 +488,15 @@ function checkAction(a, where, add, R, sel) {
       if (!isDocId(a.scene)) add(ERR, w + ': не выбрана сцена', sel);
       else if (R.scenes && !R.scenes.includes(a.scene)) add(ERR, w + ': в проекте нет сцены «' + a.scene + '»', sel);
       return;
-    case 'sound': if (!isResId(a.sound)) add(ERR, w + ': id звука пиши вида minecraft:entity.player.levelup', sel); return;
+    case 'dialog':
+      if (!isDocId(a.dialog)) add(ERR, w + ': не выбран диалог', sel);
+      else if (R.dialogs && !(a.dialog in R.dialogs)) add(ERR, w + ': в проекте нет диалога «' + a.dialog + '»', sel);
+      return;
+    case 'sound':
+      if (!isResId(a.sound)) add(ERR, w + ': id звука пиши вида minecraft:entity.player.levelup', sel);
+      if (a.vol !== undefined && (!isNum(a.vol) || a.vol < 0 || a.vol > 10)) add(WARN, w + ': громкость лучше от 0 до 2', sel);
+      if (a.pitch !== undefined && (!isNum(a.pitch) || a.pitch < 0.5 || a.pitch > 2)) add(WARN, w + ': высота звука бывает от 0.5 до 2', sel);
+      return;
     case 'xp': if (!Number.isInteger(a.xp) || a.xp === 0) add(ERR, w + ': опыт — целое число (можно минус)', sel); return;
     case 'command':
       if (!a.command || !String(a.command).trim()) add(ERR, w + ': команда пустая', sel);
@@ -523,6 +539,8 @@ export function validateDialog(d, ctx) {
   if (tr.on !== undefined && !TRIGGERS.includes(tr.on)) add(ERR, 'Запуск: непонятно когда («' + tr.on + '»)');
   if (tr.priority !== undefined && !isNum(tr.priority)) add(ERR, 'Запуск: важность — число');
   checkConds(tr.when, 'Условия запуска', add, R, null);
+  if (tr.topic !== undefined && tr.topic !== null && typeof tr.topic !== 'string') add(ERR, 'Тема в разговоре — текст');
+  if (tr.topic && String(tr.topic).length > 40) add(WARN, 'Тема в разговоре длинная (' + String(tr.topic).length + ' знаков) — в списке тем лучше до 40');
   if (tr.on === 'talk' && d.speaker === 'any' && !(Array.isArray(tr.when) && tr.when.length)) add(WARN, 'Диалог откроется у ЛЮБОГО жителя при разговоре — добавь условие запуска или выбери, кто говорит');
   const nodes = d.nodes && typeof d.nodes === 'object' && !Array.isArray(d.nodes) ? d.nodes : null;
   if (!nodes || !Object.keys(nodes).length) { add(ERR, 'В диалоге нет ни одного узла'); return out; }
@@ -554,6 +572,7 @@ export function validateDialog(d, ctx) {
           if (!o || typeof o !== 'object') { add(ERR, w + ': повреждён', sel); return; }
           checkText(o.text, w, add, R, sel, true);
           checkConds(o.when, w, add, R, sel);
+          checkActions(o.do, w + ' → при выборе', add, R, sel);
           link(o.next, w, sel, 'err');
         });
         if (opts.length && opts.every((o) => o && Array.isArray(o.when) && o.when.length)) add(WARN, where + ': у всех вариантов есть условия — может случиться, что выбрать нечего', sel);
@@ -608,6 +627,7 @@ export function describeGoal(g) {
     case 'wait': return g.until === 'ticks' ? 'подождать ' + (Math.round((g.ticks || 0) / 2) / 10) + ' с' : 'дождаться ' + (g.until === 'day' ? 'дня' : 'ночи');
     case 'var': return 'условие (' + ((g.cond || []).length) + ')';
     case 'scene': return 'сцена ' + (g.scene || '?');
+    case 'none': return 'засчитывается действием «Задание → продвинуть»';
     default: return '?';
   }
 }
@@ -654,7 +674,8 @@ export function validateQuest(q, ctx) {
       }
       case 'reach':
         if (!isPos(g.pos)) add(ERR, gw + ': не задано место (x y z) — «Взять из игры»', sel);
-        if (!isNum(g.radius) || g.radius <= 0) add(ERR, gw + ': радиус — число больше нуля', sel);
+        if (g.dim && !isResId(g.dim)) add(ERR, gw + ': измерение пиши вида minecraft:overworld', sel);
+        if (g.radius !== undefined && (!isNum(g.radius) || g.radius <= 0)) add(ERR, gw + ': радиус — число больше нуля (без него — 4)', sel);
         break;
       case 'kill':
         if (!isResId(g.entity)) add(ERR, gw + ': моба пиши вида minecraft:zombie', sel);
@@ -672,6 +693,7 @@ export function validateQuest(q, ctx) {
         if (!isDocId(g.scene)) add(ERR, gw + ': не выбрана сцена', sel);
         else if (R.scenes && !R.scenes.includes(g.scene)) add(ERR, gw + ': в проекте нет сцены «' + g.scene + '»', sel);
         break;
+      case 'none': break;
       default: add(ERR, where + ': не выбран вид цели', sel);
     }
     if (s.marker && !isPos(s.marker.pos)) add(ERR, where + ': метка на месте без координат', sel);
@@ -686,6 +708,7 @@ export function validateVars(project) {
   const out = [];
   const add = (sev, msg, i) => out.push({ sev, msg, sel: i == null ? null : { v: i }, kind: 'vars', doc: null });
   const vars = project && Array.isArray(project.vars) ? project.vars : [];
+  if (project && project.talkPriority !== undefined && !isNum(project.talkPriority)) out.push({ sev: ERR, msg: 'Проект: важность обычных разговоров — число', sel: null, kind: 'vars', doc: null });
   const seen = [];
   vars.forEach((v, i) => {
     if (!v || typeof v !== 'object') { add(ERR, 'Переменная №' + (i + 1) + ' повреждена', i); return; }
@@ -693,6 +716,7 @@ export function validateVars(project) {
     if (!isVarName(v.name)) add(ERR, 'Переменная ' + nm + ': имя — латиница, цифры, _ . -', i);
     else if (seen.includes(v.name)) add(ERR, 'Переменная ' + nm + ' заведена дважды', i);
     seen.push(v.name);
+    if (v.scope !== undefined && !VAR_SCOPES.includes(v.scope)) add(ERR, 'Переменная ' + nm + ': чья — «мира» или «игрока»', i);
     if (!VAR_TYPES.includes(v.type)) add(ERR, 'Переменная ' + nm + ': тип — да/нет, число или текст', i);
     else if (v.init !== undefined && v.init !== null && typeOfValue(v.init) !== v.type) add(ERR, 'Переменная ' + nm + ': начальное значение не того типа (нужно ' + TYPE_RU[v.type] + ')', i);
     else if (v.type === 'int' && !Number.isInteger(v.init)) add(WARN, 'Переменная ' + nm + ': число лучше целое', i);

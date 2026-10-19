@@ -7,7 +7,7 @@ import { Modal } from '../components/ui.jsx';
 import Graph from './Graph.jsx';
 import Simulator from './Simulator.jsx';
 import { useDocEditor, DocList, IssuesMini, SAVE_TEXT, IssueRows } from './docs.jsx';
-import { CondList, ActionList, SpeakerPicker, RefSelect } from './logic.jsx';
+import { CondList, ActionList, SpeakerPicker, RefSelect, condDefault } from './logic.jsx';
 import { NODE_DEFS, newNode, nextNodeId, autoLayout, speakerName, clip } from './dialog.js';
 import { validateDialog, defaultDialog, setOut, getOut, nodeOutputs, ERR, TEXT_MAX } from './validate.js';
 import { slug, uniqueId } from './model.js';
@@ -356,6 +356,7 @@ function Options({ n, id, nodes, refs, hp, setNode }) {
       {opts.map((o, i) => {
         const hasC = Array.isArray(o.when) && o.when.length > 0;
         const showC = openC[i] || hasC;
+        const hasA = Array.isArray(o.do) && o.do.length > 0;
         return (
           <div key={i} className="dl-opt">
             <div className="row dl-opt-head">
@@ -368,9 +369,12 @@ function Options({ n, id, nodes, refs, hp, setNode }) {
             {showC ? (
               <>
                 <CondList value={o.when || []} onChange={(l) => setOpt(i, (x) => { const c = { ...x }; if (l.length) c.when = l; else delete c.when; return c; })} refs={refs} hp={hp} addLabel="+ условие варианта" />
-                <input className="input sm" value={o.hint || ''} placeholder="подсказка, когда недоступно (необязательно)" onChange={(e) => setOpt(i, (x) => { const c = { ...x }; if (e.target.value) c.hint = e.target.value; else delete c.hint; return c; })} {...hp('Серый текст под недоступным вариантом, например «Нужно 3 хлеба».')} />
+                <input className="input sm" value={o.hint || ''} placeholder="подсказка (без неё вариант скрыт)" onChange={(e) => setOpt(i, (x) => { const c = { ...x }; if (e.target.value) c.hint = e.target.value; else delete c.hint; return c; })} {...hp('Когда условие не выполнено: если подсказка есть — вариант виден серым с этим текстом (например «Нужно 3 хлеба»); если подсказки нет — вариант в игре просто скрыт.')} />
               </>
-            ) : <button className="link-btn small" onClick={() => setOpenC({ ...openC, [i]: true })} {...hp('Показывать вариант доступным только при условии (например, есть хлеб в инвентаре).')}>+ условие, когда можно выбрать</button>}
+            ) : <button className="link-btn small dl-more" onClick={() => { setOpenC({ ...openC, [i]: true }); setOpt(i, { when: [condDefault((refs.vars || []).length ? 'var' : 'item', refs)] }); }} {...hp('Показывать вариант доступным только при условии (например, есть хлеб в инвентаре).')}>+ условие, когда можно выбрать</button>}
+            {hasA
+              ? <div {...hp('Что произойдёт сразу, как игрок выбрал этот ответ — до перехода по стрелке. Например, забрать хлеб и записать bread_given.')}><div className="small muted">при выборе:</div><ActionList value={o.do} onChange={(l) => setOpt(i, (x) => { const c = { ...x }; if (l.length) c.do = l; else delete c.do; return c; })} refs={refs} hp={hp} /></div>
+              : <button className="link-btn small dl-more" onClick={() => setOpt(i, { do: [{ xp: 5 }] })} {...hp('Действия сразу при выборе этого ответа: забрать предмет, записать переменную, начать задание…')}>+ действие при выборе</button>}
           </div>
         );
       })}
@@ -416,8 +420,13 @@ function DialogInspector({ doc, edit, refs, hp, issues }) {
         <FieldRow label="Условия запуска" hp={hp} hint="Диалог откроется, только если всё это выполняется. Например: задание «Хлеб» идёт, или met_miron = нет. Пусто — всегда." wide>
           <CondList value={tr.when || []} onChange={(l) => setT('when', l)} refs={refs} hp={hp} emptyText="Нет условий — откроется всегда." />
         </FieldRow>
+        {(tr.on || 'talk') === 'talk' && (
+          <FieldRow label="Тема" hp={hp} hint={'Короткая тема в разговоре с жителем, например «Про мельницу». Если важность диалога не выше важности обычных разговоров (в проекте: ' + (refs.talkPriority || 0) + '), диалог не перебивает их, а появляется темой в списке.'} wide>
+            <input className="input sm" value={tr.topic || ''} placeholder="например: Про мельницу" onChange={(e) => setT('topic', e.target.value || undefined)} />
+          </FieldRow>
+        )}
         <BoolRow label="Только один раз" hp={hp} hint="После первого прочтения этот диалог у игрока больше не откроется сам (из сцены и командой — можно)." value={tr.once} onChange={(v) => setT('once', v)} />
-        <FieldRow label="Важность" hp={hp} hint="Если у жителя подходит несколько разговоров — откроется самый важный. Обычные разговоры жителей мода — 0…5; ставь 10 и выше, чтобы сюжетный диалог перебил их.">
+        <FieldRow label="Важность" hp={hp} hint={'Если у жителя подходит несколько разговоров — откроется самый важный. Важнее обычных разговоров жителей (в проекте: ' + (refs.talkPriority || 0) + ', меняется во вкладке «Переменные» → «Проект») — диалог откроется сразу; не важнее — станет темой в списке.'}>
           <input className="input sm st-num" type="number" value={tr.priority == null ? 10 : tr.priority} onChange={(e) => setT('priority', Math.round(Number(e.target.value) || 0))} />
         </FieldRow>
         <FieldRow label="Старт" hp={hp} hint="С какого узла начинается разговор. Его карточка помечена «СТАРТ»." wide>

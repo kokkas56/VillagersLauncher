@@ -21,6 +21,7 @@ function evalW(c, w) { // evalCond, но шанс — из повторяемо�
   if (c && 'chance' in c && w.chance === 'random') return w._rng() < (c.chance || 0);
   if (c && c.not) return !evalW(c.not, w);
   if (c && Array.isArray(c.any)) return c.any.some((x) => evalW(x, w));
+  if (c && Array.isArray(c.all)) return c.all.every((x) => evalW(x, w));
   return evalCond(c, w);
 }
 const evalAll = (list, w) => (list || []).every((c) => evalW(c, w));
@@ -45,7 +46,9 @@ async function runFrom(d0, id0, w0, ctx) {
         return { out, wait: 'next', next: n.next || null, d, w };
       case 'choice': {
         if (n.text) out.push({ k: 'line', ...at, who: spk, text: substitute(n.text, w) });
-        const opts = (n.options || []).map((o) => ({ text: substitute(o.text, w), ok: evalAll(o.when, w), hint: o.hint, why: (o.when || []).filter((c) => !evalW(c, { ...w, _rng: rng(1) })).map((c) => condText(c, ctx.refs)), next: o.next || null }));
+        // недоступный вариант без подсказки в игре скрыт; с подсказкой — показан серым
+        const opts = (n.options || []).map((o) => ({ text: substitute(o.text, w), ok: evalAll(o.when, w), hint: o.hint, why: (o.when || []).filter((c) => !evalW(c, { ...w, _rng: rng(1) })).map((c) => condText(c, ctx.refs)), next: o.next || null, act: o.do || [] }));
+        opts.forEach((o) => { o.hidden = !o.ok && !o.hint; });
         if (!opts.some((o) => o.ok)) out.push({ k: 'err', ...at, t: 'Ни один вариант не доступен — в игре игрок тут застрянет!' });
         return { out, wait: 'choice', opts, node: id, d, w };
       }
@@ -89,7 +92,9 @@ async function replay(dialog, from, world0, picks, seed, ctx) {
       const o = r.opts[p];
       if (!o || !o.ok) break;
       entries.push({ k: 'pick', text: o.text, node: r.node, dlg: r.d.id });
-      r = await runFrom(r.d, o.next, r.w, ctx);
+      let w = r.w;
+      for (const a of o.act) { const [w2, t] = applyAction(a, w, ctx.refs); w = w2; entries.push({ k: 'act', node: r.node, dlg: r.d.id, t }); }
+      r = await runFrom(r.d, o.next, w, ctx);
     }
     used++;
     entries.push(...r.out);
@@ -163,7 +168,7 @@ export default function Simulator({ dialog, from, refs, project, lists, onClose,
             {r && r.wait === 'next' && <button className="btn primary" autoFocus onClick={() => pick(0)}>Дальше ▸</button>}
             {r && r.wait === 'choice' && (
               <div className="sim-opts">
-                {r.opts.map((o, i) => (
+                {r.opts.map((o, i) => o.hidden ? null : (
                   <button key={i} className={'sim-opt' + (o.ok ? '' : ' off')} disabled={!o.ok} onClick={() => pick(i)}
                     title={o.ok ? 'Выбрать (клавиша ' + (i + 1) + ')' : 'Недоступно: ' + o.why.join(', ')}>
                     <span className="sim-n">{i + 1}</span>
@@ -171,6 +176,7 @@ export default function Simulator({ dialog, from, refs, project, lists, onClose,
                     {!o.ok && <small>{o.hint || 'нужно: ' + o.why.join(', ')}</small>}
                   </button>
                 ))}
+                {r.opts.some((o) => o.hidden) && <div className="muted small sim-hidden" title={r.opts.filter((o) => o.hidden).map((o) => o.text + ' — нужно: ' + o.why.join(', ')).join('\n')}>Скрыто вариантов: {r.opts.filter((o) => o.hidden).length} — условие не выполнено, а подсказки нет (в игре их не видно). Наведи, чтобы узнать какие.</div>}
               </div>
             )}
             {r && r.wait === 'end' && <button className="btn" onClick={() => { setPicks([]); setSeed((s) => (s * 7 + 13) & 0xffff); }}><Icon name="refresh" size={12} /> Прочитать снова</button>}

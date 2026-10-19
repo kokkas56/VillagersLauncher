@@ -18,11 +18,12 @@ const lsSet = (k, v) => { try { localStorage.setItem('studio.' + k, JSON.stringi
 export const GOAL_DEFS = {
   item: { icon: 'emerald', hint: 'Принести предметы: шаг выполнится, когда у игрока в инвентаре будет нужное количество (при сдаче их можно забрать).', def: { item: 'minecraft:bread', count: 3, consume: true } },
   talk: { icon: 'user', hint: 'Поговорить с персонажем. Можно указать особый диалог — он откроется при разговоре, и шаг засчитается в конце.', def: { speaker: '', dialog: null } },
-  reach: { icon: 'globe', hint: 'Дойти до места: шаг засчитается, когда игрок окажется ближе радиуса к точке. Точку проще всего «Взять из игры».', def: { pos: null, radius: 6 } },
+  reach: { icon: 'globe', hint: 'Дойти до места: шаг засчитается, когда игрок окажется ближе радиуса к точке. Точку проще всего «Взять из игры».', def: { pos: null, radius: 4 } },
   kill: { icon: 'sword', hint: 'Победить мобов определённого вида — сколько штук.', def: { entity: 'minecraft:zombie', count: 5 } },
   wait: { icon: 'moon', hint: 'Дождаться ночи, дня или просто подождать сколько-то времени.', def: { until: 'night', ticks: 0 } },
   var: { icon: 'check', hint: 'Шаг засчитается сам, когда выполнится условие (переменные, другое задание, доверие…). Удобно, когда переменную ставит сцена или диалог.', def: { cond: [] } },
-  scene: { icon: 'film', hint: 'Посмотреть сцену: шаг засчитается, когда катсцена доиграет до конца (или её пропустят).', def: { scene: '' } }
+  scene: { icon: 'film', hint: 'Посмотреть сцену: шаг засчитается, когда катсцена доиграет до конца (или её пропустят).', def: { scene: '' } },
+  none: { icon: 'lock', hint: 'Без цели: шаг сам не засчитается — его продвинет действие «Задание → продвинуть» из диалога, сцены или другого задания. Для сюжетных шагов «жди, пока Мирон позовёт».', def: {} }
 };
 
 function prepareQuest(raw, id) {
@@ -37,10 +38,10 @@ function goalDefault(type, refs) {
   if (type === 'var') { const v = (refs.vars || [])[0]; g.cond = [v ? { var: v.name, op: '==', value: v.type === 'bool' ? true : v.init } : { time: 'night' }]; }
   return g;
 }
-const STEP_TITLES = { item: 'Принеси …', talk: 'Поговори с …', reach: 'Дойди до …', kill: 'Победи …', wait: 'Дождись ночи', var: 'Сделай …', scene: 'Посмотри, что случится' };
+const STEP_TITLES = { item: 'Принеси …', talk: 'Поговори с …', reach: 'Дойди до …', kill: 'Победи …', wait: 'Дождись ночи', var: 'Сделай …', scene: 'Посмотри, что случится', none: 'Жди…' };
 
 export default function QuestTab({ shared, goto }) {
-  const { tabs, linkCard, hintBox, buildBtn, toast, hp, link, project, lists, reloadList, patchList, baseRefs, addLog, api } = shared;
+  const { tabs, linkCard, hintBox, buildBtn, toast, hp, link, project, lists, reloadList, patchList, baseRefs, addLog, api, questStates } = shared;
   const list = lists.quests;
   const ed = useDocEditor('quests', {
     toast, prepare: prepareQuest,
@@ -148,9 +149,8 @@ export default function QuestTab({ shared, goto }) {
     try {
       await ed.flush();
       await call('studio:quest', { op, id: doc.id, step: step || undefined, quest: doc });
-      const ru = { start: 'начато', advance: 'перешло на шаг ' + step, complete: 'завершено', reset: 'сброшено', status: 'запрошен статус' }[op];
-      addLog('info', 'Задание «' + doc.id + '»: ' + ru);
-      toast('Игра: задание ' + ru + ' (смотри журнал игры)', 'ok');
+      const ru = { start: 'начать', advance: 'перейти на шаг ' + step, complete: 'завершить', fail: 'провалить', reset: 'сбросить', status: 'узнать статус' }[op];
+      addLog('info', 'Задание «' + doc.id + '»: ' + ru + ' (отправлено в игру)');
     } catch (e) { toast(e.message, 'error'); }
   };
 
@@ -164,9 +164,6 @@ export default function QuestTab({ shared, goto }) {
           <button className="btn sm ghost icon-btn" disabled={!ed.canRedo} onClick={ed.redo} {...hp('Вернуть (Ctrl+Y).')}><Icon name="redo" size={13} /></button>
           <span className={'st-save ' + ed.saveState} {...hp('Задание сохраняется само. Ctrl+S — сразу.')}>{SAVE_TEXT[ed.saveState]}</span>
           <div className="grow" />
-          <button className="btn sm primary" onClick={() => inGame('start')} {...hp('Начать это задание у тебя в игре — как есть сейчас, без «Собрать». Нужна связь с игрой.')}><Icon name="play" size={12} /> Начать в игре</button>
-          <button className="btn sm ghost icon-btn" onClick={() => inGame('status')} {...hp('Спросить игру, на каком шаге задание у тебя. Ответ — в «Журнале игры» справа внизу.')}><Icon name="info" size={12} /></button>
-          <button className="btn sm ghost icon-btn" onClick={() => inGame('reset')} {...hp('Сбросить задание у тебя в игре — как будто его не брали. Чтобы пройти заново.')}><Icon name="refresh" size={12} /></button>
           <button className={'btn sm' + (nErr ? ' danger' : '')} onClick={() => setCheck(true)} {...hp('Проверить задание: пустые цели, повторяющиеся id шагов, несуществующие диалоги/сцены/переменные, неверные id предметов.')}>
             <Icon name="check" size={12} /> Проверить{issues.length ? <span className={'st-badge' + (nErr ? ' e' : '')}>{nErr || issues.length}</span> : null}
           </button>
@@ -199,6 +196,7 @@ export default function QuestTab({ shared, goto }) {
                 {doc.journal === false && <span className="qe-chip">не в журнале</span>}
               </div>
             </div>
+            <QuestLive st={questStates && questStates[doc.id]} doc={doc} link={link} hp={hp} inGame={inGame} />
             {doc.steps.map((s, i) => {
               const g = s.goal || {};
               const gd = GOAL_DEFS[g.type];
@@ -270,6 +268,41 @@ export default function QuestTab({ shared, goto }) {
   );
 }
 
+const QSTATE_RU = { not_started: 'не начато', active: 'идёт', done: 'сделано', failed: 'провалено' };
+// маленькая панель «в игре»: состояние у автора + кнопки, которые шлют {t:'quest'} с текущим (даже несохранённым) заданием
+function QuestLive({ st, doc, link, hp, inGame }) {
+  const [step, setStep] = useState('');
+  const on = link.connected;
+  const n = doc.steps.length;
+  return (
+    <div className={'qe-live' + (on ? '' : ' off')} {...hp('Задание у тебя в игре. Кнопки отправляют в игру текущее задание прямо из редактора (даже несохранённое) — можно сразу проверить. Нужна связь с игрой.')}>
+      <div className="qe-live-state">
+        <span className="small muted">В игре:</span>
+        {!on ? <span className="small muted">нет связи</span> : !st ? <span className="small muted">неизвестно — нажми «Статус»</span> : (
+          <>
+            <span className={'qe-st s-' + st.state}>{QSTATE_RU[st.state] || st.state}</span>
+            {st.step && <span className="small">шаг <b>{st.step}</b>{st.stepIndex != null ? ' (' + (st.stepIndex + 1) + '/' + n + ')' : ''}</span>}
+            {st.need ? <span className="small muted">{st.progress || 0}/{st.need}</span> : null}
+            {st.times ? <span className="small muted">пройдено раз: {st.times}</span> : null}
+            {st.text && <span className="small muted qe-st-text" title={st.text}>{st.text}</span>}
+          </>
+        )}
+      </div>
+      <div className="qe-live-btns">
+        <button className="btn sm primary" disabled={!on} onClick={() => inGame('start')} title="Начать задание у себя в игре"><Icon name="play" size={10} /> Начать</button>
+        <select className="input sm" disabled={!on} value={step} onChange={(e) => { setStep(''); if (e.target.value) inGame('advance', e.target.value); }} title="Перевести задание на выбранный шаг">
+          <option value="">На шаг…</option>
+          {doc.steps.map((s, i) => <option key={i} value={s.id}>{i + 1}. {s.title || s.id}</option>)}
+        </select>
+        <button className="btn sm" disabled={!on} onClick={() => inGame('complete')} title="Завершить задание (выдать награду)">Завершить</button>
+        <button className="btn sm ghost" disabled={!on} onClick={() => inGame('fail')} title="Провалить задание">Провалить</button>
+        <button className="btn sm ghost icon-btn" disabled={!on} onClick={() => inGame('reset')} title="Сбросить — как будто не брали"><Icon name="refresh" size={10} /></button>
+        <button className="btn sm ghost" disabled={!on} onClick={() => inGame('status')} title="Спросить у игры состояние">Статус</button>
+      </div>
+    </div>
+  );
+}
+
 function Head({ icon, title, sub, hp, hint, children }) {
   return (
     <div className="st-insp-head" {...hp(hint || '')}>
@@ -330,7 +363,8 @@ function StepInspector({ i, s, doc, refs, hp, api, setStep, issues, onDelete, on
           <FieldRow label="Место" hp={hp} hint="Куда дойти: x y z. «Взять из игры» — блок, на который ты смотришь в игре. «Телепорт туда» — проверить место." wide>
             <PosField value={g.pos} onChange={(p) => setG({ pos: p })} api={api} f={{ source: 'sel' }} />
           </FieldRow>
-          <FieldRow label="Радиус" hp={hp} hint="Насколько близко подойти, в блоках. 3–8 обычно хорошо."><NumInput value={g.radius} step={1} min={1} max={200} onChange={(n) => setG({ radius: n || 1 })} /></FieldRow>
+          <FieldRow label="Радиус" hp={hp} hint="Насколько близко подойти, в блоках. Пусто — 4. 3–8 обычно хорошо."><NumInput value={g.radius} step={1} min={1} max={200} placeholder="4" onChange={(n) => setG({ radius: n == null ? undefined : n })} /></FieldRow>
+          <FieldRow label="Измерение" hp={hp} hint="В каком мире точка: обычный, Незер, Край. Пусто — в любом (обычно обычный мир)."><input className="input sm mono" list="sl-dims" value={g.dim || ''} placeholder="любое" onChange={(e) => setG({ dim: e.target.value.trim() || undefined })} /></FieldRow>
         </>)}
         {g.type === 'kill' && (<>
           <FieldRow label="Кого" hp={hp} hint="id моба, например minecraft:zombie."><input className="input sm mono" list="sl-entities" value={g.entity || ''} onChange={(e) => setG({ entity: e.target.value.trim() })} /></FieldRow>
@@ -345,6 +379,7 @@ function StepInspector({ i, s, doc, refs, hp, api, setStep, issues, onDelete, on
         {g.type === 'var' && (
           <FieldRow label="Когда" hp={hp} hint="Шаг засчитается, как только всё это выполнится." wide><CondList value={g.cond || []} onChange={(l) => setG({ cond: l })} refs={refs} hp={hp} /></FieldRow>
         )}
+        {g.type === 'none' && <p className="muted small">Шаг ждёт, пока его продвинет действие «Задание → продвинуть» (в диалоге, награде другого задания или командой).</p>}
         {g.type === 'scene' && (
           <FieldRow label="Сцена" hp={hp} hint="Какую сцену посмотреть. Её можно запустить действием в диалоге или событием в мире." wide><RefSelect list={refs.scenes} value={g.scene} onChange={(v) => setG({ scene: v || '' })} /></FieldRow>
         )}

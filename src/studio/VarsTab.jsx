@@ -4,13 +4,15 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { call } from '../lib/api.js';
 import Icon from '../components/Icon.jsx';
 import { NumInput } from './fields.jsx';
+import { ValueInput } from './logic.jsx';
 import { IssuesMini } from './docs.jsx';
-import { validateVars, VAR_TYPES, varDefault, isVarName, ERR } from './validate.js';
+import { validateVars, VAR_TYPES, varDefault, isVarName, ERR, DEFAULT_UI } from './validate.js';
 import { valText } from './dialog.js';
 
 const TYPE_RU = { bool: 'да / нет', int: 'число', text: 'текст' };
 const TYPE_HINT = 'Да/нет — флажок (встретил Мирона?). Число — счётчик (сколько хлеба отдал, доверие). Текст — слово (имя выбранного спутника).';
 const KIND_RU = { scenes: 'сцена', dialogs: 'диалог', quests: 'задание' };
+const SCOPE_HINT = 'Чья переменная: «мира» — одна на весь сервер (мельница починена); «игрока» — у каждого игрока своя (встретил Мирона).';
 
 function convert(v, type) {
   if (type === 'bool') return v === true || v === 'true' || v === 'да' || (typeof v === 'number' && v !== 0);
@@ -19,7 +21,7 @@ function convert(v, type) {
 }
 
 export default function VarsTab({ shared, goto }) {
-  const { tabs, linkCard, hintBox, buildBtn, toast, hp, link, project, saveProject, reloadList, gameVars, setGameVars, openDoc } = shared;
+  const { tabs, linkCard, hintBox, buildBtn, toast, hp, link, project, saveProject, reloadList, gameVars, setGameVars, setGameVarsState, openDoc } = shared;
   const [rows, setRows] = useState(() => (project.vars || []).map((v) => ({ ...v })));
   const [usage, setUsage] = useState({});
   const [sel, setSel] = useState(null);
@@ -48,7 +50,7 @@ export default function VarsTab({ shared, goto }) {
   const add = (name = '', type = 'bool') => {
     let nm = name;
     if (!nm) { let k = rows.length + 1; nm = 'var_' + k; while (declared.has(nm)) nm = 'var_' + ++k; }
-    update((r) => [...r, { name: nm, type, init: varDefault(type), note: '' }]);
+    update((r) => [...r, { name: nm, type, scope: 'world', init: varDefault(type), note: '' }]);
     setSel(rows.length);
   };
   const rename = async (i, to) => {
@@ -70,11 +72,20 @@ export default function VarsTab({ shared, goto }) {
   const fromGame = async () => {
     if (!link.connected) { toast('Нет связи с игрой', 'warn'); return; }
     setBusy(true);
-    try { const m = await call('studio:vars'); setGameVars(m && m.data !== undefined ? m.data : m); } catch (e) { toast(e.message, 'error'); }
+    try { setGameVars(await call('studio:vars')); } catch (e) { toast(e.message, 'error'); }
     setBusy(false);
   };
-  const live = gameVars ? (gameVars.vars && typeof gameVars.vars === 'object' ? gameVars.vars : gameVars) : null;
+  const live = gameVars ? gameVars.vars : null;
   const liveQuests = gameVars && gameVars.quests && typeof gameVars.quests === 'object' ? gameVars.quests : null;
+  // правка значения в игре → {t:'setVar'}
+  const setLive = async (name, value) => {
+    try {
+      await call('studio:setVar', { name, value });
+      setGameVarsState((g) => ({ ...(g || {}), vars: { ...((g && g.vars) || {}), [name]: value } }));
+    } catch (e) { toast(e.message, 'error'); }
+  };
+  const ui = { ...DEFAULT_UI, ...(project.ui || {}) };
+  const setProj = (patch) => saveProject({ ...project, vars: rowsRef.current, ...patch });
   const shown = rows.map((r, i) => [r, i]).filter(([r]) => !q.trim() || (r.name + ' ' + (r.note || '')).toLowerCase().includes(q.trim().toLowerCase()));
   const cur = sel != null ? rows[sel] : null;
 
@@ -89,6 +100,16 @@ export default function VarsTab({ shared, goto }) {
       </div>
       <aside className="st-left">
         {linkCard}
+        <div className="st-card vt-proj" {...hp('Настройки всего сюжета (project.json).')}>
+          <b>Проект</b>
+          <div className="vt-prow" {...hp('Важность обычных разговоров жителей мода. Сюжетный диалог «при разговоре» с важностью ВЫШЕ этого числа откроется сразу; не выше — появится темой в списке разговора.')}>
+            <span className="small">Важность обычных разговоров</span>
+            <NumInput value={project.talkPriority || 0} step={1} onChange={(n) => setProj({ talkPriority: n || 0 })} />
+          </div>
+          {[['hud', 'Цель задания на экране', 'Строка текущей цели задания на экране игрока.'], ['markers', 'Метки заданий в мире', 'Маячки/частицы в точках шагов («Метка в мире»).'], ['chat', 'Дублировать в чат', 'Писать в чат о начале и завершении заданий и шагов.']].map(([k, l, h]) => (
+            <label key={k} className="check vt-pchk" {...hp(l + ' — ' + h)}><input type="checkbox" checked={!!ui[k]} onChange={(e) => setProj({ ui: { ...ui, [k]: e.target.checked } })} /><span className="small">{l}</span></label>
+          ))}
+        </div>
         <div className="st-card st-grow vt-help" {...hp('Переменные — память сюжета. Их записывают сцены (событие «Переменная»), диалоги и задания (действие «Записать переменную»), а проверяют — условия.')}>
           <b>Что это</b>
           <p className="small muted">Переменные — это память сюжета для каждого игрока: «встретил Мирона», «сколько хлеба отдал», «кого выбрал в спутники».</p>
@@ -109,10 +130,10 @@ export default function VarsTab({ shared, goto }) {
             <table className="vt-table">
               <thead>
                 <tr>
-                  <th {...hp('Имя латиницей: буквы, цифры, _ . - . По нему переменную находят условия и действия.')}>Имя</th>
+                  <th {...hp('Имя латиницей: буквы, цифры, _ . - . По нему переменную находят условия и действия. Под именем — заметка для себя.')}>Имя и заметка</th>
                   <th {...hp(TYPE_HINT)}>Тип</th>
+                  <th {...hp(SCOPE_HINT)}>Чья</th>
                   <th {...hp('Значение у игрока, пока сюжет его не поменял.')}>Начальное</th>
-                  <th {...hp('Заметка для себя: что значит эта переменная.')}>Заметка</th>
                   <th {...hp('Сколько файлов (сцен, диалогов, заданий) пишут или читают переменную. Щёлкни по строке — список справа.')}>Где</th>
                   <th {...hp('Значение у тебя в игре сейчас — нажми «Посмотреть в игре».')}>В игре</th>
                   <th />
@@ -126,10 +147,15 @@ export default function VarsTab({ shared, goto }) {
                   const lv = live && r.name in live ? live[r.name] : undefined;
                   return (
                     <tr key={i} className={(sel === i ? 'on ' : '') + (ri.some((x) => x.sev === ERR) ? 'bad' : '')} onClick={() => setSel(i)}>
-                      <td><NameCell value={r.name} onCommit={(v) => rename(i, v)} /></td>
+                      <td className="vt-name"><NameCell value={r.name} onCommit={(v) => rename(i, v)} /><input className="input sm vt-note" value={r.note || ''} placeholder="заметка: что это" onChange={(e) => setRow(i, { note: e.target.value })} /></td>
                       <td>
                         <select className="input sm" value={r.type} onChange={(e) => setRow(i, { type: e.target.value, init: convert(r.init, e.target.value) })} {...hp(TYPE_HINT)}>
                           {VAR_TYPES.map((t) => <option key={t} value={t}>{TYPE_RU[t]}</option>)}
+                        </select>
+                      </td>
+                      <td>
+                        <select className="input sm" value={r.scope || 'world'} onChange={(e) => setRow(i, { scope: e.target.value })} {...hp(SCOPE_HINT)}>
+                          <option value="world">мира</option><option value="player">игрока</option>
                         </select>
                       </td>
                       <td>
@@ -139,9 +165,12 @@ export default function VarsTab({ shared, goto }) {
                             ? <NumInput value={typeof r.init === 'number' ? r.init : 0} int onChange={(n) => setRow(i, { init: n || 0 })} />
                             : <input className="input sm" value={r.init == null ? '' : String(r.init)} onChange={(e) => setRow(i, { init: e.target.value })} />}
                       </td>
-                      <td><input className="input sm" value={r.note || ''} placeholder="что это" onChange={(e) => setRow(i, { note: e.target.value })} /></td>
                       <td className="vt-use" title={u.map((x) => KIND_RU[x.kind] + ': ' + x.title).join('\n')}>{u.length ? <span className="qe-chip">{u.length}</span> : <span className="muted small">—</span>}</td>
-                      <td className="vt-live">{lv === undefined ? <span className="muted small">{live ? 'нет' : '—'}</span> : <b className={lv !== r.init ? 'ch' : ''}>{valText(lv)}</b>}</td>
+                      <td className="vt-live" onClick={(e) => e.stopPropagation()}>
+                        {!live ? <span className="muted small">—</span>
+                          : link.connected ? <div className={lv !== undefined && lv !== r.init ? 'vt-ch' : ''} title="Поменять значение у себя в игре (сразу отправляется в игру)"><ValueInput type={r.type} value={lv === undefined ? null : lv} onChange={(v) => setLive(r.name, v)} /></div>
+                            : lv === undefined ? <span className="muted small">нет</span> : <b className={lv !== r.init ? 'ch' : ''}>{valText(lv)}</b>}
+                      </td>
                       <td><button className="btn sm ghost icon-btn" title="Удалить переменную" onClick={(e) => { e.stopPropagation(); if (!u.length || window.confirm('«' + r.name + '» используется в ' + u.length + ' файл(ах) — там появятся предупреждения. Удалить?')) { update((x) => x.filter((_, j) => j !== i)); setSel(null); } }}><Icon name="trash" size={10} /></button></td>
                     </tr>
                   );
@@ -184,7 +213,7 @@ export default function VarsTab({ shared, goto }) {
             {liveQuests && Object.keys(liveQuests).length > 0 && (
               <>
                 <div className="st-flabel" style={{ marginTop: 10 }}>Задания в игре</div>
-                {Object.entries(liveQuests).map(([id, st]) => <div key={id} className="sim-row now"><span className="mono">{id}</span><b>{typeof st === 'object' ? (st.state || '') + (st.step ? ' · ' + st.step : '') : String(st)}</b></div>)}
+                {Object.entries(liveQuests).map(([id, st]) => <div key={id} className="sim-row now"><span className="mono">{id}</span><b>{typeof st === 'object' ? ({ not_started: 'не начато', active: 'идёт', done: 'сделано', failed: 'провалено' }[st.state] || st.state || '') + (st.step ? ' · ' + st.step : '') : String(st)}</b></div>)}
               </>
             )}
           </div>

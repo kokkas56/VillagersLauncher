@@ -21,6 +21,8 @@ import {
 import '../studio/studio.css';
 
 const DEFAULT_HINT = 'Наведи мышку на любую кнопку, поле или дорожку — здесь появится объяснение, что это и зачем.';
+const QSTATE_RU = { not_started: 'не начато', active: 'идёт', done: 'сделано', failed: 'провалено' };
+const OP_RU = { dialog: 'Диалог', start: 'Начать', advance: 'Продвинуть', complete: 'Завершить', fail: 'Провалить', reset: 'Сбросить', status: 'Статус', setVar: 'Переменная', play: 'Сцена' };
 const SUBTABS = [
   ['scenes', 'Сцены', 'Катсцены: камера, актёры, эффекты, звук — на таймлайне.'],
   ['dialogs', 'Диалоги', 'Разговоры с ветками: реплики, выбор ответа, условия и действия — граф из узлов.'],
@@ -56,7 +58,8 @@ export default function Studio() {
   const [sub, setSubState] = useState(() => lsGet('sub', 'scenes'));
   const [dialogs, setDialogs] = useState([]);
   const [quests, setQuests] = useState([]);
-  const [gameVars, setGameVars] = useState(null);
+  const [gameVars, setGameVarsState] = useState(null);
+  const [questStates, setQuestStates] = useState({});
   const [goto, setGoto] = useState(null);
   const subRef = useRef(sub);
   subRef.current = sub;
@@ -159,6 +162,14 @@ export default function Studio() {
   }, []); // eslint-disable-line
 
   // ---------- связь с игрой ----------
+  // ответ игры на {t:'vars'}: { data: {имя: значение}, quests: {id: состояние} }
+  const setGameVars = (m) => {
+    if (!m) { setGameVarsState(null); return; }
+    setGameVarsState({ vars: m.data && typeof m.data === 'object' ? m.data : {}, quests: m.quests || null, at: Date.now() });
+    if (m.quests && typeof m.quests === 'object') setQuestStates((q) => ({ ...q, ...Object.fromEntries(Object.entries(m.quests).map(([id, st]) => [id, { ...st, id }])) }));
+  };
+  const setGameVarsRef = useRef(setGameVars);
+  setGameVarsRef.current = setGameVars;
   const addLog = (level, text) => setLogs((l) => [...l.slice(-199), { at: Date.now(), level, text }]);
   const onKeyRef = useRef(null);
   onKeyRef.current = async (msg) => {
@@ -208,7 +219,14 @@ export default function Studio() {
     else if (m.t === 'played') {
       addLog(m.ok ? 'ok' : 'error', (m.ok ? 'Сыграно: ' : 'Не сыграло: ') + (m.scene || '') + (m.error ? ' — ' + m.error : ''));
       if (!m.ok) { setPlaying(false); toast('Игра: ' + (m.error || 'сцена не сыграла'), 'error', 8000); }
-    } else if (m.t === 'key') { if (subRef.current === 'scenes') onKeyRef.current(m); else addLog('info', 'Клавиша в игре: ' + m.name + ' (работает во вкладке «Сцены»)'); } else if (m.t === 'vars') setGameVars(m.data !== undefined ? m.data : null);
+    } else if (m.t === 'key') { if (subRef.current === 'scenes') onKeyRef.current(m); else addLog('info', 'Клавиша в игре: ' + m.name + ' (работает во вкладке «Сцены»)'); } else if (m.t === 'vars') setGameVarsRef.current(m);
+    else if (m.t === 'questState') {
+      setQuestStates((q) => ({ ...q, [m.id]: m }));
+      addLog('info', 'Задание «' + m.id + '»: ' + (QSTATE_RU[m.state] || m.state) + (m.step ? ', шаг ' + m.step : '') + (m.text ? ' — ' + m.text : ''));
+    } else if (m.t === 'result') {
+      addLog(m.ok ? 'ok' : 'error', (OP_RU[m.op] || m.op || 'Команда') + (m.id ? ' «' + m.id + '»' : '') + ': ' + (m.ok ? 'готово' : 'не вышло — ' + (m.error || '?')));
+      if (!m.ok) toast('Игра: ' + (m.error || 'не получилось'), 'error', 8000);
+    }
   }), []); // eslint-disable-line
 
   // проигрывание: бегунок едет вместе с игрой (20 тиков в секунду)
@@ -386,7 +404,7 @@ export default function Studio() {
     saveProject({ ...p, vars: [...(p.vars || []), { name, type: type || 'bool', init: varDefault(type || 'bool'), note: '' }] });
     toast('Переменная «' + name + '» заведена (вкладка «Переменные»)', 'ok', 3000);
   }, []); // eslint-disable-line
-  const baseRefs = useMemo(() => ({ actors: project.actors || [], vars: project.vars || [], scenes: list, dialogs, quests, addVar }), [project, list, dialogs, quests, addVar]);
+  const baseRefs = useMemo(() => ({ actors: project.actors || [], vars: project.vars || [], scenes: list, dialogs, quests, addVar, talkPriority: project.talkPriority || 0 }), [project, list, dialogs, quests, addVar]);
   const openDoc = async (kind, id) => {
     if (kind === 'scenes') { await setSub('scenes'); openScene(id); return; }
     setGoto({ kind: kind === 'dialogs' ? 'dialog' : 'quest', id, n: Date.now() });
@@ -468,7 +486,7 @@ export default function Studio() {
   if (sub !== 'scenes') {
     const shared = {
       tabs: tabsEl, linkCard: linkCardEl, hintBox: hintBoxEl, buildBtn, actorsCard: actorsEl, toast, hp, api, link, project, saveProject,
-      lists: { scenes: list, dialogs, quests }, reloadList: reloadAny, patchList, baseRefs, addLog, gameVars, setGameVars, openDoc
+      lists: { scenes: list, dialogs, quests }, reloadList: reloadAny, patchList, baseRefs, addLog, gameVars, setGameVars, setGameVarsState, questStates, openDoc
     };
     return (
       <div className="studio">
