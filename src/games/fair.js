@@ -6,7 +6,9 @@
 // по фанерным жителям стрелять нельзя. Стрел мало — попадания возвращают стрелы. Комбо-множитель.
 // Финал/выход: камера отъезжает, хозяин вручает розетку (или машет), герой снова гуляет.
 
-import { drawNumber, drawText, textWidth, drawIcon } from './pixfont.js';
+import { drawNumber, drawText, textWidth, drawIcon, drawLabel, labelWidth, drawInt } from './pixfont.js';
+import { createProg, createBook, kitIcon, drawAuthor, drawBookBtn, bar } from './runner/kit.js';
+import { STALLS, LV_XP, lvOf, RANKS, rankOf, PRIZES, DAILY, fresh as freshSave, AUTHOR_MUL } from './fair/data.js';
 
 const W = 320;
 const H = 180;
@@ -131,6 +133,27 @@ const KINDS = [
   null // 4 выскочка (как обычная, стоит на месте) — заполняется ниже
 ];
 KINDS[4] = { sp: KINDS[0].sp, pts: 15, refill: 1, rad: 9 };
+// «Топоры»: деревянные чурки вместо бумажных мишеней
+const KINDS_AXE = [
+  { sp: ringTarget(8, ['#5a3a1e', '#e8c890', '#c8a060', '#e8c890', '#c8a060', '#e8c890', '#a87840', '#5a3a1e']), pts: 12, refill: 1, rad: 9 },
+  { sp: ringTarget(4, ['#5a3a1e', '#e8c890', '#c8a060', '#6a4424']), pts: 30, refill: 2, rad: 5 },
+  { sp: ringTarget(6, ['#fff6b0', '#f2c230', '#fff6b0', '#c08a10', '#f2c230', '#8a5e14']), pts: 60, refill: 3, rad: 7 },
+  KINDS[3],
+  { sp: ringTarget(8, ['#5a3a1e', '#d8b880', '#b89050', '#d8b880', '#b89050', '#d8b880', '#987030', '#4a2e16']), pts: 18, refill: 1, rad: 9 }
+];
+const AXE_SPR = [
+  sprite({ a: '#c8d0dc', b: '#7e8a9a', c: '#8a5a32' }, ['.aa....', 'aaab...', 'aab.c..', '.b...c.', '......c']),
+  sprite({ a: '#c8d0dc', b: '#7e8a9a', c: '#8a5a32' }, ['..a....', '.aaa...', '.aab...', '..c....', '..c....', '..c....']),
+  sprite({ a: '#c8d0dc', b: '#7e8a9a', c: '#8a5a32' }, ['c......', '.c...b.', '..c.baa', '...baaa', '....aa.']),
+  sprite({ a: '#c8d0dc', b: '#7e8a9a', c: '#8a5a32' }, ['....c..', '....c..', '....c..', '...baa.', '...aaa.', '....a..'])
+];
+// «Яблоки»: красное, зелёное (быстрое), золотое, гнилое
+const APPLES = [
+  { sp: sprite({ a: '#d83a3a', b: '#ff8a7a', c: '#4a8a3a', d: '#8a2020' }, ['..c..', '.aaa.', 'abaaa', 'aaaad', '.aad.']), pts: 10 },
+  { sp: sprite({ a: '#7ac040', b: '#c8f090', c: '#5a3a1e', d: '#4a8a20' }, ['..c..', '.aaa.', 'abaaa', 'aaaad', '.aad.']), pts: 15 },
+  { sp: sprite({ a: '#f2c230', b: '#fff6b0', c: '#4a8a3a', d: '#a07010' }, ['..c..', '.aaa.', 'abaaa', 'aaaad', '.aad.']), pts: 50 },
+  { sp: sprite({ a: '#6a5030', b: '#8a7048', c: '#2a2010', d: '#3a2a18' }, ['..c..', '.aaa.', 'adaaa', 'aaada', '.aad.']), pts: 0 }
+];
 const ARROW_ICON = sprite({ a: '#e8e2d4', b: '#8a5a32', c: '#d84a4a' }, ['c.....a.', '.cbbbbba', 'c.....a.']);
 
 // полки тира в режиме игры
@@ -294,10 +317,12 @@ function paintGallery(s) {
     C.fillStyle = p.aw3; R(x0 + (k ? 0 : 10), 70, 4, 2);
   }
 }
+// передний план для «Яблок»: только прилавок
+function paintCounterOnly(s) { s.noShelf = 1; paintGalleryFront(s); s.noShelf = 0; }
 // передний план тира: полки и прилавок (прозрачный слой)
 function paintGalleryFront(s) {
   const p = s.p;
-  for (let i = 0; i < ROWS.length; i++) {
+  for (let i = 0; i < (s.noShelf ? 0 : ROWS.length); i++) {
     const y = ROWS[i] + 10;
     C.fillStyle = p.g_plankDk; R(14, y, W - 28, 7);
     C.fillStyle = p.g_plankHi; R(14, y, W - 28, 1);
@@ -316,8 +341,8 @@ function paintGalleryFront(s) {
   C.fillStyle = p.g_plankDk; R(16, COUNTER_Y - 12, 9, 16);
   C.fillStyle = p.r0; R(17, COUNTER_Y - 11, 7, 14);
   C.fillStyle = p.g_plankDk; R(17, COUNTER_Y - 7, 7, 1);
-  // розетки-призы справа
-  for (let k = 0; k < 3; k++) {
+  // розетки-призы справа (если своих призов ещё нет)
+  for (let k = 0; k < (s.prizeN > 0 ? 0 : 3); k++) {
     const x = 262 + k * 8, y = 20 + (k % 2) * 3;
     C.fillStyle = RIBBON2[k]; R(x, y + 4, 1, 6); R(x + 3, y + 4, 1, 6);
     C.fillStyle = RIBBON[k]; R(x, y, 5, 5); R(x - 1, y + 1, 7, 3);
@@ -394,20 +419,142 @@ export default {
     const hero = s.hero, keeper = s.keeper;
     const HX = s.gx + 14; // где герой стоит у прилавка
 
+    // ---------- прогресс: билеты, ранги, аттракционы, призы, задания дня ----------
+    const prog = createProg(api, {
+      id: 'fair', version: 1, fresh: freshSave, daily: DAILY,
+      fix: (S) => {
+        for (let i = 0; i < 3; i++) {
+          S.xp[i] = Math.max(0, Number(S.xp[i]) || 0);
+          S.lv[i] = Math.max(1, Math.min(5, Math.max(S.lv[i] | 0, lvOf(S.xp[i]))));
+        }
+        S.next = (((S.next | 0) % 3) + 3) % 3;
+        S.prizes = S.prizes.filter((i, k, a) => Number.isInteger(i) && i >= 0 && i < PRIZES.length && a.indexOf(i) === k);
+      },
+      onDaily: (S, def, goal, pay) => { S.tickets += pay; S.earned += pay; },
+      rewards: [
+        { id: 'fair_badge_eye', test: (S) => S.gold >= 100 },
+        { id: 'fair_frame_target', test: (S) => S.lv.every((l) => l >= 5) },
+        { id: 'fair_theme_fair', test: (S) => S.earned >= RANKS[4].need },
+        { id: 'fair_title_robin', test: (S) => S.robin >= 1 },
+        { id: 'fair_cape_archer', test: (S) => S.earned >= RANKS[6].need }
+      ]
+    });
+    const MUL = prog.author ? AUTHOR_MUL : 1;
+    prog.load();
+    const syncDecor = () => {
+      s.prizeN = prog.S.prizes.length;
+      s.stallSign = prog.variant ? (prog.variant - 1) % 3 : prog.S.next;
+      s.festive = prog.variant ? 1 : 0;
+    };
+    syncDecor();
+    let lastRank = rankOf(prog.S.earned);
+    let roundOpen = false;
+    const finishRound = (full) => {
+      if (!roundOpen || prog.variant) { roundOpen = false; return; }
+      roundOpen = false;
+      const S = prog.S, st = g.stall, sc = Math.round(g.score);
+      const tk = Math.floor(sc / 60 * (1 + 0.25 * (S.lv[st] - 1)) * MUL);
+      S.tickets += tk; S.earned += tk; S.rounds++; S.hits += g.hits;
+      if (sc > S.best) S.best = sc;
+      S.xp[st] += sc * MUL;
+      const nl = lvOf(S.xp[st]);
+      if (nl > S.lv[st]) { S.lv[st] = nl; prog.toast(STALLS[st].name + ': УРОВЕНЬ ' + nl, '#9cf0ff'); }
+      if (tk > 0) prog.toast('+' + tk + ' БИЛЕТОВ', '#ffe070');
+      const rk = rankOf(S.earned);
+      if (rk > lastRank) { lastRank = rk; prog.toast('НОВЫЙ РАНГ: ' + RANKS[rk].name, '#ffb0e0'); }
+      if (full && g.misses === 0 && g.hits >= 60) { S.robin = 1; prog.toast('ИДЕАЛЬНЫЙ РАУНД!', '#ffe070'); }
+      prog.bump('rounds', 1); prog.peak('score', sc); if (tk > 0) prog.bump('tickets', tk); if (st === 1) prog.bump('axes', 1);
+      S.next = (st + 1) % 3;
+      syncDecor();
+      prog.checkRewards();
+      prog.save();
+    };
+    const onHit = (gold) => {
+      g.hits++;
+      if (g.combo > g.maxCombo) g.maxCombo = g.combo;
+      if (prog.variant) return;
+      prog.bump('hits', 1); prog.peak('combo', g.combo);
+      if (g.stall === 2) prog.bump('apples', 1);
+      if (gold) { prog.S.gold += prog.author ? 10 : 1; prog.bump('gold', 1); prog.checkRewards(); }
+    };
+    const setRank = (rk) => {
+      const S = prog.S;
+      rk = Math.max(0, Math.min(RANKS.length - 1, rk));
+      const need = RANKS[rk].need;
+      if (S.earned < need) S.tickets += need - S.earned;
+      S.earned = need;
+      for (let i = 0; i < 3; i++) { S.lv[i] = Math.max(1, Math.min(5, rk)); S.xp[i] = LV_XP[S.lv[i] - 1]; }
+      lastRank = rk;
+      prog.toast('(АВТОР) РАНГ: ' + RANKS[rk].name, '#ffb0e0');
+      prog.checkRewards(); syncDecor(); prog.save();
+    };
+    const authorKey = (code) => {
+      if (!prog.author) return false;
+      if (code === 'BracketRight') { setRank(rankOf(prog.S.earned) + 1); return true; }
+      if (code === 'BracketLeft') { setRank(rankOf(prog.S.earned) - 1); return true; }
+      return false;
+    };
+    const book = createBook([
+      {
+        title: 'АТТРАКЦИОНЫ',
+        rows: () => STALLS.map((st, i) => {
+          const S = prog.S, l = S.lv[i];
+          return { t: st.name, ic: i === S.next ? 'check' : st.ic, s: 'УР. ' + l + (i === S.next ? '  СЛЕДУЮЩИЙ' : ''), r: l >= 5 ? 'МАКС' : Math.floor(S.xp[i]) + '/' + LV_XP[l], c: l >= 5 ? '#9cf08a' : '#ffffff' };
+        }),
+        pick: (i) => { prog.S.next = i; syncDecor(); api.sfx('coin'); prog.save(); return true; },
+        foot: () => 'ВЫБЕРИ СЛЕДУЮЩИЙ РАУНД'
+      },
+      {
+        title: 'РАНГ',
+        rows: () => RANKS.map((r, i) => ({ t: r.name, ic: prog.S.earned >= r.need ? 'star' : 'ticket', lock: prog.S.earned < r.need, r: r.need + ' БИЛ.', s: i === rankOf(prog.S.earned) ? 'ТЫ ЗДЕСЬ' : '' })),
+        foot: () => 'ЗАРАБОТАНО ВСЕГО: ' + Math.floor(prog.S.earned)
+      },
+      {
+        title: 'ПРИЗЫ',
+        rows: () => PRIZES.map((pz, i) => {
+          const own = prog.S.prizes.indexOf(i) >= 0;
+          return { t: pz.name, ic: own ? 'check' : 'ticket', lock: !own && prog.S.tickets < pz.cost, r: own ? 'ЕСТЬ' : pz.cost + ' БИЛ.', c: own ? '#9cf08a' : '#ffffff' };
+        }),
+        pick: (i) => {
+          const S = prog.S, pz = PRIZES[i];
+          if (S.prizes.indexOf(i) >= 0 || S.tickets < pz.cost) { api.sfx('click'); return false; }
+          S.tickets -= pz.cost; S.prizes.push(i); syncDecor(); api.sfx('win'); prog.save(); return true;
+        },
+        foot: () => 'БИЛЕТЫ: ' + Math.floor(prog.S.tickets) + '   ПРИЗОВ ' + prog.S.prizes.length + '/' + PRIZES.length
+      },
+      {
+        title: 'ЗАДАНИЯ',
+        rows: () => {
+          const S = prog.S, out = prog.dailyRows();
+          out.push({ t: '- ДОСТИЖЕНИЯ -', c: '#8a6a3a' });
+          out.push({ t: 'ЗОЛОТЫЕ МИШЕНИ', ic: 'star', r: Math.min(S.gold, 100) + '/100' });
+          out.push({ t: 'ИДЕАЛЬНЫЙ РАУНД (60+ БЕЗ ПРОМАХОВ)', ic: 'target', r: S.robin ? 'ЕСТЬ' : 'НЕТ' });
+          out.push({ t: 'РАУНДОВ СЫГРАНО', ic: 'clock', r: String(S.rounds) });
+          out.push({ t: 'ЛУЧШИЙ СЧЁТ', ic: 'ticket', r: String(S.best) });
+          return out;
+        },
+        foot: () => 'РАНГ: ' + RANKS[rankOf(prog.S.earned)].name
+      }
+    ], W, H);
+
     // ---------- состояние игры ----------
     const targets = [];
     for (let i = 0; i < 10; i++) targets.push({ on: 0, kind: 0, row: 0, x: 0, vx: 0, pop: 0, st: 0, t: 0, life: 0, ax: 0, ay: 0, hasArrow: 0, shake: 0 });
     const flights = [];
-    for (let i = 0; i < 4; i++) flights.push({ on: 0, t: 0, x0: 0, y0: 0, x1: 0, y1: 0, ux: 0, uy: 0 });
+    for (let i = 0; i < 4; i++) flights.push({ on: 0, t: 0, x0: 0, y0: 0, x1: 0, y1: 0, ux: 0, uy: 0, axe: 0 });
     const stuck = [];
-    for (let i = 0; i < 8; i++) stuck.push({ on: 0, x: 0, y: 0, t: 0 });
+    for (let i = 0; i < 8; i++) stuck.push({ on: 0, x: 0, y: 0, t: 0, axe: 0 });
     const pops = [];
     for (let i = 0; i < 6; i++) pops.push({ on: 0, x: 0, y: 0, t: 0, v: 0, neg: 0 });
     const gparts = pool(48);
     const g = {
       score: 0, lives: LIVES, arrows: START_ARROWS, time: ROUND, combo: 0, mult: 1, spawnT: 0.6, elapsed: 0,
-      cx: 160, cy: 92, bowKick: 0, best: 0, endWin: false
+      cx: 160, cy: 92, bowKick: 0, best: 0, endWin: false,
+      stall: 0, hits: 0, misses: 0, maxCombo: 0, lvl: 1, bx: 160, nameT: 0
     };
+    const apples = [];
+    for (let i = 0; i < 12; i++) apples.push({ on: 0, kind: 0, x: 0, y: 0, vy: 0, t: 0 });
+    const kindsOf = () => (g.stall === 1 ? KINDS_AXE : KINDS);
 
     // фазы: idle → intro → play → end → wait(over) → outro → idle
     let phase = 'idle', pt = 0, idleT = 0, overSent = false, sawOver = false;
@@ -418,6 +565,11 @@ export default {
       g.score = 0; g.lives = LIVES; g.arrows = START_ARROWS; g.time = ROUND; g.combo = 0; g.mult = 1;
       g.spawnT = 0.5; g.elapsed = 0; g.cx = 160; g.cy = 92; g.bowKick = 0;
       g.best = Math.max(0, Math.floor(api.best || 0));
+      g.stall = prog.variant ? 0 : prog.S.next; g.lvl = prog.S.lv[g.stall] || 1;
+      g.hits = 0; g.misses = 0; g.maxCombo = 0; g.bx = 160; g.nameT = 0;
+      g.arrows = g.stall === 1 ? 15 : START_ARROWS;
+      for (const a of apples) a.on = 0;
+      roundOpen = false;
       for (const t of targets) t.on = 0;
       for (const f of flights) f.on = 0;
       for (const a of stuck) a.on = 0;
@@ -425,14 +577,18 @@ export default {
       for (const q of gparts) q.on = 0;
       overSent = false; sawOver = false;
     };
-    const setCursor = () => { canvas.style.cursor = phase === 'play' ? 'none' : prevCursor; };
+    const setCursor = () => { canvas.style.cursor = phase === 'play' && !book.open ? 'none' : prevCursor; };
     const startIntro = () => {
+      book.toggle(false);
+      if (phase === 'idle' || phase === 'outro') { prog.load(); lastRank = rankOf(prog.S.earned); syncDecor(); }
       resetRun();
       phase = 'intro'; pt = 0;
       if (z < 0.01) { hero.st = H_RUN; hero.bow = 0; hero.shot = 0; hero.pause = 0; s.boardArrow.on = 0; }
       setCursor();
     };
     const startOutro = () => {
+      book.toggle(false);
+      finishRound(false);
       if (z <= 0 && hero.st !== H_READY) {
         // ещё не дошли до тира — просто гуляем дальше
         hero.st = H_STROLL; hero.bow = 0; hero.pause = 0.3;
@@ -446,6 +602,7 @@ export default {
     };
     const startEnd = (win) => {
       phase = 'end'; pt = 0; g.endWin = win;
+      finishRound(true);
       for (const t of targets) if (t.on && t.st < 2) { t.st = 2; }
       api.sfx(win ? 'win' : 'lose');
       setCursor();
@@ -458,16 +615,22 @@ export default {
       g.cx = clamp((e.clientX - r.left) / Math.max(1, r.width) * W, 2, W - 3);
       g.cy = clamp((e.clientY - r.top) / Math.max(1, r.height) * H, 14, H - 3);
     };
-    const onMove = (e) => { if (phase === 'play') toCanvas(e); };
+    const onMove = (e) => { if (phase === 'play' && !book.open) toCanvas(e); };
     const onDown = (e) => {
       if (phase !== 'play') return;
       if (e.preventDefault) e.preventDefault();
+      const r = canvas.getBoundingClientRect();
+      const px = (e.clientX - r.left) / Math.max(1, r.width) * W, py = (e.clientY - r.top) / Math.max(1, r.height) * H;
+      if (book.open) { book.click(px, py); setCursor(); return; }
+      if (px < 16 && py > H - 17) { book.toggle(true); setCursor(); api.sfx('click'); return; }
       toCanvas(e);
       shoot();
     };
     const onKeyDown = (e) => {
       if (phase !== 'play') return;
       const c = e.code;
+      if (!e.repeat && authorKey(c)) { if (e.preventDefault) e.preventDefault(); return; }
+      if (book.key(c)) { if (e.preventDefault) e.preventDefault(); keys.l = keys.r = keys.u = keys.d = 0; setCursor(); api.sfx('click'); return; }
       if (c === 'ArrowLeft' || c === 'KeyA') keys.l = 1;
       else if (c === 'ArrowRight' || c === 'KeyD') keys.r = 1;
       else if (c === 'ArrowUp' || c === 'KeyW') keys.u = 1;
@@ -505,78 +668,133 @@ export default {
       for (const q of pops) if (!q.on) { q.on = 1; q.x = x; q.y = y; q.t = 0; q.v = v; q.neg = neg; return; }
     };
     const shoot = () => {
-      if (g.arrows <= 0) return;
+      if (g.stall === 2 || g.arrows <= 0) return;
       g.arrows--;
       g.bowKick = 0.15;
+      const axe = g.stall === 1 ? 1 : 0;
       const bx = 160 + (g.cx - 160) * 0.2, by = 158;
       for (const f of flights) if (!f.on) {
-        f.on = 1; f.t = 0; f.x0 = bx; f.y0 = by; f.x1 = g.cx; f.y1 = g.cy;
+        f.on = 1; f.t = 0; f.x0 = bx; f.y0 = by; f.x1 = g.cx; f.y1 = g.cy; f.axe = axe;
         const dx = g.cx - bx, dy = g.cy - by, l = Math.max(1, Math.sqrt(dx * dx + dy * dy));
         f.ux = dx / l; f.uy = dy / l;
         break;
       }
-      // ищем мишень (ближайшую к центру)
+      if (axe) api.sfx('step'); else resolveHit(g.cx, g.cy, 0);
+    };
+    // попадание стрелы / топора в точку (x, y)
+    const resolveHit = (x, y, axe) => {
+      const KK = kindsOf();
       let best = null, bd = 1e9;
       for (const t of targets) {
-        if (!hitTest(t, g.cx, g.cy)) continue;
-        const dx = g.cx - t.x, dy = g.cy - targetY(t), d = dx * dx + dy * dy - (t.kind === 3 ? 0 : 20);
+        if (!hitTest(t, x, y)) continue;
+        const dx = x - t.x, dy = y - targetY(t), d = dx * dx + dy * dy - (t.kind === 3 ? 0 : 20);
         if (d < bd) { bd = d; best = t; }
       }
       if (best) {
-        const k = KINDS[best.kind];
+        const k = KK[best.kind];
         best.st = 2; best.shake = 0.3; best.hasArrow = 1;
-        best.ax = Math.round(g.cx - best.x); best.ay = Math.round(g.cy - targetY(best));
+        best.ax = Math.round(x - best.x); best.ay = Math.round(y - targetY(best));
         const ty = targetY(best);
         if (best.kind === 3) {
-          g.lives--; g.combo = 0; g.mult = 1;
+          g.lives--; g.combo = 0; g.mult = 1; g.misses++;
           popup(best.x, ty - 12, 0, 1);
           api.sfx('hit');
-          for (let i = 0; i < 6; i++) spawnP(gparts, g.cx, g.cy, (rand() - 0.5) * 60, -20 - rand() * 30, 0.6, '#8a5a32', 140, 0);
+          for (let i = 0; i < 6; i++) spawnP(gparts, x, y, (rand() - 0.5) * 60, -20 - rand() * 30, 0.6, '#8a5a32', 140, 0);
           if (g.lives <= 0) startEnd(false);
         } else {
           g.combo++;
           g.mult = Math.min(5, 1 + F(g.combo / 3));
           // точность: в центр — бонус
-          const dx = g.cx - best.x, dy = g.cy - ty;
+          const dx = x - best.x, dy = y - ty;
           const bull = dx * dx + dy * dy <= 2 ? 2 : 1;
           const v = k.pts * g.mult * bull;
           g.score += v;
-          g.arrows = Math.min(MAX_ARROWS, g.arrows + k.refill + (bull > 1 ? 1 : 0));
+          g.arrows = Math.min(axe ? 18 : MAX_ARROWS, g.arrows + k.refill + (bull > 1 ? 1 : 0));
           popup(best.x, ty - 10, v, 0);
           api.sfx(best.kind === 2 || bull > 1 ? 'win' : 'coin');
           if (best.kind === 2) keeper.wave = 1.2;
+          onHit(best.kind === 2);
           const n = best.kind === 2 ? 10 : 5;
-          for (let i = 0; i < n; i++) spawnP(gparts, best.x, ty, (rand() - 0.5) * 70, -20 - rand() * 40, 0.5 + rand() * 0.4, best.kind === 2 ? (i % 2 ? '#fff6b0' : '#f2c230') : (i % 2 ? '#f4ecdc' : '#d83a3a'), 160, 0);
+          for (let i = 0; i < n; i++) spawnP(gparts, best.x, ty, (rand() - 0.5) * 70, -20 - rand() * 40, 0.5 + rand() * 0.4, best.kind === 2 ? (i % 2 ? '#fff6b0' : '#f2c230') : axe ? (i % 2 ? '#e8c890' : '#8a5a32') : (i % 2 ? '#f4ecdc' : '#d83a3a'), 160, 0);
         }
       } else {
-        g.combo = 0; g.mult = 1;
+        g.combo = 0; g.mult = 1; g.misses++;
         api.sfx('click');
-        for (const a of stuck) if (!a.on) { a.on = 1; a.x = Math.round(g.cx); a.y = Math.round(g.cy); a.t = 0; break; }
-        for (let i = 0; i < 3; i++) spawnP(gparts, g.cx, g.cy, (rand() - 0.5) * 40, -10 - rand() * 20, 0.4, '#5a3a20', 160, 0);
+        for (const a of stuck) if (!a.on) { a.on = 1; a.x = Math.round(x); a.y = Math.round(y); a.t = 0; a.axe = axe; break; }
+        for (let i = 0; i < 3; i++) spawnP(gparts, x, y, (rand() - 0.5) * 40, -10 - rand() * 20, 0.4, '#5a3a20', 160, 0);
       }
     };
 
     const spawnTarget = () => {
+      if (g.stall === 2) { spawnApple(); return; }
       let t = null;
       let active = 0;
       for (const q of targets) { if (q.on) active++; else if (!t) t = q; }
-      const d = clamp(g.elapsed / ROUND, 0, 1);
-      if (!t || active >= 3 + F(d * 4)) return;
+      const d = clamp(g.elapsed / ROUND, 0, 1), lk = (g.lvl - 1) * 0.12;
+      if (!t || active >= 3 + F(d * 4) + (g.lvl >= 4 ? 1 : 0)) return;
       const r = rand();
       let kind;
-      if (r < 0.15 + 0.07 * d) kind = 3;
-      else if (r < 0.24 + 0.07 * d) kind = 2;
-      else if (r < 0.42 + 0.12 * d) kind = 1;
-      else if (r < 0.6 + 0.08 * d) kind = 4;
+      if (rand() < 0.03 + 0.005 * g.lvl) kind = 2; // золотые — редкость
+      else if (r < 0.17 + 0.07 * d) kind = 3;
+      else if (r < 0.38 + 0.1 * d) kind = 1;
+      else if (r < 0.58 + 0.08 * d) kind = 4;
       else kind = 0;
       t.on = 1; t.kind = kind; t.row = F(rand() * 3); t.pop = 0; t.st = 0; t.t = 0; t.hasArrow = 0; t.shake = 0;
       const dir = rand() < 0.5 ? -1 : 1;
-      const sp = (kind === 1 ? 70 + rand() * 35 : kind === 2 ? 48 + rand() * 18 : kind === 3 ? 22 + rand() * 20 : 26 + rand() * 20) * (1 + d * 0.6);
-      if (kind === 4) { t.vx = 0; t.x = 34 + rand() * (W - 68); t.life = 1.6 - d * 0.6; }
+      const sp = (kind === 1 ? 70 + rand() * 35 : kind === 2 ? 58 + rand() * 18 : kind === 3 ? 22 + rand() * 20 : 26 + rand() * 20) * (1 + d * 0.6 + lk) * (g.stall === 1 ? 0.8 : 1);
+      if (kind === 4) { t.vx = 0; t.x = 34 + rand() * (W - 68); t.life = 1.6 - d * 0.6 - lk; }
       else { t.vx = sp * dir; t.x = dir > 0 ? 24 + rand() * 60 : W - 24 - rand() * 60; t.life = 99; }
       // не ставим поверх соседа в том же ряду
       for (const q of targets) {
         if (q !== t && q.on && q.row === t.row && Math.abs(q.x - t.x) < 18) { t.row = (t.row + 1) % 3; break; }
+      }
+    };
+    const spawnApple = () => {
+      let a = null, active = 0;
+      for (const q of apples) { if (q.on) active++; else if (!a) a = q; }
+      if (!a || active >= 5 + g.lvl) return;
+      const d = clamp(g.elapsed / ROUND, 0, 1), r = rand();
+      a.kind = rand() < 0.03 + 0.005 * g.lvl ? 2 : r < 0.16 + 0.06 * d + 0.02 * g.lvl ? 3 : r < 0.42 ? 1 : 0;
+      a.on = 1; a.x = 30 + rand() * (W - 60); a.y = 26 + rand() * 6; a.vy = 4 + rand() * 10; a.t = 0;
+    };
+    const BASKET_Y = COUNTER_Y - 6;
+    const updApples = (dt) => {
+      const sp = 1 + 0.1 * (g.lvl - 1) + 0.4 * clamp(g.elapsed / ROUND, 0, 1);
+      const want = clamp(g.cx, 24, W - 24), dd = want - g.bx;
+      g.bx += Math.sign(dd) * Math.min(Math.abs(dd), 300 * dt);
+      for (const a of apples) {
+        if (!a.on) continue;
+        a.t += dt;
+        if (a.t < 0.35) continue; // покачивается на ветке
+        a.vy += (a.kind === 1 ? 110 : 75) * sp * dt;
+        a.y += a.vy * dt;
+        if (a.y >= BASKET_Y - 4 && a.y <= BASKET_Y + 4 && Math.abs(a.x - g.bx) <= 12) {
+          a.on = 0;
+          if (a.kind === 3) {
+            g.lives--; g.combo = 0; g.mult = 1; g.misses++;
+            popup(a.x, BASKET_Y - 14, 0, 1);
+            api.sfx('hit');
+            for (let i = 0; i < 6; i++) spawnP(gparts, a.x, BASKET_Y, (rand() - 0.5) * 50, -20 - rand() * 30, 0.6, '#6a5030', 140, 0);
+            if (g.lives <= 0) startEnd(false);
+          } else {
+            g.combo++;
+            g.mult = Math.min(5, 1 + F(g.combo / 4));
+            const v = APPLES[a.kind].pts * g.mult;
+            g.score += v;
+            popup(a.x, BASKET_Y - 14, v, 0);
+            api.sfx(a.kind === 2 ? 'win' : 'coin');
+            if (a.kind === 2) keeper.wave = 1.2;
+            onHit(a.kind === 2);
+            for (let i = 0; i < 4; i++) spawnP(gparts, a.x, BASKET_Y - 2, (rand() - 0.5) * 40, -20 - rand() * 20, 0.4, a.kind === 2 ? '#fff6b0' : '#c8f090', 160, 0);
+          }
+        } else if (a.y > COUNTER_Y + 3) {
+          a.on = 0;
+          if (a.kind !== 3) {
+            g.combo = 0; g.mult = 1; g.misses++;
+            api.sfx('splash');
+            for (let i = 0; i < 5; i++) spawnP(gparts, a.x, COUNTER_Y, (rand() - 0.5) * 50, -15 - rand() * 20, 0.5, a.kind === 1 ? '#7ac040' : a.kind === 2 ? '#f2c230' : '#d83a3a', 160, 0);
+          }
+        }
       }
     };
 
@@ -587,13 +805,16 @@ export default {
         g.elapsed += dt;
         g.time -= dt;
         const kx = keys.r - keys.l, ky = keys.d - keys.u;
-        if (kx || ky) { g.cx = clamp(g.cx + kx * 150 * dt, 2, W - 3); g.cy = clamp(g.cy + ky * 150 * dt, 14, H - 3); }
+        const ks = g.stall === 2 ? 220 : 150;
+        if (kx || ky) { g.cx = clamp(g.cx + kx * ks * dt, 2, W - 3); g.cy = clamp(g.cy + ky * ks * dt, 14, H - 3); }
+        if (g.nameT > 0) g.nameT -= dt;
         g.spawnT -= dt;
         if (g.spawnT <= 0) {
           spawnTarget();
           const d = clamp(g.elapsed / ROUND, 0, 1);
-          g.spawnT = (1.05 - 0.55 * d) * (0.7 + rand() * 0.6);
+          g.spawnT = (g.stall === 2 ? 0.95 - 0.4 * d - 0.05 * (g.lvl - 1) : 1.05 - 0.55 * d - 0.04 * (g.lvl - 1)) * (0.7 + rand() * 0.6);
         }
+        if (g.stall === 2) updApples(dt);
       }
       if (g.bowKick > 0) g.bowKick -= dt;
       if (keeper.wave > 0) keeper.wave -= dt;
@@ -613,7 +834,7 @@ export default {
           if (t.pop <= 0) t.on = 0;
         }
       }
-      for (const f of flights) if (f.on) { f.t += dt / 0.09; if (f.t >= 1) f.on = 0; }
+      for (const f of flights) if (f.on) { f.t += dt / (f.axe ? 0.28 : 0.09); if (f.t >= 1) { f.on = 0; if (f.axe && playing) resolveHit(f.x1, f.y1, 1); } }
       for (const a of stuck) if (a.on) { a.t += dt; if (a.t > 4) a.on = 0; }
       for (const q of pops) if (q.on) { q.t += dt; q.y -= dt * 14; if (q.t > 0.9) q.on = 0; }
       for (const q of gparts) {
@@ -626,7 +847,7 @@ export default {
         let flying = 0;
         for (const f of flights) flying += f.on;
         if (g.time <= 0) { g.time = 0; startEnd(true); }
-        else if (g.arrows <= 0 && !flying) startEnd(g.score > 0);
+        else if (g.stall !== 2 && g.arrows <= 0 && !flying) startEnd(g.score > 0);
       }
     };
 
@@ -784,10 +1005,10 @@ export default {
         C.fillStyle = '#d84a4a'; R(x - 4, y - 1, 1, 1); R(x - 4, y + 1, 1, 1);
       }
       // салют ночью и ноты барда
-      if (dt > 0 && dark > 0.55) {
+      if (dt > 0 && (dark > 0.55 || (s.festive && dark > 0.2))) {
         s.fw -= dt;
         if (s.fw <= 0) {
-          s.fw = 3.5 + rand() * 5;
+          s.fw = s.festive ? 1.2 + rand() * 2 : 3.5 + rand() * 5;
           spawnP(s.parts, W * (0.35 + rand() * 0.55), 100, (rand() - 0.5) * 8, -70 - rand() * 15, 0.8 + rand() * 0.3, '#ffe6a0', 30, 2);
         }
       }
@@ -885,9 +1106,13 @@ export default {
       const sx = x + F(w / 2);
       C.fillStyle = p.woodDk; R(sx - 6, 86, 13, 11);
       C.fillStyle = '#f4ecdc'; R(sx - 4, 88, 9, 7);
-      C.fillStyle = '#d83a3a'; R(sx - 3, 89, 7, 5);
-      C.fillStyle = '#f4ecdc'; R(sx - 1, 90, 3, 3);
-      C.fillStyle = '#d83a3a'; R(sx, 91, 1, 1);
+      if (s.stallSign === 1) kitIcon(C, 'axe', sx - 3, 88);
+      else if (s.stallSign === 2) kitIcon(C, 'apple', sx - 3, 88);
+      else {
+        C.fillStyle = '#d83a3a'; R(sx - 3, 89, 7, 5);
+        C.fillStyle = '#f4ecdc'; R(sx - 1, 90, 3, 3);
+        C.fillStyle = '#d83a3a'; R(sx, 91, 1, 1);
+      }
       lantern(p, x + 2, t, 1.3);
       lantern(p, x + w - 2, t, 4.1);
     };
@@ -983,15 +1208,18 @@ export default {
       for (const a of stuck) {
         if (!a.on) continue;
         C.globalAlpha = GA * (a.t > 3.5 ? (4 - a.t) * 2 : 1);
+        if (a.axe) { drawSpr(AXE_SPR[0], a.x - 3, a.y - 2, 999); continue; }
         C.fillStyle = '#3a2414'; R(a.x, a.y, 1, 1);
         C.fillStyle = '#e8e2d4'; R(a.x - 1, a.y - 1, 1, 1); R(a.x + 1, a.y - 1, 1, 1);
         C.fillStyle = '#d84a4a'; R(a.x - 1, a.y + 1, 1, 1); R(a.x + 1, a.y + 1, 1, 1);
       }
       C.globalAlpha = GA;
+      if (g.stall === 2) drawBranches(t);
       // мишени
+      const KK = kindsOf();
       for (const tg of targets) {
         if (!tg.on) continue;
-        const k = KINDS[tg.kind], sp = k.sp;
+        const k = KK[tg.kind], sp = k.sp;
         const clipY = ROWS[tg.row] + 10;
         const cy = targetY(tg);
         const sh = tg.shake > 0 ? (Math.sin(tg.t * 60) > 0 ? 1 : -1) : 0;
@@ -1005,19 +1233,42 @@ export default {
         if (tg.kind === 2 && Math.sin(tg.t * 9) > 0.7 && y0 < clipY - 4) { C.fillStyle = '#ffffff'; R(x0 + 2, y0 + 2, 1, 1); R(x0 + 1, y0 + 2, 3, 0 + 1); }
         if (tg.hasArrow) {
           const ax = Math.round(tg.x) + tg.ax + sh, ay = Math.round(cy) + tg.ay;
-          if (ay < clipY) {
+          if (ay < clipY && g.stall === 1) drawSpr(AXE_SPR[0], ax - 3, ay - 2, clipY);
+          else if (ay < clipY) {
             C.fillStyle = '#3a2414'; R(ax, ay, 1, 1);
             C.fillStyle = '#e8e2d4'; R(ax - 1, ay - 1, 1, 1); R(ax + 1, ay - 1, 1, 1);
             C.fillStyle = '#d84a4a'; R(ax - 1, ay + 1, 1, 1); R(ax + 1, ay + 1, 1, 1);
           }
         }
       }
-      cached(ctx, s, 'galf', s.pq, W, H, 0, 0, paintGalleryFront);
+      if (g.stall === 2) cached(ctx, s, 'galfA', s.pq + (s.prizeN > 0 ? 1000 : 0), W, H, 0, 0, paintCounterOnly);
+      else cached(ctx, s, 'galf', s.pq + (s.prizeN > 0 ? 1000 : 0), W, H, 0, 0, paintGalleryFront);
+      drawPrizeShelf();
       // стрелы в колчане (сколько осталось, до 8 видно)
-      const nShow = Math.min(8, g.arrows);
-      for (let i = 0; i < nShow; i++) {
-        C.fillStyle = '#e8e2d4'; R(17 + i, COUNTER_Y - 15 - (i % 2), 1, 4);
-        C.fillStyle = '#d84a4a'; R(17 + i, COUNTER_Y - 16 - (i % 2), 1, 1);
+      if (g.stall === 0) {
+        const nShow = Math.min(8, g.arrows);
+        for (let i = 0; i < nShow; i++) {
+          C.fillStyle = '#e8e2d4'; R(17 + i, COUNTER_Y - 15 - (i % 2), 1, 4);
+          C.fillStyle = '#d84a4a'; R(17 + i, COUNTER_Y - 16 - (i % 2), 1, 1);
+        }
+      } else if (g.stall === 1) {
+        for (let i = 0; i < Math.min(5, g.arrows); i++) drawSpr(AXE_SPR[1], 30 + i * 7, COUNTER_Y - 6, 999);
+      } else {
+        // яблоки и корзина
+        for (const a of apples) {
+          if (!a.on) continue;
+          const sw = a.t < 0.35 ? (Math.sin(a.t * 40) > 0 ? 1 : 0) : 0;
+          drawSpr(APPLES[a.kind].sp, Math.round(a.x) - 2 + sw, Math.round(a.y) - 2, 999);
+          if (a.kind === 3 && Math.sin(t * 20 + a.x) > 0) { C.fillStyle = '#2a2a2a'; R(a.x + 3, a.y - 5, 1, 1); }
+        }
+        const bx = Math.round(g.bx), by = BASKET_Y;
+        C.fillStyle = p.skin; R(bx - 15, by + 1, 3, 3); R(bx + 13, by + 1, 3, 3);
+        C.fillStyle = '#7a4e22'; R(bx - 12, by - 3, 25, 9);
+        C.fillStyle = '#a8723e'; R(bx - 12, by - 3, 25, 1);
+        C.fillStyle = '#5a3a18';
+        for (let k = -10; k < 12; k += 4) R(bx + k, by - 2, 1, 8);
+        R(bx - 12, by + 2, 25, 1);
+        C.fillStyle = '#c8a060'; R(bx - 13, by - 4, 27, 1);
       }
       // хозяин тира справа за прилавком
       const kx = 290;
@@ -1035,6 +1286,11 @@ export default {
       // летящие стрелы
       for (const f of flights) {
         if (!f.on) continue;
+        if (f.axe) {
+          const e = f.t, x = f.x0 + (f.x1 - f.x0) * e, y = f.y0 + (f.y1 - f.y0) * e - Math.sin(e * Math.PI) * 18;
+          drawSpr(AXE_SPR[F(e * 9) & 3], Math.round(x) - 3, Math.round(y) - 3, 999);
+          continue;
+        }
         const e = f.t, x = f.x0 + (f.x1 - f.x0) * e, y = f.y0 + (f.y1 - f.y0) * e;
         const L = 6 * (1 - e * 0.6);
         C.fillStyle = '#e8e2d4';
@@ -1048,8 +1304,14 @@ export default {
         C.fillStyle = q.c; R(q.x, q.y, 1, 1);
       }
       C.globalAlpha = GA;
-      // лук героя внизу
+      // лук героя внизу (в «Топорах» — рука с топором, в «Яблоках» — ничего)
       const bx = Math.round(160 + (g.cx - 160) * 0.2), by = H + 2 + (g.bowKick > 0 ? 2 : 0);
+      if (g.stall === 1) {
+        C.fillStyle = p.r1; R(bx + 2, by - 12, 10, 14);
+        C.fillStyle = p.skin; R(bx + 3, by - 18, 6, 6);
+        if (g.bowKick <= 0 && g.arrows > 0 && phase === 'play') drawSpr(AXE_SPR[3], bx + 2, by - 30, 999);
+      }
+      if (g.stall === 0) {
       C.fillStyle = p.r1; R(bx - 14, by - 10, 9, 12); R(bx + 6, by - 12, 8, 14);
       C.fillStyle = p.skin; R(bx - 4, by - 18, 4, 4); R(bx + 4, by - 15, 3, 3);
       C.fillStyle = p.bowDk;
@@ -1060,8 +1322,9 @@ export default {
       const pull = phase === 'play' && g.bowKick <= 0 && g.arrows > 0 ? 3 : 0;
       R(bx + 4 + pull, by - 33, 1, 15); R(bx + 4 + pull, by - 18, 1, 14);
       if (pull) { C.fillStyle = '#e8e2d4'; R(bx - 1, by - 18, 7, 1); C.fillStyle = '#c8ccd4'; R(bx - 2, by - 18, 1, 1); }
+      }
       // прицел
-      if (phase === 'play') {
+      if (phase === 'play' && g.stall !== 2 && !book.open) {
         const cx = Math.round(g.cx), cy = Math.round(g.cy);
         let bad = false;
         for (const tg of targets) if (tg.kind === 3 && hitTest(tg, cx, cy)) { bad = true; break; }
@@ -1085,13 +1348,45 @@ export default {
       C.globalAlpha = GA;
       drawHud(t);
     };
+    // ветки яблони над прилавком («Яблоки»)
+    const drawBranches = (t) => {
+      C.fillStyle = '#4a3020'; R(0, 14, W, 3); R(60, 16, 3, 10); R(170, 16, 3, 8); R(250, 16, 3, 12);
+      for (let i = 0; i < 18; i++) {
+        const x = 8 + i * 18, y = 18 + ((i * 7) % 5) + (Math.sin(t * 1.3 + i) > 0.8 ? 1 : 0);
+        C.fillStyle = i % 3 ? '#3a6a34' : '#2e5a2e'; R(x - 7, y - 2, 15, 8);
+        C.fillStyle = '#4c7c40'; R(x - 4, y - 3, 7, 3);
+        if (i % 4 === 1) { C.fillStyle = '#d83a3a'; R(x + 2, y + 4, 2, 2); }
+      }
+    };
+    // свои призы на полочке справа вверху
+    const drawPrizeShelf = () => {
+      const S = prog.S;
+      if (!S || prog.variant) return;
+      const n = Math.min(8, S.prizes.length);
+      for (let k = 0; k < n; k++) {
+        const pz = PRIZES[S.prizes[S.prizes.length - 1 - k]];
+        const x = 290 - k * 7, y = 27;
+        C.fillStyle = pz.c;
+        if (pz.sh === 0) { R(x, y, 5, 5); R(x + 1, y + 5, 1, 3); R(x + 3, y + 5, 1, 3); }
+        else if (pz.sh === 1) { R(x + 1, y, 3, 2); R(x, y + 2, 5, 4); }
+        else if (pz.sh === 2) { R(x, y, 5, 3); R(x + 2, y + 3, 1, 3); R(x + 1, y + 6, 3, 1); }
+        else if (pz.sh === 3) { R(x, y, 2, 2); R(x + 3, y, 2, 2); R(x, y + 2, 5, 5); }
+        else { R(x + 2, y, 1, 7); R(x, y + 5, 5, 1); }
+      }
+    };
 
     const drawHud = (t) => {
       C.fillStyle = 'rgba(24,14,10,0.5)'; R(0, 0, W, 11);
       for (let i = 0; i < LIVES; i++) drawIcon(ctx, i < g.lives ? 'heart' : 'heartEmpty', 4 + i * 9, 3);
       const ax = 34;
-      drawSpr(ARROW_ICON, ax, 4, 99);
-      drawNumber(ctx, g.arrows, ax + 11, 3, g.arrows <= 3 && Math.sin(t * 10) > 0 ? '#ff7a6a' : '#ffffff');
+      if (g.stall === 0) drawSpr(ARROW_ICON, ax, 4, 99);
+      else if (g.stall === 1) drawSpr(AXE_SPR[1], ax + 2, 2, 99);
+      else kitIcon(ctx, 'apple', ax + 1, 2);
+      if (g.stall !== 2) drawNumber(ctx, g.arrows, ax + 11, 3, g.arrows <= 3 && Math.sin(t * 10) > 0 ? '#ff7a6a' : '#ffffff');
+      else drawNumber(ctx, g.hits, ax + 11, 3, '#ffffff');
+      // уровень аттракциона и билеты
+      kitIcon(ctx, 'ticket', 66, 2);
+      if (!prog.variant) drawInt(ctx, prog.S.tickets, 75, 3, '#ffe070');
       const secs = Math.ceil(Math.max(0, g.time));
       drawIcon(ctx, 'clock', 140, 2);
       drawNumber(ctx, secs, 150, 3, secs <= 10 ? '#ff9a6a' : '#ffffff');
@@ -1107,6 +1402,22 @@ export default {
       const bw = textWidth(best);
       drawNumber(ctx, g.best, W - 5 - bw, 14, '#ffe070');
       drawIcon(ctx, 'trophy', W - 5 - bw - 9, 13);
+      if (prog.variant) return;
+      prog.drawDailies(ctx, 32, 156);
+      if (phase === 'play') {
+        drawBookBtn(ctx, 4, H - 13, book.open);
+        if (prog.author) drawAuthor(ctx, W - 26, 24);
+        if (g.nameT > 0) {
+          const nm = STALLS[g.stall].name, hint = STALLS[g.stall].hint;
+          const w1 = labelWidth(nm) * 2, w2 = labelWidth(hint);
+          C.globalAlpha = GA * Math.min(1, g.nameT * 2);
+          C.fillStyle = 'rgba(24,14,10,0.7)'; R(((W - Math.max(w1, w2)) >> 1) - 6, 28, Math.max(w1, w2) + 12, 24);
+          drawLabel(ctx, nm, (W - w1) >> 1, 31, '#ffe070', 2);
+          drawLabel(ctx, hint, (W - w2) >> 1, 44, '#f4ecdc');
+          C.globalAlpha = GA;
+        }
+      }
+      prog.drawToasts(ctx, 56, W);
     };
 
     // ---------- цикл ----------
@@ -1114,7 +1425,11 @@ export default {
     let raf = 0, last = performance.now(), alive = true, tAcc = 0;
     const FOCUS_X = s.gx + s.gw / 2, FOCUS_Y = 118, ZOOM = 2.6;
     const step = (dt) => {
-      const m = api.mode ? api.mode() : 'play';
+      const m = prog.variant ? 'idle' : api.mode ? api.mode() : 'play';
+      prog.updToasts(dt);
+      prog.tickDay(dt);
+      if (phase === 'idle' && prog.toasts.length) prog.toasts.length = 0;
+      if (book.open && (phase !== 'play' || m !== 'play')) { book.toggle(false); setCursor(); }
       pt += dt;
       if (phase === 'idle') {
         idleT += dt;
@@ -1123,7 +1438,7 @@ export default {
         if (m === 'idle') startOutro();
         else if (hero.st === H_READY) {
           z = Math.min(1, z + dt / 0.9);
-          if (z >= 1) { phase = 'play'; pt = 0; setCursor(); }
+          if (z >= 1) { phase = 'play'; pt = 0; setCursor(); roundOpen = !prog.variant; g.nameT = 2.5; }
         }
       } else if (phase === 'play') {
         if (m === 'idle') startOutro();
@@ -1149,7 +1464,7 @@ export default {
           if (hero.t > 0.9 / sp || sp > 1) { phase = 'idle'; pt = 0; idleT = 2; setCursor(); }
         } else { phase = 'idle'; pt = 0; idleT = 2; setCursor(); }
       }
-      if (z > 0) updateGame(dt);
+      if (z > 0 && !(book.open && phase === 'play')) updateGame(dt);
     };
 
     const loop = (now) => {
@@ -1172,6 +1487,7 @@ export default {
       if (sdt > 0) { tAcc += sdt; if (z < 1) updateHero(sdt); }
       buildPal(s, envDark);
       drawFrame(tAcc, z < 1 ? sdt : 0, sdt > 0 || phase !== 'idle');
+      if (book.open) book.draw(ctx, dt);
     };
 
     const drawFrame = (t, sdt, an) => {
@@ -1200,6 +1516,7 @@ export default {
     if (api._dbg) {
       // тестовый крючок для автотестов: координаты подходящей мишени
       api._dbg.aim = () => {
+        if (g.stall === 2) { let b = null; for (const a of apples) if (a.on && a.kind !== 3 && (!b || a.y > b.y)) b = a; return b ? [b.x, 100] : null; }
         for (const t of targets) if (t.on && t.st === 1 && t.kind !== 3) return [t.x + t.vx * 0.02, targetY(t)];
         return null;
       };

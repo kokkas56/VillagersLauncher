@@ -6,7 +6,9 @@
 // пригибайся под низкими балками и летучими мышами, собирай руду. Скорость растёт.
 // Финал/выход: вагонетка с искрами тормозит у станции, шахтёр вылезает и берёт кирку.
 
-import { drawNumber, drawText, textWidth, drawIcon } from './pixfont.js';
+import { drawNumber, drawText, textWidth, drawIcon, drawLabel, labelWidth, drawInt } from './pixfont.js';
+import { createProg, createBook, kitIcon, drawAuthor, drawBookBtn, bar } from './runner/kit.js';
+import { ORES, ALBUM_MAIN, LEVELS, levelsOpen, UPGRADES, DAILY, fresh as freshSave, PX_PER_M, AUTHOR_MUL, END_DEPTH } from './mine/data.js';
 
 const W = 320;
 const H = 180;
@@ -119,7 +121,22 @@ function drawSpr(sp, x, y) {
 }
 // самородки для HUD и трассы
 const CART_ICON = sprite({ a: '#8d9098', b: '#4a4c53', c: '#2a2a2e', d: '#ffcf5a' }, ['d......', 'aaaaaaa', 'babbbab', '.bbbbb.', '.c...c.']);
-const NUG = ORE.map((o) => sprite({ a: o.c, b: o.d, w: '#ffffff' }, ['.aa..', 'awab.', 'aaabb', '.abb.']));
+const NUG = ORES.map((o) => sprite({ a: o.c, b: o.d, w: '#ffffff' }, ['.aa..', 'awab.', 'aaabb', '.abb.']));
+// перекрасить шахту под уровень глубины (палитра, пласты, руда в стенах)
+let curLevel = 0;
+function applyLevel(s, i) {
+  i = Math.max(0, Math.min(LEVELS.length - 1, i | 0));
+  if (i === curLevel && s.lvlApplied) return;
+  curLevel = i; s.lvlApplied = 1;
+  const L = LEVELS[i];
+  for (const k in L.pal) P[k] = L.pal[k];
+  for (let j = 0; j < STRATA.length; j++) STRATA[j] = L.strata[j];
+  for (let j = 0; j < 3; j++) { ORE[j].c = ORES[L.show[j]].c; ORE[j].d = ORES[L.show[j]].d; }
+  for (const k in s.layers) if (s.layers[k]) s.layers[k].done = false;
+}
+// тьма вне света фонаря: таблица прозрачностей
+const DARKA = [];
+for (let i = 0; i <= 16; i++) DARKA.push('rgba(4,3,6,' + (i / 16 * 0.92).toFixed(3) + ')');
 
 // ---------- пласты породы (бесшовные по 320 px) ----------
 function bandsOf(rand) {
@@ -312,6 +329,143 @@ export default {
     const carrier = s.carrier;
     const parts = pool(56);
 
+    // ---------- прогресс: глубина, альбом руд, вагонетка, задания дня ----------
+    const prog = createProg(api, {
+      id: 'mine', version: 1, fresh: freshSave, daily: DAILY,
+      fix: (S) => {
+        for (let i = 0; i < ORES.length; i++) S.album[i] = Math.max(0, Math.floor(Number(S.album[i]) || 0));
+        S.album.length = ORES.length;
+        for (const u of UPGRADES) S.up[u.id] = Math.max(0, Math.min(u.cost.length, Math.floor(Number(S.up[u.id]) || 0)));
+        S.lvl = Math.max(0, Math.min(levelsOpen(S.depth) - 1, S.lvl | 0));
+        if (S.depth >= END_DEPTH) S.done = 1;
+      },
+      onDaily: (S, def, goal, pay) => { S.coins += pay; },
+      rewards: [
+        { id: 'mine_badge_miner', test: (S) => S.depth >= 1000 },
+        { id: 'mine_theme_gems', test: (S) => { for (let i = 0; i < ALBUM_MAIN; i++) if (!(S.album[i] > 0)) return false; return true; } },
+        { id: 'mine_music_deep', test: (S) => S.depth >= LEVELS[4].need },
+        { id: 'mine_title_king', test: (S) => S.value >= 100000 },
+        { id: 'mine_cape_miner', test: (S) => S.done >= 1 }
+      ]
+    });
+    const MUL = prog.author ? AUTHOR_MUL : 1;
+    prog.load();
+    applyLevel(s, prog.variant ? (prog.variant - 1) % LEVELS.length : prog.S.lvl);
+    let lastOpen = levelsOpen(prog.S.depth);
+    const rr = { on: false, depth: 0, value: 0, n: 0, helmets: 0, lastTT: 0, tick: 1, saveT: 20, nameT: 0, brake: 0 };
+    let LV = LEVELS[curLevel];
+    const useLevel = (i) => { applyLevel(s, i); LV = LEVELS[curLevel]; };
+    const stat = (name, v) => { if (prog.variant) return; if (name === 'runM') prog.peak(name, v); else prog.bump(name, v); };
+    const periodic = () => {
+      const S = prog.S;
+      const open = levelsOpen(S.depth);
+      if (open > lastOpen) {
+        lastOpen = open;
+        prog.toast('ОТКРЫТА ГЛУБИНА: ' + LEVELS[open - 1].name, '#9cf0ff');
+        api.sfx('win');
+        if (S.lvl === open - 2) S.lvl = open - 1; // ехал на самой глубокой — следующий заезд глубже
+      }
+      if (!S.done && S.depth >= END_DEPTH) { S.done = 1; prog.toast('ШАХТА ПРОЙДЕНА ДО САМОГО СЕРДЦА!', '#ff9ae8'); api.sfx('win'); }
+      prog.checkRewards();
+    };
+    const finishRide = () => {
+      if (!rr.on || prog.variant) { rr.on = false; return; }
+      rr.on = false;
+      const S = prog.S;
+      if (rr.depth > S.best) S.best = rr.depth;
+      if (rr.depth > 0.3) { S.rides++; stat('rides', 1); }
+      periodic();
+      prog.save();
+    };
+    const gotOre = (k) => {
+      const o = ORES[k];
+      if (prog.variant) return o.val;
+      const S = prog.S, v = o.val * (prog.author ? 10 : 1);
+      S.value += v; S.coins += v; rr.value += v; rr.n++;
+      if (!S.album[k]) prog.toast('НОВАЯ НАХОДКА: ' + o.name, '#ffe8c0');
+      S.album[k]++;
+      stat('ore', 1); stat('value', v);
+      if (o.val >= 60) stat('rare', 1);
+      if (!S.album[k] || S.album[k] === 1) prog.checkRewards();
+      return o.val;
+    };
+    // выбор руды по весам уровня; rare — над провалом чаще редкие
+    const pickOre = (rare) => {
+      const w = LV.w;
+      let sum = 0;
+      for (let i = 0; i < w.length; i++) sum += w[i] * (rare && ORES[i].val >= 30 ? 3 : 1);
+      let r = rand() * sum;
+      for (let i = 0; i < w.length; i++) { r -= w[i] * (rare && ORES[i].val >= 30 ? 3 : 1); if (r <= 0) return i; }
+      return 2;
+    };
+    const authorKey = (code) => {
+      if (!prog.author) return false;
+      const S = prog.S;
+      if (code === 'BracketRight') {
+        if (S.lvl < LEVELS.length - 1) { S.lvl++; if (S.depth < LEVELS[S.lvl].need) S.depth = LEVELS[S.lvl].need; }
+        else if (S.depth < END_DEPTH) S.depth = END_DEPTH;
+        useLevel(S.lvl); periodic(); prog.save();
+        prog.toast('(АВТОР) ГЛУБИНА ' + (S.lvl + 1) + (S.done ? ' - КОНЕЦ' : ''), '#ffb0e0');
+        return true;
+      }
+      if (code === 'BracketLeft') {
+        S.lvl = Math.max(0, S.lvl - 1); useLevel(S.lvl); prog.save();
+        prog.toast('(АВТОР) ГЛУБИНА ' + (S.lvl + 1), '#ffb0e0');
+        return true;
+      }
+      return false;
+    };
+    const book = createBook([
+      {
+        title: 'ГЛУБИНЫ',
+        rows: () => LEVELS.map((L, i) => {
+          const open = prog.S.depth >= L.need;
+          return { t: L.name, ic: i === prog.S.lvl ? 'check' : 'pick', lock: !open, s: i === prog.S.lvl ? 'ВЫБРАНА' : '', r: open ? 'С ' + L.need + ' М' : 'НУЖНО ' + L.need + ' М' };
+        }),
+        pick: (i) => {
+          if (prog.S.depth < LEVELS[i].need) { api.sfx('click'); return false; }
+          prog.S.lvl = i; api.sfx('coin'); prog.save(); prog.toast('СЛЕДУЮЩИЙ ЗАЕЗД: ' + LEVELS[i].name, '#9cf0ff'); return true;
+        },
+        foot: () => 'ГЛУБИНА ' + Math.floor(prog.S.depth) + ' / ' + END_DEPTH + ' М' + (prog.S.done ? '  ПРОЙДЕНО!' : '')
+      },
+      {
+        title: 'ВАГОНЕТКА',
+        rows: () => UPGRADES.map((u) => {
+          const l = prog.S.up[u.id], max = l >= u.cost.length;
+          return { t: u.name, ic: u.ic, s: u.info(l), r: max ? 'МАКС' : u.cost[l] + ' МОН.', c: max ? '#9cf08a' : '#ffffff' };
+        }),
+        pick: (i) => {
+          const u = UPGRADES[i], S = prog.S, l = S.up[u.id];
+          if (l >= u.cost.length || S.coins < u.cost[l]) { api.sfx('click'); return false; }
+          S.coins -= u.cost[l]; S.up[u.id] = l + 1; api.sfx('win'); prog.save(); return true;
+        },
+        foot: () => 'МОНЕТЫ: ' + Math.floor(prog.S.coins)
+      },
+      {
+        title: 'АЛЬБОМ',
+        rows: () => ORES.map((o, i) => {
+          const n = prog.S.album[i];
+          return { t: n ? o.name : '???', ic: 'lock', sw: o.c, lock: !n, c: '#ffffff', s: i >= ALBUM_MAIN ? 'РЕЛИКВИЯ' : '', r: n ? 'X' + n + '  ЦЕНА ' + o.val : 'ЦЕНА ' + o.val };
+        }),
+        foot: () => {
+          let n = 0; for (let i = 0; i < ORES.length; i++) if (prog.S.album[i] > 0) n++;
+          return 'НАЙДЕНО ' + n + '/' + ORES.length + '   ДОБЫТО НА ' + Math.floor(prog.S.value);
+        }
+      },
+      {
+        title: 'ЗАДАНИЯ',
+        rows: () => {
+          const S = prog.S, out = prog.dailyRows();
+          out.push({ t: '- ЗАПИСИ -', c: '#8a6a3a' });
+          out.push({ t: 'ЛУЧШИЙ ЗАЕЗД', ic: 'flag', r: S.best.toFixed(1) + ' М' });
+          out.push({ t: 'ЗАЕЗДОВ', ic: 'cart', r: String(S.rides) });
+          out.push({ t: 'РУДЫ НА', ic: 'coin', r: Math.floor(S.value) + ' / 100000' });
+          return out;
+        },
+        foot: () => 'УРОВЕНЬ: ' + LEVELS[prog.S.lvl].name
+      }
+    ], W, H);
+
     // ---------- мир ----------
     let sceneX = 0, camX = 0;
     const cart = { x: 110, y: RAIL, vy: 0, ground: 1, v: 0, duck: 0, tip: 0, load: 1, target: 230, pause: 1.5, rider: 0, crash: 0, sparkT: 0 };
@@ -322,7 +476,7 @@ export default {
     const tr = { start: 0, i: 0, y: RAIL, ty: RAIL, hill: 0, gap: 0, broken: 0, cool: 0, calm: 0, flatFrom: 1e12 };
     // препятствия и руда
     const objs = [];
-    for (let i = 0; i < 28; i++) objs.push({ on: 0, k: 0, x: 0, y: 0, ore: 0, ph: 0, flee: 0, hit: 0 });
+    for (let i = 0; i < 28; i++) objs.push({ on: 0, k: 0, x: 0, y: 0, ore: 0, ph: 0, flee: 0, hit: 0, pass: 0 });
     const pops = [];
     for (let i = 0; i < 6; i++) pops.push({ on: 0, x: 0, y: 0, t: 0, v: 0 });
     const g = { score: 0, dist: 0, runT: 0, ores: [0, 0, 0], best: 0, crashK: 0 };
@@ -344,7 +498,7 @@ export default {
       return ts[i0 % N];
     };
     const addObj = (k, x, y, ore) => {
-      for (const o of objs) if (!o.on) { o.on = 1; o.k = k; o.x = x; o.y = y; o.ore = ore; o.ph = rand() * 6; o.flee = 0; o.hit = 0; return o; }
+      for (const o of objs) if (!o.on) { o.on = 1; o.k = k; o.x = x; o.y = y; o.ore = ore; o.ph = rand() * 6; o.flee = 0; o.hit = 0; o.pass = 0; return o; }
       return null;
     };
     const resetTrack = () => {
@@ -374,7 +528,7 @@ export default {
           if (r < 0.26) {
             // провал
             tr.gap = clamp(Math.round(v * (0.26 + 0.1 * dif) / STEP + rand()), 2, 6);
-            if (rand() < 0.5) addObj(2, x + STEP * (tr.gap + 1) / 2, tr.y - 30, rand() < 0.25 ? 2 : 1);
+            if (rand() < 0.5) addObj(2, x + STEP * (tr.gap + 1) / 2, tr.y - 30, pickOre(true));
             // дальше — связки: сразу за провалом летит мышь
             if (rand() < dif * 0.5) addObj(1, x + STEP * tr.gap + v * 0.9 + 30, 0, 0);
             space += tr.gap * STEP;
@@ -389,7 +543,7 @@ export default {
             addObj(1, x + 40, 0, 0); // летучая мышь
           } else {
             // россыпь руды
-            const n = 3 + F(rand() * 3), k = rand() < 0.15 ? 2 : rand() < 0.45 ? 1 : 0;
+            const n = 3 + F(rand() * 3), k = pickOre(false);
             for (let q = 0; q < n; q++) addObj(2, x + q * 14, -8, k);
             space *= 0.6;
           }
@@ -413,9 +567,16 @@ export default {
       g.best = Math.max(0, Math.floor(api.best || 0));
       for (const q of pops) q.on = 0;
       overSent = false; sawOver = false;
-      keys.up = keys.down = 0; ptrDuck = 0;
+      keys.up = keys.down = keys.left = 0; ptrDuck = 0;
+    };
+    const beginRide = () => {
+      const S = prog.S;
+      rr.on = !prog.variant; rr.depth = 0; rr.value = 0; rr.n = 0; rr.helmets = S.up.helmet; rr.lastTT = 0; rr.tick = 1; rr.saveT = 20; rr.nameT = 3; rr.brake = 0;
     };
     const startIntro = () => {
+      book.toggle(false);
+      prog.load(); lastOpen = levelsOpen(prog.S.depth);
+      useLevel(prog.S.lvl);
       resetRun();
       resetTrack();
       phase = 'intro'; pt = 0; introK = 0;
@@ -423,6 +584,9 @@ export default {
       carrier.hidden = 0; carrier.run = 1;
     };
     const startOutro = () => {
+      book.toggle(false);
+      finishRide();
+      useLevel(prog.S.lvl);
       phase = 'outro'; pt = 0;
       if (cart.crash) { outroK = 0; startFix(); return; }
       if (!cart.rider) {
@@ -442,6 +606,7 @@ export default {
       for (const o of objs) if (o.on && o.k === 0 && Math.abs(o.x - cart.x) < 60) { o.on = 0; for (let i = 0; i < 6; i++) spawnP(parts, o.x, trackY(o.x) - 18, (rand() - 0.5) * 50, -10 - rand() * 20, 0.6, P.chip, 160); }
     };
     const startRetry = () => {
+      useLevel(prog.S.lvl);
       resetRun();
       phase = 'intro'; pt = 0; introK = 3;
       tr.cool = Math.max(tr.cool, 160);
@@ -477,6 +642,22 @@ export default {
     };
     const crash = (k) => {
       if (cart.crash) return;
+      if (phase === 'play' && rr.helmets > 0) {
+        // каска: удар принят, вагонетка катится дальше
+        rr.helmets--;
+        prog.toast('КАСКА СПАСЛА!', '#ffe070');
+        api.sfx('hit');
+        for (let i = 0; i < 8; i++) spawnP(parts, cart.x, cart.y - 10, (rand() - 0.5) * 70, -20 - rand() * 40, 0.5, P.spark, 200);
+        if (k === 0) {
+          // из провала — рывком на ближайшие целые рельсы
+          let nx = cart.x, guard = 0;
+          while ((trackT(nx) !== 0 || trackT(nx - 6) !== 0) && guard++ < 30) nx += STEP;
+          cart.x = nx + 4; cart.y = trackY(cart.x); cart.vy = 0; cart.ground = 1;
+        } else {
+          for (const o of objs) if (o.on && (o.k === 0 || o.k === 1) && Math.abs(o.x - cart.x) < 30) { o.on = 0; }
+        }
+        return;
+      }
       if (api._dbg) api._dbg.crash = [k, Math.round(cart.v), Math.round(cart.y - trackY(cart.x)), cart.ground, cart.duck, trackT(cart.x)];
       cart.crash = 1; g.crashK = k; cart.v = Math.min(cart.v, k === 0 ? 70 : 45);
       phase = 'crash'; pt = 0;
@@ -494,33 +675,41 @@ export default {
     };
 
     // ---------- ввод ----------
-    const keys = { up: 0, down: 0 };
+    const keys = { up: 0, down: 0, left: 0 };
     let ptrDuck = 0, jumpQ = 0;
     const jump = () => { if (phase === 'play') jumpQ = 0.12; };
     const onKeyDown = (e) => {
       const c = e.code;
+      if (phase !== 'play') return;
+      if (!e.repeat && authorKey(c)) { if (e.preventDefault) e.preventDefault(); return; }
+      if (book.key(c)) { if (e.preventDefault) e.preventDefault(); keys.down = keys.left = 0; api.sfx('click'); return; }
       const isJ = c === 'ArrowUp' || c === 'KeyW' || c === 'Space';
       const isD = c === 'ArrowDown' || c === 'KeyS';
-      if (!isJ && !isD) return;
-      if (phase !== 'play') return;
+      const isB = c === 'ArrowLeft' || c === 'KeyA';
+      if (!isJ && !isD && !isB) return;
       if (e.preventDefault) e.preventDefault();
       if (isJ && !e.repeat) jump();
       if (isD) keys.down = 1;
+      if (isB) keys.left = 1;
     };
     const onKeyUp = (e) => {
       const c = e.code;
       if (c === 'ArrowDown' || c === 'KeyS') keys.down = 0;
+      if (c === 'ArrowLeft' || c === 'KeyA') keys.left = 0;
     };
     const onDown = (e) => {
       if (phase !== 'play') return;
       if (e.preventDefault) e.preventDefault();
       const r = canvas.getBoundingClientRect();
       const y = (e.clientY - r.top) / Math.max(1, r.height) * H;
+      const x = (e.clientX - r.left) / Math.max(1, r.width) * W;
+      if (book.open) { book.click(x, y); return; }
+      if (x < 16 && y > H - 17) { book.toggle(true); api.sfx('click'); return; }
       if (y < H * 0.5) jump(); else ptrDuck = 1;
       if (canvas.setPointerCapture && e.pointerId != null) { try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* нет захвата */ } }
     };
     const onUp = () => { ptrDuck = 0; };
-    const onBlur = () => { keys.down = 0; ptrDuck = 0; };
+    const onBlur = () => { keys.down = 0; keys.left = 0; ptrDuck = 0; };
     const onCtx = (e) => { if (e.preventDefault) e.preventDefault(); };
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
@@ -547,7 +736,7 @@ export default {
       } else cart.duck = keys.down || ptrDuck ? 1 : 0;
       if (jumpQ > 0) {
         jumpQ -= dt;
-        if (cart.ground) { cart.ground = 0; cart.vy = -JUMP_V; jumpQ = 0; if (!auto) api.sfx('jump'); }
+        if (cart.ground) { cart.ground = 0; cart.vy = -JUMP_V * (1 + 0.06 * (auto ? 0 : prog.S.up.spring)); jumpQ = 0; if (!auto) api.sfx('jump'); }
       }
       cart.x += cart.v * dt;
       const ty = trackY(cart.x), tt = trackT(cart.x);
@@ -574,6 +763,9 @@ export default {
       const top = cy - (cart.duck ? 12 : 19);
       for (const o of objs) {
         if (!o.on || o.hit) continue;
+        if (o.k === 0 || o.k === 1) {
+          if (!o.pass && o.x < cx - 10) { o.pass = 1; if (phase === 'play' && !o.flee) stat('duck', 1); }
+        }
         if (o.k === 0) {
           const by = trackY(o.x) - 15;
           if (cx + 7 > o.x - 10 && cx - 7 < o.x + 10 && top < by) { crash(1); return; }
@@ -582,15 +774,16 @@ export default {
           if (Math.abs(o.x - cx) < 6 && o.y + 2 > top && o.y - 2 < cy - 9) { crash(2); return; }
         } else {
           const oy = o.y < 0 ? trackY(o.x) + o.y : o.y;
-          if (Math.abs(o.x - cx) < 10 && oy > top - 4 && oy < cy) {
+          const mr = phase === 'play' && prog.S.up.magnet > 0 ? 12 + 12 * prog.S.up.magnet : 0;
+          if ((Math.abs(o.x - cx) < 10 && oy > top - 4 && oy < cy) || (mr > 0 && Math.abs(o.x - cx) < mr && Math.abs(oy - (cy - 10)) < mr + 8)) {
             o.hit = 1; o.on = 0;
             if (phase === 'play') {
-              const v = ORE[o.ore].pts;
-              g.score += v; g.ores[o.ore]++;
+              const v = gotOre(o.ore);
+              g.score += v; g.ores[0]++;
               popup(o.x - camX, oy - 8, v);
-              api.sfx('coin');
+              api.sfx(ORES[o.ore].val >= 60 ? 'win' : 'coin');
             }
-            for (let i = 0; i < 5; i++) spawnP(parts, o.x, oy, (rand() - 0.5) * 50, -20 - rand() * 30, 0.4, ORE[o.ore].c, 200);
+            for (let i = 0; i < 5; i++) spawnP(parts, o.x, oy, (rand() - 0.5) * 50, -20 - rand() * 30, 0.4, ORES[o.ore].c, 200);
           }
         }
       }
@@ -631,14 +824,29 @@ export default {
         } else {
           cart.v = Math.min(95, cart.v + 120 * dt);
           physics(dt, true);
-          if (pt > 0.9) { phase = 'play'; pt = 0; }
+          if (pt > 0.9) { phase = 'play'; pt = 0; beginRide(); }
         }
       } else if (phase === 'play') {
         g.runT += dt;
-        cart.v = Math.min(190, 95 + g.runT * 0.55);
+        // тормоза: держи ← (сила зависит от уровня)
+        const bk = prog.S.up.brake;
+        rr.brake += ((keys.left && bk > 0 ? 1 : 0) - rr.brake) * Math.min(1, dt * 6);
+        cart.v = Math.min(190, 95 + g.runT * 0.55) * LV.spd * (1 - rr.brake * (0.12 + 0.08 * bk));
         physics(dt, false);
         if (!cart.crash) collide();
         g.dist += cart.v * dt;
+        if (rr.on) {
+          const S = prog.S, dd = cart.v * dt / PX_PER_M * MUL;
+          S.depth += dd; rr.depth += dd;
+          stat('depth', dd); stat('runM', rr.depth);
+          const tt = trackT(cart.x);
+          if (rr.lastTT !== 0 && tt === 0 && !cart.crash) stat('gap', 1);
+          rr.lastTT = tt;
+          rr.tick -= dt; rr.saveT -= dt;
+          if (rr.tick <= 0) { rr.tick = 1; periodic(); }
+          if (rr.saveT <= 0) { rr.saveT = 20; prog.save(); }
+        }
+        if (rr.nameT > 0) rr.nameT -= dt;
         g.score += cart.v * dt / 10;
         if (cart.duck && cart.ground && rand() < dt * 8) spawnP(parts, cart.x - 6, cart.y - 1, -20, -8, 0.2, P.spark2, 100);
       } else if (phase === 'crash' || phase === 'wait') {
@@ -653,6 +861,7 @@ export default {
         else { cart.tip = Math.min(1, cart.tip + dt * 3); cart.y = ty; }
         updRider(dt);
         if (phase === 'crash' && pt > 1.1) {
+          finishRide();
           phase = 'wait'; pt = 0;
           if (!overSent) { overSent = true; api.over(Math.round(g.score)); }
         }
@@ -841,6 +1050,36 @@ export default {
       }
     };
 
+    // особенности глубины на станции (покой): лава в трещинах пола, угольки, паутина, кристаллы
+    const drawSceneDeco = (o, t, dt) => {
+      const dc = LV.deco;
+      if (dc === 'lava' || dc === 'heart') {
+        for (let i = 0; i < 9; i++) {
+          const x = o + 12 + i * 36 + ((i * 7) % 11);
+          const fl = Math.sin(t * 2.3 + i * 1.7) > 0;
+          C.fillStyle = fl ? '#ff7a2a' : '#c04010'; R(x, FLOOR + 6 + (i % 3) * 5, 10 + (i % 4) * 3, 1);
+          C.fillStyle = dc === 'heart' ? 'rgba(255,90,216,0.12)' : 'rgba(255,120,40,0.12)'; R(x - 3, FLOOR + 3 + (i % 3) * 5, 16 + (i % 4) * 3, 6);
+        }
+        if (dt > 0 && rand() < dt * 3) spawnP(parts, o + camX + rand() * W, FLOOR + 10, (rand() - 0.5) * 6, -12 - rand() * 14, 2 + rand(), dc === 'heart' ? '#ff9ae8' : '#ffb050', -2);
+      } else if (dc === 'crystal') {
+        for (let i = 0; i < 7; i++) {
+          const x = o + 20 + i * 44, y = 18 + ((i * 29) % 50);
+          const gl = Math.sin(t * 1.5 + i * 2) > 0.7;
+          C.fillStyle = i & 1 ? '#b07ae8' : '#7ae8e8'; R(x, y, 3, 7); R(x + 3, y + 3, 3, 4); R(x - 2, y + 4, 2, 3);
+          C.fillStyle = gl ? '#ffffff' : '#e8d0ff'; R(x, y, 1, 3);
+        }
+      } else if (dc === 'web') {
+        C.fillStyle = 'rgba(210,210,220,0.3)';
+        for (let i = 0; i < s.props.length; i++) {
+          const x = s.props[i] + o, cy = s.ceil[s.props[i] >> 1];
+          for (let k = 0; k < 6; k++) { R(x + 3 + k, cy + 1 + k, 1, 1); R(x + 3, cy + 1 + k, k + 1, 1); }
+        }
+      } else if (dc === 'water') {
+        C.fillStyle = 'rgba(120,170,220,0.25)'; R(o + 180, FLOOR - 2, 40, 2); R(o + 60, FLOOR - 2, 28, 2);
+        if (Math.sin(t * 1.3) > 0.9) { C.fillStyle = '#c7dcf0'; R(o + 196, FLOOR - 2, 2, 1); }
+      }
+    };
+
     // штрек поездки: колонки по 4 px
     const drawRide = (t, scrL, scrR) => {
       // порода с параллаксом
@@ -859,9 +1098,39 @@ export default {
         C.fillStyle = P.backDk; R(sx, cy, 4, 3);
         const hsh = (Math.imul(wx | 0, 2654435761) >>> 0) % 97;
         if (hsh < 30) { C.fillStyle = hsh & 1 ? P.backHi : P.backDk; R(sx + (hsh & 3), cy + 6 + (hsh * 7) % Math.max(1, ty - cy - 10), hsh < 8 ? 2 : 1, 1); }
+        const dc = LV.deco;
+        if (dc !== '' && hsh > 88) {
+          const yy = cy + 8 + (hsh * 13) % Math.max(1, ty - cy - 22);
+          if (dc === 'crystal') {
+            const gl = Math.sin(t * 2 + wx * 0.1) > 0.6;
+            C.fillStyle = hsh & 1 ? '#b07ae8' : '#7ae8e8'; R(sx, yy, 2, 5); R(sx + 2, yy + 2, 2, 3);
+            C.fillStyle = gl ? '#ffffff' : '#e8d0ff'; R(sx, yy, 1, 2);
+          } else if (dc === 'web') {
+            C.fillStyle = 'rgba(200,200,210,0.35)'; R(sx, cy + 1, 4, 1); R(sx + 1, cy + 2, 1, 4); R(sx + 3, cy + 2, 1, 3); R(sx, cy + 4, 4, 1);
+          } else if (dc === 'lava') {
+            C.fillStyle = Math.sin(t * 3 + wx) > 0 ? '#ff7a2a' : '#c04010'; R(sx + 1, yy, 1, 6); R(sx + 2, yy + 5, 1, 4);
+          } else if (dc === 'heart') {
+            C.fillStyle = Math.sin(t * 2 + wx) > 0 ? '#ff5ad8' : '#a01a8a'; R(sx, yy, 3, 1); R(sx + 2, yy + 1, 1, 3); R(sx + 1, yy + 4, 3, 1);
+          } else if (dc === 'water') {
+            C.fillStyle = '#5a8ab8'; R(sx + 1, yy, 1, 2);
+          }
+        }
         if (type === 1) {
-          C.fillStyle = P.pit2; R(sx, ty + 2, 4, 8);
-          C.fillStyle = P.pit; R(sx, ty + 10, 4, H - ty - 10);
+          if (dc === 'lava' || dc === 'heart') {
+            const ly = ty + 18 + (Math.sin(t * 2 + wx * 0.2) > 0.3 ? 1 : 0);
+            C.fillStyle = '#1a0806'; R(sx, ty + 2, 4, ly - ty - 2);
+            C.fillStyle = P.pit; R(sx, ly, 4, 2);
+            C.fillStyle = P.pit2; R(sx, ly + 2, 4, H - ly - 2);
+            if (((wx >> 2) + F(t * 4)) % 7 === 0) { C.fillStyle = '#ffd060'; R(sx + 1, ly, 2, 1); }
+          } else if (dc === 'water') {
+            const wy = ty + 14;
+            C.fillStyle = P.pit; R(sx, ty + 2, 4, wy - ty - 2);
+            C.fillStyle = P.pit2; R(sx, wy, 4, H - wy);
+            if (((wx >> 2) + F(t * 3)) % 5 === 0) { C.fillStyle = '#7ab0e0'; R(sx, wy, 3, 1); }
+          } else {
+            C.fillStyle = P.pit2; R(sx, ty + 2, 4, 8);
+            C.fillStyle = P.pit; R(sx, ty + 10, 4, H - ty - 10);
+          }
         } else {
           C.fillStyle = P.floor; R(sx, ty + 2, 4, 9);
           C.fillStyle = P.floorDk; R(sx, ty + 11, 4, H - ty - 11);
@@ -964,14 +1233,18 @@ export default {
       }
     };
 
-    const drawHud = () => {
+    const drawHud = (t) => {
       C.fillStyle = 'rgba(10,8,8,0.45)'; R(0, 0, W, 12);
-      let x = 5;
-      for (let k = 0; k < 3; k++) {
-        drawSpr(NUG[k], x, 4);
-        x += 7;
-        x += drawNumber(ctx, g.ores[k], x, 3, '#ffffff') + 7;
-      }
+      // руда за заезд
+      kitIcon(ctx, 'coin', 4, 2);
+      let x = 13 + drawInt(ctx, rr.value, 13, 3, '#ffe070') + 8;
+      // глубина заезда (м, с десятыми)
+      kitIcon(ctx, 'pick', x, 2);
+      x += 9;
+      x += drawInt(ctx, Math.floor(rr.depth), x, 3, '#c8e0ff');
+      C.fillStyle = '#c8e0ff'; R(x + 1, 7, 1, 1);
+      x += 3 + drawInt(ctx, Math.floor(rr.depth * 10) % 10, x + 3, 3, '#c8e0ff') + 6;
+      for (let k = 0; k < rr.helmets; k++) kitIcon(ctx, 'heart', x + k * 8, 2);
       const sc = String(Math.round(g.score));
       const sw = textWidth(sc, 2);
       drawText(ctx, sc, W - 5 - sw + 1, 3, 'rgba(0,0,0,0.7)', 2);
@@ -981,7 +1254,45 @@ export default {
       drawIcon(ctx, 'trophy', W - 5 - bw - 9, 14);
       // скорость — вагонетка и число
       drawSpr(CART_ICON, 146, 3);
-      drawNumber(ctx, Math.round(cart.v / 10), 156, 3, '#c8d0dc');
+      drawNumber(ctx, Math.round(cart.v / 10), 156, 3, rr.brake > 0.3 ? '#ff9a6a' : '#c8d0dc');
+      if (prog.variant) return;
+      // путь к следующей глубине
+      const S = prog.S, nx = levelsOpen(S.depth);
+      if (nx < LEVELS.length) bar(ctx, 0, 12, W, 1, (S.depth - LEVELS[nx - 1].need) / (LEVELS[nx].need - LEVELS[nx - 1].need), '#8fd0ff', 'rgba(0,0,0,0.3)');
+      else bar(ctx, 0, 12, W, 1, S.depth / END_DEPTH, '#ff9ae8', 'rgba(0,0,0,0.3)');
+      prog.drawDailies(ctx, 5, 17);
+      if (phase === 'play') {
+        drawBookBtn(ctx, 4, H - 13, book.open);
+        if (prog.author) drawAuthor(ctx, W - 26, 26);
+        if (rr.nameT > 0) {
+          const nm = LV.name, w = labelWidth(nm) * 2;
+          C.globalAlpha = Math.min(1, rr.nameT * 2);
+          C.fillStyle = 'rgba(10,8,8,0.6)'; R(((W - w) >> 1) - 6, 40, w + 12, 16);
+          drawLabel(ctx, nm, (W - w) >> 1, 43, '#ffe8c0', 2);
+          C.globalAlpha = 1;
+        }
+      }
+      prog.drawToasts(ctx, 60, W);
+    };
+
+    // тьма глубин: светло только вокруг налобного фонаря
+    let darkK = 0;
+    const drawDark = (cx, cy) => {
+      const k = darkK;
+      if (k < 0.02) return;
+      const r = 60 + 25 * (prog.variant ? 2 : prog.S.up.lamp);
+      for (let pass = 0; pass < 2; pass++) {
+        const rad = pass ? r : r * 1.35, a = DARKA[Math.round(k * 0.5 * 16)];
+        C.fillStyle = a;
+        for (let y = 0; y < H; y += 3) {
+          const dy = y + 1.5 - cy, q = rad * rad - dy * dy * 1.6;
+          if (q <= 0) { C.fillRect(0, y, W, 3); continue; }
+          const hw = Math.sqrt(q);
+          const x0 = Math.round(cx - hw), x1 = Math.round(cx + hw);
+          if (x0 > 0) C.fillRect(0, y, x0, 3);
+          if (x1 < W) C.fillRect(x1, y, W - x1, 3);
+        }
+      }
     };
 
     const drawFrame = (t, dt, envDark) => {
@@ -992,6 +1303,7 @@ export default {
       if (!showScene || o > 0 || o + W < W) drawRide(t, scrL, scrR);
       if (showScene) {
         cached(ctx, s, 'scene', W, H, o, 0, paintScene);
+        drawSceneDeco(o, t, dt);
         drawSceneLife(o, t, dt, envDark);
       }
       // станция на выезде (новое место сцены рисуем заранее)
@@ -1070,8 +1382,13 @@ export default {
         drawText(ctx, str, q.x - w / 2, q.y, '#fff2a0');
       }
       for (let i = 0; i < 24; i++) { C.fillStyle = VIG[i]; R(i * 3, 0, 3, H); }
+      // темнота глубин
+      const inRide = phase === 'play' || phase === 'crash' || phase === 'wait' || (phase === 'intro' && introK >= 2) || (phase === 'outro' && outroK === 1 && cart.x < tr.flatFrom - W * 0.6);
+      const dT = inRide ? LV.dark : 0;
+      if (dt > 0) darkK += (dT - darkK) * Math.min(1, dt * 1.5);
+      drawDark(cx + 26, cart.y - 16);
       // HUD и подсказка
-      if (phase === 'play' || phase === 'crash' || phase === 'wait' || (phase === 'intro' && introK === 2)) drawHud();
+      if (phase === 'play' || phase === 'crash' || phase === 'wait' || (phase === 'intro' && introK === 2)) drawHud(t);
       if (phase === 'intro' && introK === 2 || (phase === 'play' && g.runT < 2.5)) {
         if (F(t * 3) % 2 === 0) {
           drawIcon(ctx, 'up', cx - 12, cart.y - 36);
@@ -1094,8 +1411,13 @@ export default {
       const envDark = env && env.dark > 0 ? Math.min(1, env.dark) : 0;
       const anim = !env || env.animations !== false;
       if (api.paused && api.paused()) dt = 0;
+      prog.updToasts(dt);
+      if (phase === 'idle' && prog.toasts.length) prog.toasts.length = 0;
+      if (book.open && phase !== 'play') book.toggle(false);
+      if (book.open && dt > 0 && (api.mode ? api.mode() : 'play') !== 'idle') dt = 0; // книжка — пауза
       if (dt > 0) {
-        const m = api.mode ? api.mode() : 'play';
+        prog.tickDay(dt);
+        const m = prog.variant ? 'idle' : api.mode ? api.mode() : 'play';
         pt += dt;
         if (phase === 'idle') {
           idleT += dt;
@@ -1119,6 +1441,7 @@ export default {
         updateObjs(sdt, tAcc);
       }
       drawFrame(tAcc, sdt, envDark);
+      if (book.open) book.draw(ctx, 1 / 60);
     };
 
     if (api._dbg) {
