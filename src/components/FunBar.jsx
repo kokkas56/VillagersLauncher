@@ -6,8 +6,9 @@ import * as music from '../lib/music.js';
 
 // Нижняя полоска главного экрана: фон (◀ имя ▶, случайный), музыка (нота + громкость), «Играть» — фон превращается в игру.
 // Музыка по настройкам; молчит, пока запущен Minecraft.
-export function useMusic(settingsIn, gameRunning) {
+export function useMusic(settingsIn, gameRunning, track) {
   const settings = settingsIn || {};
+  useEffect(() => { music.setTrack(track || 'default'); }, [track]);
   useEffect(() => {
     music.setVolume(settings.musicVol != null ? settings.musicVol : 0.25);
     music.setSfxVolume(settings.sfxVol != null ? settings.sfxVol : 0.35);
@@ -15,16 +16,18 @@ export function useMusic(settingsIn, gameRunning) {
   }, [settings.musicOn, settings.musicVol, settings.sfxVol, gameRunning]);
 }
 
-export default function FunBar({ sceneId, onScene, onPlay }) {
+export default function FunBar({ sceneId, scenes, onScene, onPlay, onRewards }) {
+  const SCENES_ = scenes || SCENES;
   const { t, settings, saveSettings } = useApp();
   const [volOpen, setVolOpen] = useState(false);
   const [pick, setPick] = useState(false);
-  const idx = Math.max(0, SCENES.findIndex((s) => s.id === sceneId));
-  const scene = SCENES[idx];
+  const idx = Math.max(0, SCENES_.findIndex((s) => s.id === sceneId));
+  const scene = SCENES_[idx];
   const isRandom = (settings.bgScene || 'random') === 'random';
-  const setScene = (i) => onScene(SCENES[(i + SCENES.length) % SCENES.length].id);
+  const setScene = (i) => onScene(SCENES_[(i + SCENES_.length) % SCENES_.length].id);
   const vol = settings.musicVol != null ? settings.musicVol : 0.25;
   const games = SCENES.filter((s) => s.game);
+  const playable = scene.game && !scene.variant;
   return (
     <div className="fun-bar">
       <div className="fun-group" title={t('Фон лаунчера')}>
@@ -43,12 +46,13 @@ export default function FunBar({ sceneId, onScene, onPlay }) {
         )}
       </div>
       <div className="fun-group play">
-        <button className="fun-play" title={scene.game ? t(scene.game.desc) : t('Выбрать игру')}
-          onClick={() => { if (scene.game) { setPick(false); onPlay(scene.id); } else setPick(!pick); }}>
-          <Icon name="star" size={12} /> {scene.game ? t('Играть') + ': ' + t(scene.game.title) : t('Поиграть')}
+        <button className="fun-play" title={playable ? t(scene.game.desc) : t('Выбрать игру')}
+          onClick={() => { if (playable) { setPick(false); onPlay(scene.id); } else setPick(!pick); }}>
+          <Icon name="star" size={12} /> {playable ? t('Играть') + ': ' + t(scene.game.title) : t('Поиграть')}
         </button>
         <button className={'fun-btn' + (pick ? ' on' : '')} title={t('Другие игры')} onClick={() => setPick(!pick)}>▾</button>
       </div>
+      <button className="fun-group fun-rw" title={t('Награды мини-игр')} onClick={onRewards}><Icon name="crown" size={12} /> {t('Награды')}</button>
       {pick && (
         <div className="fun-games">
           {games.map((g) => (

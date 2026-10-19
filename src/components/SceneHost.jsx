@@ -2,10 +2,43 @@ import React, { useEffect, useRef } from 'react';
 import VillageScene from './VillageScene.jsx';
 import { GAMES } from '../games/index.js';
 import * as music from '../lib/music.js';
+import { call } from '../lib/api.js';
+import { REWARDS, AUTHOR_NICK } from '../games/rewards.js';
 
-// Фоны лаунчера: деревня + каждая мини-игра в спокойном режиме (жизнь идёт своим чередом).
+// Фоны лаунчера: деревня + каждая мини-игра в спокойном режиме (жизнь идёт своим чередом)
+// + фоны-награды (отдельные сцены из игр, только спокойная жизнь).
 export const SCENES = [{ id: 'village', title: 'Деревня' }, ...GAMES.map((g) => ({ id: g.id, title: g.sceneTitle || g.title, game: g }))];
-export const sceneById = (id) => SCENES.find((s) => s.id === id) || SCENES[0];
+export function scenesFor(profile) {
+  const got = (profile && profile.rewards) || {};
+  const extra = REWARDS.filter((r) => r.kind === 'scene' && got[r.id]).map((r) => {
+    const game = GAMES.find((g) => g.id === r.game);
+    return game ? { id: r.game + '@' + r.variant, title: r.name.replace(/^Фон «(.*)»$/, '$1'), game, variant: r.variant, decor: true } : null;
+  }).filter(Boolean);
+  return [...SCENES, ...extra];
+}
+export const sceneById = (id, list = SCENES) => list.find((s) => s.id === id) || list[0];
+
+const skinCache = {};
+function loadSkin(nick) {
+  if (!nick) return Promise.resolve(null);
+  if (!skinCache[nick]) {
+    skinCache[nick] = call('skin:ely', nick).then((e) => new Promise((res) => {
+      if (!e || !e.dataUrl) return res(null);
+      const img = new Image();
+      img.onload = () => res(img);
+      img.onerror = () => res(null);
+      img.src = e.dataUrl;
+    })).catch(() => null);
+  }
+  return skinCache[nick];
+}
+const today = () => {
+  const d = new Date();
+  const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619) >>> 0;
+  return { key, seed: h };
+};
 
 export function darkness(h) {
   if (h >= 7.5 && h <= 17.5) return 0;
@@ -15,10 +48,10 @@ export function darkness(h) {
 }
 
 // Живая игра-фон: один экземпляр на сцену, режим меняется на лету (idle | play | over).
-function LiveGame({ game, mode, paused, animations, hourOverride, best, onOver }) {
+function LiveGame({ game, variant, mode, paused, animations, hourOverride, best, onOver, profile, author, nick, onSave, onReward }) {
   const ref = useRef(null);
   const live = useRef({});
-  live.current = { mode, paused, animations, hourOverride, best, onOver };
+  live.current = { mode: variant ? 'idle' : mode, paused, animations, hourOverride, best, onOver, profile, author, nick, onSave, onReward };
   useEffect(() => {
     const canvas = ref.current;
     let destroy = null;
@@ -33,7 +66,22 @@ function LiveGame({ game, mode, paused, animations, hourOverride, best, onOver }
       },
       sfx: (n) => { if (live.current.mode === 'play') music.sfx(n); },
       over: (score) => { if (live.current.mode === 'play' && live.current.onOver) live.current.onOver(score); },
-      get best() { return live.current.best || 0; }
+      get best() { return live.current.best || 0; },
+      // прогресс и награды (по нику игрока)
+      load: () => {
+        if (variant) return {};
+        const g = live.current.profile && live.current.profile.games && live.current.profile.games[game.id];
+        return g && g.d ? JSON.parse(JSON.stringify(g.d)) : {};
+      },
+      save: (obj) => { if (!variant && live.current.onSave) live.current.onSave(game.id, obj); },
+      reward: (id) => { if (!variant && !live.current.author && live.current.onReward) live.current.onReward(id); },
+      hasReward: (id) => !!(live.current.profile && live.current.profile.rewards && live.current.profile.rewards[id]),
+      get author() { return !!live.current.author; },
+      get nick() { return live.current.nick || null; },
+      authorNick: AUTHOR_NICK,
+      variant: variant || 0,
+      day: today,
+      skin: loadSkin
     };
     try { destroy = game.mount(canvas, api); } catch (e) { console.error('game mount', game.id, e); }
     return () => { try { destroy && destroy(); } catch (_) {} };
@@ -42,8 +90,7 @@ function LiveGame({ game, mode, paused, animations, hourOverride, best, onOver }
   return <canvas ref={ref} className="village-scene live-game" width="320" height="180" tabIndex={-1} />;
 }
 
-export default function SceneHost({ sceneId, mode, paused, animations, hourOverride, best, onOver }) {
-  const scene = sceneById(sceneId);
-  if (!scene.game) return <VillageScene paused={paused} animations={animations} hourOverride={hourOverride} />;
-  return <LiveGame key={scene.id} game={scene.game} mode={mode} paused={paused} animations={animations} hourOverride={hourOverride} best={best} onOver={onOver} />;
+export default function SceneHost({ scene, ...rest }) {
+  if (!scene || !scene.game) return <VillageScene paused={rest.paused} animations={rest.animations} hourOverride={rest.hourOverride} />;
+  return <LiveGame key={scene.id} game={scene.game} variant={scene.variant || 0} {...rest} />;
 }

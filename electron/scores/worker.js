@@ -6,6 +6,8 @@ const { ipcRenderer } = require('electron');
 const { Mqtt } = require('../tunnel/mqtt.js');
 
 const ROOT = 'villagerskokk/v1/scores/';
+const PROG = 'villagerskokk/v1/progress/'; // прогресс мини-игр и награды игрока (по нику), retain
+const keyOf = (nick) => String(nick).toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 24) || 'player';
 const boards = {}; // game -> { key -> {nick, score, at} }
 let clients = [];
 
@@ -16,6 +18,10 @@ function push() {
 }
 
 function onMessage(topic, text) {
+  if (topic.startsWith(PROG)) {
+    try { ipcRenderer.send('progress-remote', { key: topic.slice(PROG.length), doc: JSON.parse(text) }); } catch (_) {}
+    return;
+  }
   if (!topic.startsWith(ROOT)) return;
   const [game, key] = topic.slice(ROOT.length).split('/');
   if (!game || !key) return;
@@ -26,7 +32,7 @@ function onMessage(topic, text) {
     const score = Math.max(0, Math.min(10000000, Math.floor(v.score)));
     boards[game] = boards[game] || {};
     const cur = boards[game][key];
-    if (!cur || score >= cur.score) boards[game][key] = { nick, score, at: v.at || 0 };
+    if (!cur || score >= cur.score) boards[game][key] = { nick, score, at: v.at || 0, badge: typeof v.badge === 'string' ? v.badge.slice(0, 40) : null, title: typeof v.title === 'string' ? v.title.slice(0, 40) : null };
     push();
   } catch (_) {}
 }
@@ -41,11 +47,20 @@ ipcRenderer.on('scores-cmd', (e, { cmd, opts }) => {
     });
   }
   if (cmd === 'submit') {
-    const key = String(opts.nick).toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 24) || 'player';
-    const msg = JSON.stringify({ nick: opts.nick, score: opts.score, at: Date.now() });
+    const key = keyOf(opts.nick);
+    const msg = JSON.stringify({ nick: opts.nick, score: opts.score, at: Date.now(), badge: opts.badge || null, title: opts.title || null });
     const pub = (c, n) => { if (!c.publish(ROOT + opts.game + '/' + key, msg, true) && n < 20) setTimeout(() => pub(c, n + 1), 3000); };
     for (const c of clients) pub(c, 0);
     onMessage(ROOT + opts.game + '/' + key, msg);
+  }
+  if (cmd === 'watch') { // следить за своим прогрессом (приходит сохранённая копия с брокера)
+    for (const c of clients) c.subscribe(PROG + keyOf(opts.nick));
+  }
+  if (cmd === 'saveProgress') {
+    const msg = JSON.stringify(opts.doc);
+    const topic = PROG + keyOf(opts.nick);
+    const pub = (c, n) => { if (!c.publish(topic, msg, true) && n < 20) setTimeout(() => pub(c, n + 1), 3000); };
+    for (const c of clients) pub(c, 0);
   }
 });
 ipcRenderer.send('scores-ready');

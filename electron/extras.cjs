@@ -233,6 +233,18 @@ function applySkin(gameDir, { skin, cape, slim, name }) {
   return true;
 }
 
+// плащ-награда из мини-игр: только cape.png, сам скин не трогаем
+function applyCape(gameDir, cape) {
+  const dir = skinDir(gameDir);
+  fs.mkdirSync(dir, { recursive: true });
+  if (cape) fs.writeFileSync(path.join(dir, 'cape.png'), dataUrlToBuf(cape));
+  else fs.rmSync(path.join(dir, 'cape.png'), { force: true });
+  let meta = {};
+  try { meta = JSON.parse(fs.readFileSync(path.join(dir, 'skin.json'), 'utf8')); } catch (_) {}
+  fs.writeFileSync(path.join(dir, 'skin.json'), JSON.stringify({ ...meta, updated: Date.now() }, null, 1));
+  return true;
+}
+
 function clearSkin(gameDir) {
   const dir = skinDir(gameDir);
   for (const f of ['skin.png', 'cape.png']) fs.rmSync(path.join(dir, f), { force: true });
@@ -308,7 +320,7 @@ function editorRemove(kind, id) {
   fs.rmSync(path.join(EDITOR_DIR, kind, safeName(id) + '.json'), { force: true });
 }
 
-module.exports = {
+module.exports = { applyCape,
   listMods, listWorlds, backupWorld, listBackups, restoreBackup, listScreenshots, pingServer,
   applySkin, clearSkin, saveToWardrobe, listWardrobe, removeFromWardrobe, currentSkin,
   editorList, editorSave, editorRemove, dirSize

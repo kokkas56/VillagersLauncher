@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useApp } from './lib/app.jsx';
-import { call } from './lib/api.js';
-import SceneHost, { SCENES, sceneById } from './components/SceneHost.jsx';
+import { call, on } from './lib/api.js';
+import SceneHost, { SCENES, scenesFor, sceneById } from './components/SceneHost.jsx';
+import { rewardById, THEMES } from './games/rewards.js';
+import RewardsModal from './components/RewardsModal.jsx';
+import { Badge } from './components/Badge.jsx';
 import { useMusic } from './components/FunBar.jsx';
 import GameOverlay from './components/GameOverlay.jsx';
 import Icon from './components/Icon.jsx';
@@ -46,9 +49,27 @@ export default function App() {
   const [gmode, setGmode] = useState('idle'); // idle | play | over
   const [gresult, setGresult] = useState(null);
   const playing = gmode !== 'idle';
+  // прогресс мини-игр и награды (по нику), обновляются из главного процесса
+  const [profile, setProfile] = useState({ games: {}, rewards: {}, equip: {} });
+  const [rewardsOpen, setRewardsOpen] = useState(false);
+  useEffect(() => {
+    call('games:profile').then((p) => p && setProfile(p)).catch(() => {});
+    return on('profile', (p) => p && setProfile(p));
+  }, [account && account.id]);
+  const scenes = scenesFor(profile);
   const bg = settings ? (settings.bgScene || 'random') : 'random';
   const sceneId = sceneOverride || (bg === 'random' ? randomScene : bg);
-  const scene = sceneById(sceneId);
+  const scene = sceneById(sceneId, scenes);
+  const onGameSave = useCallback((game, data) => {
+    setProfile((p) => ({ ...p, games: { ...p.games, [game]: { t: Date.now(), d: data } } }));
+    call('games:save', { game, data }).catch(() => {});
+  }, []);
+  const onReward = useCallback(async (id) => {
+    let granted = false;
+    try { granted = await call('games:reward', id); } catch (_) {}
+    const r = rewardById(id);
+    if (granted && r) app.toast(t('Награда') + ': ' + r.name + ' — ' + t('надень во вкладке «Награды»'), 'ok', 9000);
+  }, []);
   const exitGame = useCallback(() => {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     setGmode('idle'); setGresult(null);
@@ -57,13 +78,14 @@ export default function App() {
     setGmode('over');
     const sc = Math.max(0, Math.floor(score || 0));
     let r = { best: sc, isBest: true };
-    try { r = await call('games:submit', { game: scene.id, score: sc }); } catch (_) {}
+    try { r = await call('games:submit', { game: scene.game ? scene.game.id : scene.id, score: sc }); } catch (_) {}
     app.refreshSettings && app.refreshSettings();
     setGresult({ score: sc, ...r });
-  }, [scene.id]);
-  const playGame = (id) => { if (id && id !== sceneId) setSceneOverride(id); setGresult(null); setGmode('play'); };
+  }, [scene.id, scene.game]);
+  const playGame = (id) => { if (id && id.includes('@')) id = id.split('@')[0];
+     if (id && id !== sceneId) setSceneOverride(id); setGresult(null); setGmode('play'); };
   const chooseScene = (id) => { setSceneOverride(null); app.saveSettings({ bgScene: id }); };
-  useMusic(settings, gameState.state === 'running' || gameState.state === 'starting');
+  useMusic(settings, gameState.state === 'running' || gameState.state === 'starting', profile.equip.music);
   const [skin, setSkin] = useState(null);
   const [skinTick, setSkinTick] = useState(0);
 
@@ -89,12 +111,13 @@ export default function App() {
   const go = (p) => { setPage(p); };
   const openEditor = (initial) => setEditor(initial || {});
 
-  const pageProps = { go, openEditor, openAccounts: () => setAccountsOpen(true), openDonate: () => setDonateOpen(true), playGame, sceneId, chooseScene, skin, refreshSkin: () => setSkinTick((n) => n + 1) };
+  const pageProps = { go, openEditor, openAccounts: () => setAccountsOpen(true), openDonate: () => setDonateOpen(true), playGame, sceneId: scene.id, scenes, chooseScene, openRewards: () => setRewardsOpen(true), skin, refreshSkin: () => setSkinTick((n) => n + 1) };
 
   return (
-    <div className={'app' + (settings.animations === false ? ' no-anim' : '') + (playing ? ' playing' : '')}>
-      <SceneHost sceneId={sceneId} mode={editor ? 'idle' : gmode} best={(settings.gameBest || {})[sceneId] || 0} onOver={onGameOver} paused={gameState.state === 'running' || !!editor} animations={settings.animations !== false} hourOverride={settings.theme === 'day' ? 12 : settings.theme === 'night' ? 23 : settings.theme === 'evening' ? 19.2 : null} />
+    <div className={'app' + (settings.animations === false ? ' no-anim' : '') + (playing ? ' playing' : '')} style={profile.equip.theme && THEMES[profile.equip.theme] ? THEMES[profile.equip.theme] : undefined}>
+      <SceneHost scene={scene} profile={profile} author={!!settings.authorMode} nick={account ? account.name : null} onSave={onGameSave} onReward={onReward} mode={editor ? 'idle' : gmode} best={(settings.gameBest || {})[scene.game ? scene.game.id : ''] || 0} onOver={onGameOver} paused={gameState.state === 'running' || !!editor} animations={settings.animations !== false} hourOverride={settings.theme === 'day' ? 12 : settings.theme === 'night' ? 23 : settings.theme === 'evening' ? 19.2 : null} />
       <TitleBar />
+      {rewardsOpen && <RewardsModal profile={profile} onScene={chooseScene} onClose={() => setRewardsOpen(false)} />}
       {playing && scene.game && !editor && <GameOverlay game={scene.game} mode={gmode} result={gresult} onExit={exitGame} onRetry={() => { setGresult(null); setGmode('play'); }} />}
       {editor ? (
         <SkinEditor initial={editor} onClose={() => setEditor(null)} />
@@ -126,10 +149,10 @@ export default function App() {
               <span>{t('Поддержать')}</span>
             </button>
             <button className="account-chip" onClick={() => setAccountsOpen(true)}>
-              <Head skin={skin && skin.skin} size={34} />
+              <span className={'avatar-frame' + (profile.equip.frame ? ' frame-' + profile.equip.frame : '')}><Head skin={skin && skin.skin} size={34} /></span>
               <div className="ac-text">
-                <b>{account ? account.name : t('Войти')}</b>
-                <small>{account ? (account.type === 'ely' ? 'Ely.by' : t('Офлайн')) : t('Выбери аккаунт')}</small>
+                <b>{account ? account.name : t('Войти')} <Badge id={profile.equip.badge} /></b>
+                <small>{profile.equip.title ? <span className="ac-title">{rewardById(profile.equip.title) ? rewardById(profile.equip.title).name : ''}</span> : account ? (account.type === 'ely' ? 'Ely.by' : t('Офлайн')) : t('Выбери аккаунт')}</small>
               </div>
             </button>
           </aside>

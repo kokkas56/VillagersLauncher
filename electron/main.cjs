@@ -304,12 +304,88 @@ handle('games:submit', async ({ game, score }) => {
   const best = { ...(s.gameBest || {}) };
   const isBest = !(best[game] >= score);
   if (isBest) { best[game] = score; store.set({ gameBest: best }); }
-  const acc = auth.publicAccounts().find((a) => a.id === s.selectedAccount);
+  const acc = currentAcc();
   if (isBest && score > 0 && s.gameShareScores !== false && acc) {
+    const p = profile();
     const w = await scoresWorker();
-    w.webContents.send('scores-cmd', { cmd: 'submit', opts: { game, score, nick: acc.name } });
+    w.webContents.send('scores-cmd', { cmd: 'submit', opts: { game, score, nick: acc.name, badge: p.equip.badge || null, title: p.equip.title || null } });
   }
   return { best: best[game] || 0, isBest };
+});
+
+// ---------------- мини-игры: прогресс и награды (привязаны к нику, синхронизируются через брокер) ----------------
+function currentAcc() { const s = store.get(); return auth.publicAccounts().find((a) => a.id === s.selectedAccount) || null; }
+function nickKey() { const a = currentAcc(); return a ? String(a.name).toLowerCase() : '_local'; }
+function profile() {
+  const all = store.get().gameProfiles || {};
+  const p = all[nickKey()] || {};
+  return { games: p.games || {}, rewards: p.rewards || {}, equip: p.equip || {}, equipT: p.equipT || 0 };
+}
+function setProfile(p) {
+  const all = { ...(store.get().gameProfiles || {}) };
+  all[nickKey()] = p;
+  store.set({ gameProfiles: all });
+  send('profile', p);
+  syncProfile();
+}
+let syncTimer = null;
+function syncProfile() {
+  const acc = currentAcc();
+  if (!acc) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(async () => {
+    const p = profile();
+    const w = await scoresWorker();
+    w.webContents.send('scores-cmd', { cmd: 'saveProgress', opts: { nick: acc.name, doc: { v: 1, t: Date.now(), ...p } } });
+  }, 4000);
+}
+let watchedNick = null;
+async function watchProfile() {
+  const acc = currentAcc();
+  if (!acc || watchedNick === acc.name.toLowerCase()) return;
+  watchedNick = acc.name.toLowerCase();
+  const w = await scoresWorker();
+  w.webContents.send('scores-cmd', { cmd: 'watch', opts: { nick: acc.name } });
+}
+ipcMain.on('progress-remote', (e, { key, doc }) => {
+  if (!scoresWin || e.sender !== scoresWin.webContents || !doc || typeof doc !== 'object') return;
+  const acc = currentAcc();
+  if (!acc || key !== String(acc.name).toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 24)) return;
+  const p = profile();
+  let changed = false; let localNewer = false;
+  for (const [g, v] of Object.entries(doc.games || {})) {
+    if (!v || typeof v !== 'object' || typeof v.t !== 'number') continue;
+    if (!p.games[g] || v.t > p.games[g].t) { p.games[g] = v; changed = true; }
+  }
+  for (const [g, v] of Object.entries(p.games)) if (!doc.games || !doc.games[g] || doc.games[g].t < v.t) localNewer = true;
+  for (const [id, t] of Object.entries(doc.rewards || {})) if (!p.rewards[id]) { p.rewards[id] = t; changed = true; }
+  for (const id of Object.keys(p.rewards)) if (!doc.rewards || !doc.rewards[id]) localNewer = true;
+  if ((doc.equipT || 0) > p.equipT && doc.equip) { p.equip = doc.equip; p.equipT = doc.equipT; changed = true; }
+  else if (p.equipT > (doc.equipT || 0)) localNewer = true;
+  if (changed) { const all = { ...(store.get().gameProfiles || {}) }; all[nickKey()] = p; store.set({ gameProfiles: all }); send('profile', p); }
+  if (localNewer) syncProfile();
+});
+handle('games:profile', async () => { watchProfile().catch(() => {}); return profile(); });
+handle('games:save', async ({ game, data }) => {
+  const p = profile();
+  p.games[game] = { t: Date.now(), d: data };
+  setProfile(p);
+  return true;
+});
+handle('games:reward', async (id) => {
+  const p = profile();
+  if (p.rewards[id]) return false;
+  p.rewards[id] = Date.now();
+  setProfile(p);
+  return true;
+});
+handle('games:equip', async ({ kind, value, cape }) => {
+  const p = profile();
+  p.equip = { ...p.equip, [kind]: value || null };
+  p.equipT = Date.now();
+  if (kind === 'cape') extras.applyCape(store.get().gameDir, value ? cape : null);
+  setProfile(p);
+  return p;
 });
 
 // ---------------- игра с друзьями: свой туннель ----------------

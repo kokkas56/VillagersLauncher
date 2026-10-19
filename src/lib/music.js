@@ -10,14 +10,28 @@ let volume = 0.25;
 let playing = false;
 let noiseBuf = null;
 
-const BPM = 72;
-const STEP = 60 / BPM / 4; // шестнадцатая
+// Треки: обычный + открываемые наградами мини-игр (другой темп, лад и тембр)
+const TRACKS = {
+  default: { bpm: 72, scale: [0, 2, 4, 7, 9], root: 72, lead: 'square', pad: 'triangle', progs: null },
+  chains: { bpm: 64, scale: [0, 3, 5, 6, 7, 10], root: 69, lead: 'sawtooth', pad: 'triangle', progs: [[[45, 48, 52, 55], [50, 53, 57, 60], [45, 48, 52, 55], [52, 56, 59, 62]]] }, // блюз
+  reeds: { bpm: 60, scale: [0, 2, 4, 7, 9, 11], root: 76, lead: 'sine', pad: 'sine', progs: [[[48, 52, 55, 59], [53, 57, 60, 64], [45, 48, 52, 55], [53, 57, 60, 62]]] }, // тихий плёс
+  chase: { bpm: 92, scale: [0, 2, 3, 5, 7, 8], root: 69, lead: 'square', pad: 'sawtooth', progs: [[[45, 48, 52, 55], [41, 45, 48, 52], [43, 47, 50, 53], [40, 44, 47, 50]]] }, // погоня
+  deep: { bpm: 56, scale: [0, 1, 5, 7, 8], root: 64, lead: 'triangle', pad: 'sine', progs: [[[40, 43, 47, 50], [41, 44, 48, 52], [40, 43, 47, 50], [38, 41, 45, 48]]] } // глубина
+};
+let track = TRACKS.default;
+let STEP = 60 / track.bpm / 4; // шестнадцатая
+export function setTrack(id) {
+  const t = TRACKS[id] || TRACKS.default;
+  if (t === track) return;
+  track = t;
+  STEP = 60 / t.bpm / 4;
+  prog = (t.progs || PROGS)[0];
+}
 const PROGS = [
   [[53, 57, 60, 64], [52, 55, 59, 62], [50, 53, 57, 60], [48, 52, 55, 59]], // Fmaj7 Em7 Dm7 Cmaj7
   [[45, 48, 52, 55], [41, 45, 48, 52], [48, 52, 55, 59], [43, 47, 50, 53]], // Am7 Fmaj7 Cmaj7 G7
   [[50, 53, 57, 60], [43, 47, 50, 53], [48, 52, 55, 59], [45, 48, 52, 55]]  // Dm7 G7 Cmaj7 Am7
 ];
-const SCALE = [0, 2, 4, 7, 9]; // пентатоника
 let prog = PROGS[0];
 let melodyBar = [];
 
@@ -74,7 +88,8 @@ function hiss(t, dur, peak, type, freq) {
 
 function newMelody() {
   // 16 шагов: редкие ноты пентатоники над аккордом
-  const root = 72;
+  const root = track.root;
+  const SCALE = track.scale;
   melodyBar = [];
   for (let i = 0; i < 16; i++) melodyBar.push(Math.random() < (i % 4 === 0 ? 0.45 : 0.18) ? root + SCALE[Math.floor(Math.random() * SCALE.length)] - (Math.random() < 0.3 ? 12 : 0) : null);
 }
@@ -85,10 +100,10 @@ function schedule() {
     const bar = Math.floor(step / 16);
     const t = nextTime + (s16 % 2 === 1 ? STEP * 0.18 : 0); // свинг
     if (s16 === 0) {
-      if (bar % 8 === 0) prog = PROGS[Math.floor(Math.random() * PROGS.length)];
+      if (bar % 8 === 0) { const ps = track.progs || PROGS; prog = ps[Math.floor(Math.random() * ps.length)]; }
       if (bar % 2 === 0) newMelody();
       const chord = prog[bar % 4];
-      for (const n of chord) tone('triangle', hz(n), t, STEP * 15, 0.05, 900);
+      for (const n of chord) tone(track.pad, hz(n), t, STEP * 15, track.pad === 'sawtooth' ? 0.025 : 0.05, 900);
       tone('sine', hz(chord[0] - 12), t, STEP * 7, 0.12, 400);
     }
     if (s16 === 8) tone('sine', hz(prog[bar % 4][0] - 12), t, STEP * 6, 0.09, 400);
@@ -96,7 +111,7 @@ function schedule() {
     if (s16 === 4 || s16 === 12) hiss(t, 0.12, 0.08, 'bandpass', 1800);
     if (s16 % 2 === 0) hiss(t, 0.03, s16 % 4 === 2 ? 0.035 : 0.02, 'highpass', 7000);
     const m = melodyBar[s16];
-    if (m) tone('square', hz(m), t, STEP * 3, 0.025, 1500);
+    if (m) tone(track.lead, hz(m), t, STEP * 3, track.lead === 'sine' ? 0.05 : 0.025, 1500);
     if (Math.random() < 0.06) hiss(t, 0.01, 0.015, 'highpass', 3000); // треск пластинки
     nextTime += STEP;
     step++;

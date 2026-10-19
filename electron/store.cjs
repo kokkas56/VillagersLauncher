@@ -38,7 +38,8 @@ const DEFAULTS = {
   musicOn: false, // тихая музыка в лаунчере
   musicVol: 0.25,
   sfxVol: 0.35, // звуки мини-игр
-  gameBest: {}, // лучшие результаты мини-игр
+  gameBest: {},
+  gameProfiles: {}, // прогресс мини-игр и награды по никам: { ник: { games, rewards, equip } } // лучшие результаты мини-игр
   gameShareScores: true, // отправлять рекорды в общую таблицу
   disabledOptional: [],
   downloadThreads: 8,
