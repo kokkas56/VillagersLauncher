@@ -233,6 +233,24 @@ function applySkin(gameDir, { skin, cape, slim, name }) {
   return true;
 }
 
+// свои плащи: skinkokk/capes/<имя>.png (загруженные, сделанные в редакторе)
+function capesDir(gameDir) { return path.join(skinDir(gameDir), 'capes'); }
+function listCapes(gameDir) {
+  const d = capesDir(gameDir);
+  try {
+    return fs.readdirSync(d).filter((f) => f.endsWith('.png')).map((f) => ({ id: f.slice(0, -4), name: f.slice(0, -4), cape: 'data:image/png;base64,' + fs.readFileSync(path.join(d, f)).toString('base64') }));
+  } catch (_) { return []; }
+}
+function saveCape(gameDir, { name, cape }) {
+  if (!cape || !/^data:image\/png;base64,/.test(cape)) throw new Error('Плащ — это картинка PNG');
+  const d = capesDir(gameDir);
+  fs.mkdirSync(d, { recursive: true });
+  const n = safeName(name || 'плащ').slice(0, 40) || 'плащ';
+  fs.writeFileSync(path.join(d, n + '.png'), dataUrlToBuf(cape));
+  return n;
+}
+function removeCape(gameDir, id) { fs.rmSync(path.join(capesDir(gameDir), safeName(id) + '.png'), { force: true }); return true; }
+
 // плащ-награда из мини-игр: только cape.png, сам скин не трогаем
 function applyCape(gameDir, cape) {
   const dir = skinDir(gameDir);
@@ -320,7 +338,7 @@ function editorRemove(kind, id) {
   fs.rmSync(path.join(EDITOR_DIR, kind, safeName(id) + '.json'), { force: true });
 }
 
-module.exports = { applyCape,
+module.exports = { applyCape, listCapes, saveCape, removeCape,
   listMods, listWorlds, backupWorld, listBackups, restoreBackup, listScreenshots, pingServer,
   applySkin, clearSkin, saveToWardrobe, listWardrobe, removeFromWardrobe, currentSkin,
   editorList, editorSave, editorRemove, dirSize

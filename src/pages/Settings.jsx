@@ -1,10 +1,29 @@
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../lib/app.jsx';
+import { REWARDS } from '../games/rewards.js';
 import { call, fmtDate } from '../lib/api.js';
 import Icon from '../components/Icon.jsx';
 import { Section, Toggle, Progress } from '../components/ui.jsx';
 
 const RES = [[1280, 720], [1600, 900], [1920, 1080], [2560, 1440]];
+
+// выбор lofi-трека: обычный + открытые наградами мини-игр
+function MusicTrack({ t }) {
+  const [p, setP] = React.useState(null);
+  React.useEffect(() => { call('games:profile').then(setP).catch(() => {}); }, []);
+  if (!p) return null;
+  const tracks = REWARDS.filter((r) => r.kind === 'music');
+  const cur = (p.equip && p.equip.music) || '';
+  return (
+    <div className="field">
+      <span>{t('Трек')}</span>
+      <select className="input" value={cur} onChange={async (e) => { const np = await call('games:equip', { kind: 'music', value: e.target.value || null }); setP(np); }}>
+        <option value="">{t('Обычный lofi')}</option>
+        {tracks.map((r) => <option key={r.id} value={r.track} disabled={!p.rewards[r.id]}>{r.name.replace(/^Трек /, '')}{p.rewards[r.id] ? '' : ' — 🔒 ' + t(r.how)}</option>)}
+      </select>
+    </div>
+  );
+}
 
 export default function Settings() {
   const { t, lang, settings, saveSettings, refreshSettings, info, toast, progress, pack, refreshPack, checkUpdates, checking: checkingUpd } = useApp();
@@ -194,6 +213,7 @@ export default function Settings() {
         </div>
         <Toggle checked={s.animations !== false} onChange={(v) => set({ animations: v })} label={t('Анимации')} hint={t('Бродящие жители, дым, снег и листопад на фоне')} />
         <Toggle checked={!!s.musicOn} onChange={(v) => set({ musicOn: v })} label={t('Музыка в лаунчере')} hint={t('Тихий пиксельный lofi. Также кнопка ♪ внизу главного экрана')} />
+        <MusicTrack t={t} />
         <div className="field">
           <span>{t('Громкость музыки')}: <b>{Math.round((s.musicVol != null ? s.musicVol : 0.25) * 100)}%</b></span>
           <input type="range" min="0" max="100" value={Math.round((s.musicVol != null ? s.musicVol : 0.25) * 100)} onChange={(e) => set({ musicVol: +e.target.value / 100 })} />

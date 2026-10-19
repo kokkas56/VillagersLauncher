@@ -101,42 +101,8 @@ export function badgeSvg(r, size = 14) {
   return `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 7 7" width="${size}" height="${size}" shape-rendering="crispEdges">${rects}</svg>`)}`;
 }
 
-// Плащи: текстура 64×32 (развёртка плаща Minecraft: перед 10×16 с отступом 1,1). Рисуется кодом, своё оформление.
-const CAPES = {
-  runaway: { base: '#3a3a44', edge: '#ffd34a', draw: (p) => { p.stripes('#2a2a33', 2); p.emblem('key', '#ffd34a'); } },
-  fisher: { base: '#2f6f9a', edge: '#d8f0ff', draw: (p) => { p.waves('#5ab0e0'); p.emblem('fish', '#ffe08a'); } },
-  defender: { base: '#6b2a20', edge: '#c9b48a', draw: (p) => { p.stripes('#5a2018', 3); p.emblem('shield', '#c9b48a'); } },
-  runner: { base: '#c46a2a', edge: '#ffe0b0', draw: (p) => { p.chevrons('#e08a40'); p.emblem('boot', '#ffe0b0'); } },
-  archer: { base: '#2d5a2a', edge: '#e0c070', draw: (p) => { p.stripes('#254a22', 2); p.emblem('target', '#e05050'); } },
-  miner: { base: '#2a2a30', edge: '#8fd0ff', draw: (p) => { p.gems(['#8fd0ff', '#55dd77', '#ffd34a', '#e05050']); p.emblem('pick', '#c0c8d0'); } }
-};
-export function capeDataUrl(id) {
-  const def = CAPES[id];
-  if (!def || typeof document === 'undefined') return null;
-  const c = document.createElement('canvas');
-  c.width = 64; c.height = 32;
-  const g = c.getContext('2d');
-  // вся развёртка плаща: x 0..22, y 0..17 (верх, бока, перед 1..11, зад 12..22)
-  g.fillStyle = def.base; g.fillRect(0, 0, 22, 17);
-  const FX = 1, FY = 1, FW = 10, FH = 16; // перед (то, что видно сзади игрока)
-  const BX = 12; // зад
-  const both = (fn) => { fn(FX); fn(BX); };
-  const p = {
-    stripes: (col, w) => both((x0) => { g.fillStyle = col; for (let y = FY; y < FY + FH; y += w * 2) g.fillRect(x0, y, FW, w); }),
-    waves: (col) => both((x0) => { g.fillStyle = col; for (let y = FY + 3; y < FY + FH; y += 4) for (let x = 0; x < FW; x++) g.fillRect(x0 + x, y + ((x >> 1) % 2), 1, 1); }),
-    chevrons: (col) => both((x0) => { g.fillStyle = col; for (let y = FY + 2; y < FY + FH; y += 5) for (let x = 0; x < FW; x++) g.fillRect(x0 + x, y + Math.abs(x - 4.5) * 0.6, 1, 1); }),
-    gems: (cols) => both((x0) => { let k = 0; for (let y = FY + 2; y < FY + FH; y += 3) for (let x = (y % 2); x < FW; x += 3) { g.fillStyle = cols[k++ % cols.length]; g.fillRect(x0 + x, y, 1, 1); } }),
-    emblem: (icon, col) => {
-      const pix = BADGE_PIX[icon] || BADGE_PIX.target;
-      pix.forEach((row, y) => [...row].forEach((ch, x) => { if (ch !== '.') { g.fillStyle = ch === 'O' ? '#ffffff' : col; g.fillRect(FX + 1 + x + 1, FY + 4 + y, 1, 1); } }));
-    }
-  };
-  def.draw(p);
-  // кайма
-  g.fillStyle = def.edge;
-  both((x0) => { g.fillRect(x0, FY + FH - 1, FW, 1); g.fillRect(x0, FY, 1, FH); g.fillRect(x0 + FW - 1, FY, 1, FH); });
-  return c.toDataURL('image/png');
-}
+// Плащи — в capes.js (рисуются кодом)
+export { capeDataUrl } from './capes.js';
 
 // Темы лаунчера: переопределяют акцентные цвета
 export const THEMES = {

@@ -6,6 +6,8 @@ import SkinPreview from '../components/SkinPreview.jsx';
 import SkinFlat from '../components/SkinFlat.jsx';
 import { Empty } from '../components/ui.jsx';
 import { defaultSkinDataUrl } from '../editor/templates.js';
+import { REWARDS } from '../games/rewards.js';
+import { capeDataUrl } from '../games/capes.js';
 
 export default function Skins({ openEditor, skin, refreshSkin, openAccounts }) {
   const { t, account, toast } = useApp();
@@ -14,10 +16,15 @@ export default function Skins({ openEditor, skin, refreshSkin, openAccounts }) {
   const [elyCape, setElyCape] = useState(null);
   const [current, setCurrent] = useState(null);
   const [fallback] = useState(() => defaultSkinDataUrl());
+  const [capes, setCapes] = useState([]);
+  const [profile, setProfile] = useState(null);
+  const [previewCape, setPreviewCape] = useState(undefined);
 
   const load = async () => {
     try { setWardrobe(await call('wardrobe:list')); } catch (_) {}
     try { setCurrent(await call('skin:current')); } catch (_) {}
+    try { setCapes(await call('wardrobe:capes')); } catch (_) {}
+    try { setProfile(await call('games:profile')); } catch (_) {}
     if (account && account.type === 'ely') {
       try { setEly(await call('skin:ely', account.name)); } catch (_) {}
       try { setElyCape(await call('skin:elyCape', account.name)); } catch (_) {}
@@ -25,7 +32,40 @@ export default function Skins({ openEditor, skin, refreshSkin, openAccounts }) {
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [account]);
 
-  const shown = current || (ely ? { skin: ely.dataUrl, slim: ely.slim, cape: elyCape } : null);
+  const shown0 = current || (ely ? { skin: ely.dataUrl, slim: ely.slim, cape: elyCape } : null);
+  const shown = shown0 && previewCape !== undefined ? { ...shown0, cape: previewCape } : shown0;
+
+  // все плащи: награды мини-игр, свои (загруженные), из скинов гардероба, с Ely.by
+  const got = (profile && profile.rewards) || {};
+  const allCapes = [
+    ...REWARDS.filter((r) => r.kind === 'cape' && got[r.id]).map((r) => ({ key: 'r:' + r.cape, name: r.name, cape: capeDataUrl(r.cape), reward: r })),
+    ...capes.map((c) => ({ key: 'c:' + c.id, name: c.name, cape: c.cape, own: c.id })),
+    ...wardrobe.filter((w) => w.cape).map((w) => ({ key: 'w:' + w.id, name: t('из скина') + ' ' + w.name, cape: w.cape })),
+    ...(elyCape ? [{ key: 'ely', name: 'Ely.by', cape: elyCape }] : [])
+  ].filter((c, i, a) => c.cape && a.findIndex((x) => x.cape === c.cape) === i);
+  const curCape = current && current.cape;
+  const wearCape = async (c) => {
+    if (c && c.reward) await call('games:equip', { kind: 'cape', value: c.reward.cape, cape: c.cape });
+    else { await call('wardrobe:wearCape', c ? c.cape : null); if (profile && profile.equip && profile.equip.cape) await call('games:equip', { kind: 'cape', value: null }); }
+    toast(c ? t('Плащ надет — в игре он сменится сам') : t('Плащ снят'), 'ok');
+    setPreviewCape(undefined);
+    await load(); refreshSkin();
+  };
+  const uploadCape = (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => {
+      const img = new Image();
+      img.onload = async () => {
+        if (!(img.width === img.height * 2 && img.width >= 64 && img.width <= 1024) && !(img.width === 22 && img.height === 17)) { toast(t('Плащ должен быть PNG 64×32 (или 128×64, 256×128 …)'), 'error', 7000); return; }
+        try { await call('wardrobe:saveCape', { name: f.name.replace(/\.png$/i, ''), cape: r.result }); toast(t('Плащ добавлен'), 'ok'); load(); } catch (er) { toast(er.message, 'error'); }
+      };
+      img.src = r.result;
+    };
+    r.readAsDataURL(f);
+  };
 
   const wear = async (w) => {
     await call('skin:apply', { skin: w.skin, cape: w.cape, slim: w.slim, name: w.name });
@@ -105,6 +145,31 @@ export default function Skins({ openEditor, skin, refreshSkin, openAccounts }) {
                       <button className="btn sm primary" onClick={() => wear(w)}>{t('Надеть')}</button>
                       <button className="btn icon-btn sm" title={t('Редактировать')} onClick={() => openEditor({ skin: w.skin, cape: w.cape, slim: w.slim, name: w.name })}><Icon name="pencil" size={12} /></button>
                       <button className="btn icon-btn sm danger" title={t('Удалить')} onClick={async () => { await call('wardrobe:remove', w.id); load(); }}><Icon name="trash" size={12} /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+          <section className="card">
+            <div className="card-head"><Icon name="cape" /><h3>{t('Плащи')}</h3><div className="grow" />
+              <label className="btn sm ghost"><Icon name="upload" size={12} /> {t('Загрузить PNG')}<input type="file" accept="image/png" hidden onChange={uploadCape} /></label>
+            </div>
+            {allCapes.length === 0 ? (
+              <Empty icon="cape">{t('Плащи из наград мини-игр, свои PNG и плащи из скинов появятся здесь. Наведи — увидишь на модели, «Надеть» — и он в игре.')}</Empty>
+            ) : (
+              <div className="capes">
+                <div className={'cape-item' + (!curCape ? ' on' : '')} onMouseEnter={() => setPreviewCape(null)} onMouseLeave={() => setPreviewCape(undefined)}>
+                  <span className="cape-big none">∅</span><b>{t('Без плаща')}</b>
+                  <button className="btn sm" disabled={!curCape} onClick={() => wearCape(null)}>{t('Снять')}</button>
+                </div>
+                {allCapes.map((c) => (
+                  <div key={c.key} className={'cape-item' + (curCape === c.cape ? ' on' : '') + (c.reward ? ' reward' : '')} onMouseEnter={() => setPreviewCape(c.cape)} onMouseLeave={() => setPreviewCape(undefined)}>
+                    <span className="cape-big" style={{ backgroundImage: `url(${c.cape})` }} />
+                    <b title={c.name}>{c.reward ? '★ ' : ''}{c.name}</b>
+                    <div className="row">
+                      <button className="btn sm primary" disabled={curCape === c.cape} onClick={() => wearCape(c)}>{curCape === c.cape ? t('Надет') : t('Надеть')}</button>
+                      {c.own && <button className="btn icon-btn sm danger" title={t('Удалить')} onClick={async () => { await call('wardrobe:removeCape', c.own); load(); }}><Icon name="trash" size={12} /></button>}
                     </div>
                   </div>
                 ))}

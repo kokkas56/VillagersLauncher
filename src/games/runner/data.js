@@ -114,3 +114,28 @@ export const fresh = () => ({
   st: { gems: 0, jump: 0, duck: 0, power: 0 },
   daily: { key: '', t: [] }
 });
+
+// события месяца: цель испытания (жетонов за месяц, ~2–4 ч игры), «небо» и ценность жетона в монетах
+export const EVENT_RUN = {
+  yule: { goal: 500, sky: 'snow', val: 8 },
+  maslenitsa: { goal: 500, sky: 'ribbons', val: 8 },
+  thaw: { goal: 500, sky: 'drops', val: 8 },
+  jest: { goal: 500, sky: 'confetti', val: 8 },
+  bloom: { goal: 500, sky: 'petals', val: 8 },
+  kupala: { goal: 500, sky: 'fireflies', val: 8 },
+  storm: { goal: 500, sky: 'rain', val: 8 },
+  starfall: { goal: 500, sky: 'meteors', val: 8 },
+  harvest: { goal: 500, sky: 'leaves', val: 8 },
+  pumpkin: { goal: 500, sky: 'bats', val: 8 },
+  fog: { goal: 500, sky: 'fog', val: 8 },
+  newyear: { goal: 500, sky: 'garland', val: 8 }
+};
+// косметика мастерства: цвет кафтана бегуна (открывается уровнями kit.COS_LV)
+export const RUN_COS = [
+  { name: 'Синий кафтан', c: '#5a74b4', d: '#3e5490' },
+  { name: 'Зелёный кафтан', c: '#4a9a4a', d: '#357a36' },
+  { name: 'Багряный кафтан', c: '#b44a4a', d: '#8a3434' },
+  { name: 'Лиловый кафтан', c: '#8a5ab4', d: '#6a4090' },
+  { name: 'Золотой кафтан', c: '#d8a830', d: '#a87e1e' },
+  { name: 'Ночной кафтан', c: '#2a2e44', d: '#181a2c' }
+];

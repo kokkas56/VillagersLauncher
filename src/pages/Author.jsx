@@ -39,6 +39,7 @@ function ReleaseRow({ r, t, lang, toast, reload }) {
       <div className="rel-actions">
         {!r.latest && !r.hidden && <button className="btn sm" title={t('Эта версия станет у всех основной')} onClick={() => act(() => call('pack:makeLatest', r.id), t('Теперь у всех сборка') + ' #' + r.version)}>{t('Сделать у всех')}</button>}
         {!r.latest && <button className="btn sm ghost" title={r.hidden ? t('Снова показать игрокам в выборе версий') : t('Убрать из выбора версий у игроков, не удаляя')} onClick={() => act(() => call('pack:hideRelease', { id: r.id, hidden: !r.hidden }), r.hidden ? t('Выпуск снова виден игрокам') : t('Выпуск скрыт у игроков'))}><Icon name={r.hidden ? 'eye' : 'eyeOff'} size={12} /></button>}
+        <button className="btn sm ghost" title={t('Сделать снова ранним доступом: скачать смогут только с кодом, у кого уже скачано — играют')} onClick={() => { if (window.confirm(t('Закрыть') + ' #' + r.version + ' ' + t('в ранний доступ? Файлы этой версии зашифруются, открытый выпуск удалится. У кого она уже скачана — продолжат играть. Чтобы без кода нельзя было скачать и старые версии — включи «Закрыть открытые версии» в разделе «Ранний доступ».'))) act(() => call('pack:closeToEarly', r.tag), t('Версия') + ' #' + r.version + ' ' + t('теперь в раннем доступе')); }}><Icon name="lock" size={12} /> {t('В ранний доступ')}</button>
         <button className="btn sm ghost" title={t('Переименовать')} onClick={() => setEdit(!edit)}><Icon name="pencil" size={12} /></button>
         {!r.latest && (sure
           ? <button className="btn sm danger" onClick={() => { setSure(false); act(() => call('pack:deleteRelease', r.id), t('Выпуск удалён') + ' #' + r.version); }}>{t('Точно удалить?')}</button>
@@ -108,6 +109,15 @@ function EarlyAccess({ t, toast, refreshPack }) {
       <p className="muted small">{t('Ранние версии лежат на GitHub зашифрованными — открыть их можно только кодом. Код месяца даёт все ранние версии, вышедшие в этом месяце (остаются навсегда), код версии — одну версию, код друга — всё. Коды кладёшь в закрытые посты Boosty или отдаёшь друзьям; игрок вводит код в «Настройки → Сборка».')}</p>
       <label>{t('Ссылка на Boosty')}<input className="input mono" placeholder="https://boosty.to/…" value={cfg.boosty || ''} onChange={(e) => setCfg({ ...cfg, boosty: e.target.value })} /></label>
       <button className="btn sm" onClick={async () => { try { await call('early:setConfig', { boosty: (cfg.boosty || '').trim(), enabled: true }); toast(t('Сохранено'), 'ok'); } catch (e) { err(e); } }}>{t('Сохранить')}</button>
+
+      <label className="check-row">
+        <input type="checkbox" checked={!!cfg.publicClosed} onChange={async (e) => {
+          const v = e.target.checked;
+          if (v && !window.confirm(t('Закрыть открытые версии? Новые игроки не смогут скачать сборку без кода раннего доступа. У кого сборка уже скачана — продолжат играть своей версией.'))) return;
+          try { await call('early:setConfig', { publicClosed: v }); setCfg({ ...cfg, publicClosed: v }); toast(v ? t('Открытые версии закрыты: скачать можно только с ранним доступом') : t('Открытые версии снова доступны всем'), 'ok', 7000); } catch (er) { err(er); }
+        }} />
+        <span><b>{t('Закрыть открытые версии')}</b> — {t('без раннего доступа сборку не скачать и не обновить; у кого уже скачано — играют как есть. Лаунчеры заметят в течение 5 минут.')}</span>
+      </label>
 
       <h4>{t('Мастер-ключ')}</h4>
       {!au.hasMaster ? (
