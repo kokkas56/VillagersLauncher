@@ -221,6 +221,24 @@ export function Field({ f, value, onChange, ctx }) {
         </select>
       );
       break;
+    case 'dialogRef':
+      input = (
+        <select className="input sm" value={value || ''} onChange={(e) => onChange(e.target.value)}>
+          <option value="">— выбери диалог —</option>
+          {(ctx.dialogs || []).map((d) => <option key={d.id} value={d.id}>{d.title || d.id}</option>)}
+          {value && !(ctx.dialogs || []).some((d) => d.id === value) && <option value={value}>{value} (нет такого!)</option>}
+        </select>
+      );
+      break;
+    case 'actorRef':
+      input = (
+        <select className="input sm" value={value || ''} onChange={(e) => onChange(e.target.value || undefined)}>
+          <option value="">— как в диалоге —</option>
+          {(ctx.actors || []).filter((a) => a.kind !== 'player').map((a) => <option key={a.id} value={a.id}>{a.name || a.id}</option>)}
+          {value && !(ctx.actors || []).some((a) => a.id === value) && <option value={value}>{value} (нет в сцене!)</option>}
+        </select>
+      );
+      break;
     case 'pos': input = <PosField value={value} onChange={onChange} api={api} f={f} onView={ctx.onView} />; break;
     case 'vec3': input = <Vec3 value={value} onChange={onChange} />; break;
     case 'target': input = <Target value={value} onChange={onChange} actors={actors} api={api} f={f} />; break;

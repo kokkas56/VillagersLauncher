@@ -1,5 +1,5 @@
-// «Студия» — редактор сюжетных катсцен для мода Kokk Story (только в режиме автора).
-// Сцены — JSON в <игра>/studio/scenes, живая связь с игрой через главный процесс (studio:*).
+// «Студия» — редактор сюжета для мода Kokk Story (только в режиме автора): сцены, диалоги, задания, переменные.
+// Всё — JSON в <игра>/studio/{scenes,dialogs,quests}, живая связь с игрой через главный процесс (studio:*).
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../lib/app.jsx';
 import { call, on } from '../lib/api.js';
@@ -8,7 +8,11 @@ import { Modal, Toggle } from '../components/ui.jsx';
 import Timeline from '../studio/Timeline.jsx';
 import Inspector from '../studio/Inspector.jsx';
 import { Datalists, selToPos } from '../studio/fields.jsx';
-import { validateScene, normalizeScene, defaultScene, isActorId, isSceneId, ERR } from '../studio/validate.js';
+import { validateScene, normalizeScene, defaultScene, isActorId, isSceneId, varDefault, ERR } from '../studio/validate.js';
+import DialogTab from '../studio/DialogTab.jsx';
+import QuestTab from '../studio/QuestTab.jsx';
+import VarsTab from '../studio/VarsTab.jsx';
+import { IssueRows } from '../studio/docs.jsx';
 import { ONBOARDING } from '../studio/schema.js';
 import {
   prepareScene, getItem, getItems, setItems, patchItem, removeItem, sortTrack, newEvent, setPath, renameActor,
@@ -17,6 +21,14 @@ import {
 import '../studio/studio.css';
 
 const DEFAULT_HINT = 'Наведи мышку на любую кнопку, поле или дорожку — здесь появится объяснение, что это и зачем.';
+const QSTATE_RU = { not_started: 'не начато', active: 'идёт', done: 'сделано', failed: 'провалено' };
+const OP_RU = { dialog: 'Диалог', start: 'Начать', advance: 'Продвинуть', complete: 'Завершить', fail: 'Провалить', reset: 'Сбросить', status: 'Статус', setVar: 'Переменная', play: 'Сцена' };
+const SUBTABS = [
+  ['scenes', 'Сцены', 'Катсцены: камера, актёры, эффекты, звук — на таймлайне.'],
+  ['dialogs', 'Диалоги', 'Разговоры с ветками: реплики, выбор ответа, условия и действия — граф из узлов.'],
+  ['quests', 'Задания', 'Задания по шагам: принести, поговорить, дойти, победить… и награда.'],
+  ['vars', 'Переменные', 'Память сюжета: что игрок уже сделал. Её пишут сцены, диалоги и задания, а проверяют условия.']
+];
 const lsGet = (k, d) => { try { const v = localStorage.getItem('studio.' + k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem('studio.' + k, JSON.stringify(v)); } catch (_) {} };
 
@@ -43,6 +55,16 @@ export default function Studio() {
   const [camStep, setCamStep] = useState(() => lsGet('camStep', 40));
   const [playing, setPlaying] = useState(false);
   const [, force] = useState(0);
+  const [sub, setSubState] = useState(() => lsGet('sub', 'scenes'));
+  const [dialogs, setDialogs] = useState([]);
+  const [quests, setQuests] = useState([]);
+  const [gameVars, setGameVarsState] = useState(null);
+  const [questStates, setQuestStates] = useState({});
+  const [goto, setGoto] = useState(null);
+  const subRef = useRef(sub);
+  subRef.current = sub;
+  const projectRef = useRef(project);
+  projectRef.current = project;
 
   const sceneRef = useRef(null);
   const selRef = useRef(null);
@@ -117,6 +139,13 @@ export default function Studio() {
   }, [flush, toast, setPlayhead]);
 
   const reloadList = async () => { const l = await call('studio:list'); setList(l || []); return l || []; };
+  // вернулись во вкладку «Сцены», а сцена ещё не открыта — открыть последнюю
+  useEffect(() => {
+    if (sub !== 'scenes' || !boot || sceneRef.current) return;
+    const last = lsGet('last', null);
+    const pick = list.find((x) => x.id === last) || list[0];
+    if (pick) openScene(pick.id);
+  }, [sub, boot]); // eslint-disable-line
 
   useEffect(() => {
     let alive = true;
@@ -124,11 +153,8 @@ export default function Studio() {
       try {
         const b = await call('studio:open');
         if (!alive) return;
-        setBoot(b); setProject(b.project || { actors: [] }); setList(b.scenes || []);
+        setBoot(b); setProject(b.project || { actors: [] }); setList(b.scenes || []); setDialogs(b.dialogs || []); setQuests(b.quests || []);
         if (b.link) setLink(b.link);
-        const last = lsGet('last', null);
-        const pick = (b.scenes || []).find((x) => x.id === last) || (b.scenes || [])[0];
-        if (pick) openScene(pick.id);
       } catch (e) { setBootErr(e.message); }
       call('studio:link', true).then((st) => st && alive && setLink(st)).catch(() => {});
     })();
@@ -136,6 +162,14 @@ export default function Studio() {
   }, []); // eslint-disable-line
 
   // ---------- связь с игрой ----------
+  // ответ игры на {t:'vars'}: { data: {имя: значение}, quests: {id: состояние} }
+  const setGameVars = (m) => {
+    if (!m) { setGameVarsState(null); return; }
+    setGameVarsState({ vars: m.data && typeof m.data === 'object' ? m.data : {}, quests: m.quests || null, at: Date.now() });
+    if (m.quests && typeof m.quests === 'object') setQuestStates((q) => ({ ...q, ...Object.fromEntries(Object.entries(m.quests).map(([id, st]) => [id, { ...st, id }])) }));
+  };
+  const setGameVarsRef = useRef(setGameVars);
+  setGameVarsRef.current = setGameVars;
   const addLog = (level, text) => setLogs((l) => [...l.slice(-199), { at: Date.now(), level, text }]);
   const onKeyRef = useRef(null);
   onKeyRef.current = async (msg) => {
@@ -185,7 +219,14 @@ export default function Studio() {
     else if (m.t === 'played') {
       addLog(m.ok ? 'ok' : 'error', (m.ok ? 'Сыграно: ' : 'Не сыграло: ') + (m.scene || '') + (m.error ? ' — ' + m.error : ''));
       if (!m.ok) { setPlaying(false); toast('Игра: ' + (m.error || 'сцена не сыграла'), 'error', 8000); }
-    } else if (m.t === 'key') onKeyRef.current(m);
+    } else if (m.t === 'key') { if (subRef.current === 'scenes') onKeyRef.current(m); else addLog('info', 'Клавиша в игре: ' + m.name + ' (работает во вкладке «Сцены»)'); } else if (m.t === 'vars') setGameVarsRef.current(m);
+    else if (m.t === 'questState') {
+      setQuestStates((q) => ({ ...q, [m.id]: m }));
+      addLog('info', 'Задание «' + m.id + '»: ' + (QSTATE_RU[m.state] || m.state) + (m.step ? ', шаг ' + m.step : '') + (m.text ? ' — ' + m.text : ''));
+    } else if (m.t === 'result') {
+      addLog(m.ok ? 'ok' : 'error', (OP_RU[m.op] || m.op || 'Команда') + (m.id ? ' «' + m.id + '»' : '') + ': ' + (m.ok ? 'готово' : 'не вышло — ' + (m.error || '?')));
+      if (!m.ok) toast('Игра: ' + (m.error || 'не получилось'), 'error', 8000);
+    }
   }), []); // eslint-disable-line
 
   // проигрывание: бегунок едет вместе с игрой (20 тиков в секунду)
@@ -206,7 +247,7 @@ export default function Studio() {
 
   // ---------- проверка ----------
   const lazyScene = useDeferredValue(scene); // проверка не тормозит перетаскивание
-  const issues = useMemo(() => (lazyScene ? validateScene(lazyScene, { project, ids: list.map((x) => x.id) }) : []), [lazyScene, project, list]);
+  const issues = useMemo(() => (lazyScene ? validateScene(lazyScene, { project, ids: list.map((x) => x.id), dialogIds: dialogs.map((x) => x.id) }) : []), [lazyScene, project, list, dialogs]);
   const nErr = issues.filter((x) => x.sev === ERR).length;
   const issueMap = useMemo(() => {
     const m = {};
@@ -316,7 +357,7 @@ export default function Studio() {
   // клавиши: Ctrl+Z / Ctrl+Y / Delete / Ctrl+D / Ctrl+S
   useEffect(() => {
     const k = (e) => {
-      if (!sceneRef.current || document.querySelector('.modal-back')) return;
+      if (subRef.current !== 'scenes' || !sceneRef.current || document.querySelector('.modal-back')) return;
       const inField = e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
       const ctrl = e.ctrlKey || e.metaKey;
       const code = e.code;
@@ -342,7 +383,43 @@ export default function Studio() {
   };
   const saveProject = async (p) => {
     setProject(p);
+    projectRef.current = p;
     try { setProject(await call('studio:project', p)); } catch (e) { toast('Проект не сохранился: ' + e.message, 'error'); }
+  };
+  // ---------- вкладки и общие списки ----------
+  const setSub = async (t) => { if (t === subRef.current) return; await flush(); setSubState(t); lsSet('sub', t); };
+  const reloadAny = useCallback(async (kind) => {
+    if (kind === 'scenes') return reloadList();
+    const l = (await call('studio:docList', kind)) || [];
+    if (kind === 'dialogs') setDialogs(l); else setQuests(l);
+    return l;
+  }, []); // eslint-disable-line
+  const patchList = useCallback((kind, item) => {
+    const f = (l) => (l.some((x) => x.id === item.id) ? l.map((x) => (x.id === item.id ? { ...x, ...item } : x)) : [...l, item]);
+    if (kind === 'dialogs') setDialogs(f); else setQuests(f);
+  }, []);
+  const addVar = useCallback((name, type) => {
+    const p = projectRef.current;
+    if ((p.vars || []).some((v) => v.name === name)) return;
+    saveProject({ ...p, vars: [...(p.vars || []), { name, type: type || 'bool', init: varDefault(type || 'bool'), note: '' }] });
+    toast('Переменная «' + name + '» заведена (вкладка «Переменные»)', 'ok', 3000);
+  }, []); // eslint-disable-line
+  const baseRefs = useMemo(() => ({ actors: project.actors || [], vars: project.vars || [], scenes: list, dialogs, quests, addVar, talkPriority: project.talkPriority || 0 }), [project, list, dialogs, quests, addVar]);
+  const openDoc = async (kind, id) => {
+    if (kind === 'scenes') { await setSub('scenes'); openScene(id); return; }
+    setGoto({ kind: kind === 'dialogs' ? 'dialog' : 'quest', id, n: Date.now() });
+    await setSub(kind);
+  };
+  const pickIssue = async (x) => {
+    setReport(null);
+    const k = x.kind || 'scene';
+    if (k === 'dialog' || k === 'quest') { setGoto({ kind: k, id: x.doc, sel: x.sel, n: Date.now() }); await setSub(k === 'dialog' ? 'dialogs' : 'quests'); return; }
+    if (k === 'vars') { setGoto({ kind: 'vars', sel: x.sel, n: Date.now() }); await setSub('vars'); return; }
+    if (k === 'project') { await setSub('scenes'); return; }
+    await setSub('scenes');
+    const sid = x.doc || x.scene;
+    if (sid && (!sceneRef.current || sceneRef.current.id !== sid)) await openScene(sid);
+    setTimeout(() => goIssue(x), 50);
   };
   const actorMenu = useMemo(() => {
     if (!scene) return [];
@@ -365,12 +442,70 @@ export default function Studio() {
   if (!boot) return <div className="muted" style={{ padding: 20 }}>Открываю Студию…</div>;
 
   const saveText = { saved: 'Сохранено', dirty: 'Есть правки…', saving: 'Сохраняю…', error: 'Не сохранилось!' }[saveState];
+  const tabsEl = (
+    <div className="seg sm st-tabs">
+      {SUBTABS.map(([id, label, hint]) => (
+        <button key={id} className={sub === id ? 'on' : ''} onClick={() => setSub(id)} {...hp(label + ' — ' + hint)}>
+          {label}{id === 'dialogs' && dialogs.length ? <small> {dialogs.length}</small> : id === 'quests' && quests.length ? <small> {quests.length}</small> : null}
+        </button>
+      ))}
+    </div>
+  );
+  const buildBtn = <button className={'btn sm' + (building ? ' busy' : '')} onClick={build} {...hp('Проверить все сцены, диалоги и задания и положить готовые в config/kokkstory/studio — оттуда их получат игроки со следующей публикацией сборки. С ошибками не собирается.')}><Icon name="rocket" size={12} /> Собрать<span className="lbl-wide"> для игроков</span></button>;
+  const linkCardEl = <LinkCard link={link} boot={boot} setBoot={setBoot} hp={hp} toast={toast} setLink={setLink} />;
+  const hintBoxEl = (
+    <div className="st-hint">
+      <div className="seg sm">
+        <button className={tab === 'hint' ? 'on' : ''} onClick={() => setTab('hint')}>Подсказка</button>
+        <button className={tab === 'log' ? 'on' : ''} onClick={() => setTab('log')}>Журнал игры{logs.length ? <small> {logs.length}</small> : null}</button>
+      </div>
+      {tab === 'hint'
+        ? <div className="st-hint-text">{hint}</div>
+        : (
+          <div className="st-log">
+            {logs.length === 0 && <div className="muted small">Пока пусто. Сюда пишет игра: что сыграло, чего не нашлось.</div>}
+            {logs.slice().reverse().map((l, i) => <div key={i} className={'st-log-row ' + l.level}><span className="muted">{new Date(l.at).toLocaleTimeString('ru-RU')}</span> {l.text}</div>)}
+          </div>
+        )}
+    </div>
+  );
+  const reportEl = report && (
+    <Modal title={report.ok ? 'Собрано для игроков' : 'Не собрано — есть ошибки'} onClose={() => setReport(null)} wide
+      footer={<>
+        {report.ok && <button className="btn" onClick={() => call('shell:openPath', 'config/kokkstory/studio')}><Icon name="folder" size={12} /> Открыть папку</button>}
+        <button className="btn primary" onClick={() => setReport(null)}>Понятно</button>
+      </>}>
+      {report.ok
+        ? <p>Собрано: сцен <b>{report.count}</b>, диалогов <b>{report.dialogs || 0}</b>, заданий <b>{report.quests || 0}</b>{report.removed ? <> · убрано старых: {report.removed}</> : null}. Они лежат в <span className="mono small">{report.dir}</span> и уйдут игрокам со следующей публикацией сборки (вкладка «Автор»).</p>
+        : <p>Ошибок: <b>{report.errors}</b>. Пока они есть, ничего не записано — исправь и собери снова.</p>}
+      <IssueRows issues={report.issues || []} showDoc onPick={pickIssue} />
+    </Modal>
+  );
+  const actorsEl = <ProjectActors project={project} save={saveProject} hp={hp} toast={toast} sceneIds={null} addToScene={() => {}} />;
+
+  if (sub !== 'scenes') {
+    const shared = {
+      tabs: tabsEl, linkCard: linkCardEl, hintBox: hintBoxEl, buildBtn, actorsCard: actorsEl, toast, hp, api, link, project, saveProject,
+      lists: { scenes: list, dialogs, quests }, reloadList: reloadAny, patchList, baseRefs, addLog, gameVars, setGameVars, setGameVarsState, questStates, openDoc
+    };
+    return (
+      <div className="studio">
+        <Datalists />
+        <datalist id="sl-vars">{(project.vars || []).map((v) => <option key={v.name} value={v.name} />)}</datalist>
+        {sub === 'dialogs' && <DialogTab shared={shared} goto={goto} />}
+        {sub === 'quests' && <QuestTab shared={shared} goto={goto} />}
+        {sub === 'vars' && <VarsTab shared={shared} goto={goto} />}
+        {reportEl}
+      </div>
+    );
+  }
+
   return (
     <div className="studio">
       <Datalists />
       {/* верхняя панель */}
       <div className="st-top">
-        <div className="st-brand" {...hp('Студия Кокка: здесь делаются сюжетные сцены для мода Kokk Story. Всё сохраняется само в папку studio рядом с игрой.')}><Icon name="film" size={16} /> Студия</div>
+        {tabsEl}
         {scene ? (
           <>
             <input className="input sm st-title" value={scene.title || ''} placeholder="Название сцены" onChange={(e) => onScene('title', e.target.value)} {...hp('Название сцены — только для тебя, игроки его не видят. Файл сцены называется по id: ' + scene.id + '.json')} />
@@ -382,20 +517,20 @@ export default function Studio() {
               ? <button className="btn sm danger" onClick={stop} {...hp('Остановить сцену в игре.')}><Icon name="stop" size={12} /> Стоп</button>
               : <button className="btn sm primary" onClick={() => play(false)} {...hp('Сыграть сцену в игре прямо сейчас — как она есть в Студии, даже несохранённая. Нужна связь с игрой.')}><Icon name="play" size={12} /> Проиграть в игре</button>}
             {!playing && <button className="btn sm ghost icon-btn" disabled={!link.connected} onClick={stop} {...hp('Остановить сцену в игре.')}><Icon name="stop" size={12} /></button>}
-            <button className={'btn sm' + (gizmosOn ? ' st-on' : '')} onClick={toggleGizmos} {...hp('Показать в игре полёт камеры, ключи, пути актёров и метки — пока включено, обновляется после каждой правки. Видно только тебе.')}><Icon name="eye" size={12} /> {gizmosOn ? 'Видно в мире' : 'Показать в мире'}</button>
+            <button className={'btn sm' + (gizmosOn ? ' st-on' : '')} onClick={toggleGizmos} {...hp('Показать в игре полёт камеры, ключи, пути актёров и метки — пока включено, обновляется после каждой правки. Видно только тебе.')}><Icon name="eye" size={12} /><span className="lbl-wide"> {gizmosOn ? 'Видно в мире' : 'Показать в мире'}</span></button>
             <button className={'btn sm' + (nErr ? ' danger' : '')} onClick={() => setIssuesOpen('check')} {...hp('Проверить сцену на ошибки: пустые поля, неверные id, события после конца. Щёлкни по ошибке — выберется нужное событие.')}>
               <Icon name="check" size={12} /> Проверить{issues.length ? <span className={'st-badge' + (nErr ? ' e' : '')}>{nErr || issues.length}</span> : null}
             </button>
           </>
         ) : <div className="grow" />}
-        <button className={'btn sm' + (building ? ' busy' : '')} onClick={build} {...hp('Проверить все сцены и положить готовые в config/kokkstory/studio — оттуда их получат игроки со следующей публикацией сборки. С ошибками не собирается.')}><Icon name="rocket" size={12} /> Собрать для игроков</button>
+        {buildBtn}
       </div>
 
       {/* левая колонка */}
       <aside className="st-left">
-        <LinkCard link={link} boot={boot} setBoot={setBoot} hp={hp} toast={toast} setLink={setLink} />
+        {linkCardEl}
         <SceneList list={list} cur={scene && scene.id} open={openScene} create={createScene} hp={hp} toast={toast}
-          flush={flush} reload={reloadList} onRenamed={(id) => openScene(id)} onDeleted={(id) => { if (scene && scene.id === id) { setScene(null); dirty.current = false; } }} />
+          flush={flush} reload={reloadList} onRenamed={(id) => { openScene(id); reloadAny('dialogs'); reloadAny('quests'); }} onDeleted={(id) => { if (scene && scene.id === id) { setScene(null); dirty.current = false; } }} />
         <ProjectActors project={project} save={saveProject} hp={hp} toast={toast} sceneIds={scene ? scene.actors.map((a) => a.id) : null}
           addToScene={(pa) => addActor({ id: pa.id, kind: 'story', ref: pa.id, name: pa.name || pa.id, spawn: { pos: null, yaw: 0 }, existing: false, despawnAtEnd: true })} />
       </aside>
@@ -427,24 +562,11 @@ export default function Studio() {
       <aside className="st-right">
         <div className="st-insp-wrap">
           {scene ? (
-            <Inspector scene={scene} sel={sel} actorSel={actorSel} project={project} api={api} hp={hp} issues={issues}
+            <Inspector scene={scene} sel={sel} actorSel={actorSel} project={project} api={api} hp={hp} issues={issues} dialogs={dialogs}
               onEvent={onEvent} onEventMany={onEventMany} onActor={onActor} onScene={onScene} onDelete={delEvent} onDuplicate={dupEvent} onRemoveActor={removeActor} />
           ) : <div className="muted small" style={{ padding: 14 }}>Здесь будут свойства выбранного события.</div>}
         </div>
-        <div className="st-hint">
-          <div className="seg sm">
-            <button className={tab === 'hint' ? 'on' : ''} onClick={() => setTab('hint')}>Подсказка</button>
-            <button className={tab === 'log' ? 'on' : ''} onClick={() => setTab('log')}>Журнал игры{logs.length ? <small> {logs.length}</small> : null}</button>
-          </div>
-          {tab === 'hint'
-            ? <div className="st-hint-text">{hint}</div>
-            : (
-              <div className="st-log">
-                {logs.length === 0 && <div className="muted small">Пока пусто. Сюда пишет игра: что сыграло, чего не нашлось.</div>}
-                {logs.slice().reverse().map((l, i) => <div key={i} className={'st-log-row ' + l.level}><span className="muted">{new Date(l.at).toLocaleTimeString('ru-RU')}</span> {l.text}</div>)}
-              </div>
-            )}
-        </div>
+        {hintBoxEl}
       </aside>
 
       {issuesOpen && scene && (
@@ -456,38 +578,7 @@ export default function Studio() {
           <IssueRows issues={issues} onPick={(x) => { goIssue(x); setIssuesOpen(null); }} />
         </Modal>
       )}
-      {report && (
-        <Modal title={report.ok ? 'Собрано для игроков' : 'Не собрано — есть ошибки'} onClose={() => setReport(null)} wide
-          footer={<>
-            {report.ok && <button className="btn" onClick={() => call('shell:openPath', 'config/kokkstory/studio')}><Icon name="folder" size={12} /> Открыть папку</button>}
-            <button className="btn primary" onClick={() => setReport(null)}>Понятно</button>
-          </>}>
-          {report.ok
-            ? <p>Сцен собрано: <b>{report.count}</b>{report.removed ? <> · убрано старых: {report.removed}</> : null}. Они лежат в <span className="mono small">{report.dir}</span> и уйдут игрокам со следующей публикацией сборки (вкладка «Автор»).</p>
-            : <p>Ошибок: <b>{report.errors}</b>. Пока они есть, ничего не записано — исправь и собери снова.</p>}
-          <IssueRows issues={report.issues || []} showScene onPick={async (x) => {
-            setReport(null);
-            if (x.scene && (!scene || scene.id !== x.scene)) await openScene(x.scene);
-            setTimeout(() => goIssue(x), 50);
-          }} />
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-function IssueRows({ issues, onPick, showScene }) {
-  if (!issues.length) return <p className="muted"><Icon name="check" size={12} /> Ошибок и предупреждений нет.</p>;
-  const sorted = issues.slice().sort((a, b) => (a.sev === b.sev ? 0 : a.sev === ERR ? -1 : 1));
-  return (
-    <div className="st-issues">
-      {sorted.map((x, i) => (
-        <button key={i} className={'st-iss-row ' + (x.sev === ERR ? 'e' : 'w')} onClick={() => onPick(x)} title="Щёлкни — выберется место ошибки">
-          <span className="st-sev">{x.sev}</span>
-          {showScene && x.scene && <span className="mono small muted">{x.scene}</span>}
-          <span className="grow">{x.msg}</span>
-        </button>
-      ))}
+      {reportEl}
     </div>
   );
 }

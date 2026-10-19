@@ -5,8 +5,8 @@ import { TRACKS, VERB_DEFS, ACTOR_FIELDS, SCENE_FIELDS, actorName } from './sche
 import { getItem, getPath, kindOfKey, fmtTicks } from './model.js';
 import { Field } from './fields.jsx';
 
-export default function Inspector({ scene, sel, actorSel, project, api, hp, onEvent, onEventMany, onActor, onScene, onDelete, onDuplicate, onRemoveActor, issues }) {
-  const ctx = { hp, api, actors: scene.actors, projActors: (project && project.actors) || [] };
+export default function Inspector({ scene, sel, actorSel, project, api, hp, onEvent, onEventMany, onActor, onScene, onDelete, onDuplicate, onRemoveActor, issues, dialogs }) {
+  const ctx = { hp, api, actors: scene.actors, projActors: (project && project.actors) || [], dialogs: dialogs || [] };
   const myIssues = (match) => issues.filter(match);
   const IssueList = ({ list }) => list.length ? (
     <div className="st-issues-mini">

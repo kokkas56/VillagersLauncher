@@ -160,7 +160,10 @@ export const VERB_DEFS = {
       fields: [F.t, { ...F.pos('Какой блок поменять. «Взять из игры» — именно тот блок, на который смотришь.'), exact: true },
         { k: 'state', label: 'На что', type: 'text', hint: 'id блока, можно с состоянием: minecraft:air — убрать, minecraft:oak_door[open=true] — открытая дверь.' }] },
     var: { label: 'Переменная', hint: 'Записать переменную сюжета — потом квесты и диалоги смогут её проверить (например «встретил_аларика = да»).', def: { name: 'met_x', value: true },
-      fields: [F.t, { k: 'name', label: 'Имя', type: 'text', hint: 'Имя латиницей, например met_alaric.' }, { k: 'value', label: 'Значение', type: 'any', hint: 'true / false, число или текст.' }] }
+      fields: [F.t, { k: 'name', label: 'Имя', type: 'text', list: 'vars', hint: 'Имя латиницей, например met_alaric. Список переменных проекта — во вкладке «Переменные».' }, { k: 'value', label: 'Значение', type: 'any', hint: 'true / false, число или текст.' }] },
+    dialog: { label: 'Открыть диалог', hint: 'Открыть игроку диалог из вкладки «Диалоги» в этот момент сцены — например, после пролёта камеры житель заговаривает с игроком.', def: { id: '' }, dur: () => 40,
+      fields: [F.t, { k: 'id', label: 'Диалог', type: 'dialogRef', hint: 'Какой диалог открыть. Диалоги создаются во вкладке «Диалоги».' },
+        { k: 'actor', label: 'Говорит актёр', type: 'actorRef', hint: 'Необязательно: кто из актёров сцены — хозяин диалога (к нему повернётся камера разговора). Пусто — как задано в самом диалоге.' }] }
   }
 };
 
@@ -227,6 +230,7 @@ export function summary(kind, ev, actors) {
     case 'weather': return { clear: 'Ясно', rain: 'Дождь', thunder: 'Гроза' }[ev.value] || nm;
     case 'block': return nm + ': ' + short(ev.state);
     case 'var': return ev.name + ' = ' + JSON.stringify(ev.value);
+    case 'dialog': return 'Диалог: ' + (ev.id || '?') + (ev.actor ? ' · ' + actorName(actors, ev.actor) : '');
     default: return nm;
   }
 }

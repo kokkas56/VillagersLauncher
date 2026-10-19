@@ -12,6 +12,18 @@ module.exports = function setupStudio({ handle, send, store }) {
   const gameDir = () => store.get().gameDir;
   const root = () => path.join(gameDir(), 'studio');
   const scenesDir = () => path.join(root(), 'scenes');
+  // виды документов проекта: сцены, диалоги, задания — по файлу на штуку
+  const KINDS = {
+    scenes: { dir: 'scenes', what: 'Сцена', whatGen: 'сцены', clean: (d) => V.cleanScene(d), norm: (d) => V.normalizeScene(d) },
+    dialogs: { dir: 'dialogs', what: 'Диалог', whatGen: 'диалога', clean: (d) => V.cleanDoc(d), norm: (d) => V.normalizeDialog(d) },
+    quests: { dir: 'quests', what: 'Задание', whatGen: 'задания', clean: (d) => V.cleanDoc(d), norm: (d) => V.normalizeQuest(d) }
+  };
+  function kindOf(k) { const d = KINDS[k]; if (!d) throw new Error('Неизвестный вид файлов Студии: ' + k); return d; }
+  const kindDir = (k) => path.join(root(), kindOf(k).dir);
+  function docFile(k, id) {
+    if (!SAFE_ID.test(String(id || ''))) throw new Error('Имя ' + kindOf(k).whatGen + ': только маленькие латинские буквы, цифры, _ и - (например miron_first)');
+    return path.join(kindDir(k), String(id) + '.json');
+  }
   const projectFile = () => path.join(root(), 'project.json');
   const devFile = () => path.join(root(), '.dev');
   const outDir = () => path.join(gameDir(), 'config', 'kokkstory', 'studio');
@@ -29,7 +41,7 @@ module.exports = function setupStudio({ handle, send, store }) {
   }
   function readJson(file) { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')); }
   function ensure() {
-    fs.mkdirSync(scenesDir(), { recursive: true });
+    for (const k of Object.keys(KINDS)) fs.mkdirSync(kindDir(k), { recursive: true });
     if (!fs.existsSync(projectFile())) writeJson(projectFile(), V.defaultProject());
   }
   function readProject() {
@@ -51,9 +63,155 @@ module.exports = function setupStudio({ handle, send, store }) {
   }
   const devOn = () => fs.existsSync(devFile());
 
+  // список диалогов/заданий: id, название + id узлов/шагов (для выпадающих списков и проверки ссылок)
+  function listDocs(k) {
+    if (k === 'scenes') return list();
+    ensure();
+    const dir = kindDir(k);
+    return fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => {
+      const id = f.slice(0, -5);
+      const file = path.join(dir, f);
+      let mtime = 0;
+      try { mtime = fs.statSync(file).mtimeMs; } catch (_) {}
+      try {
+        const d = readJson(file);
+        const it = { id, title: d.title || id, mtime };
+        if (k === 'dialogs') { it.nodes = d.nodes && typeof d.nodes === 'object' ? Object.keys(d.nodes) : []; it.speaker = d.speaker || 'any'; }
+        if (k === 'quests') it.steps = Array.isArray(d.steps) ? d.steps.map((s) => ({ id: s && s.id, title: s && s.title })) : [];
+        return it;
+      } catch (e) { return { id, title: id, mtime, broken: e.message, nodes: [], steps: [] }; }
+    }).sort((a, b) => String(a.title).localeCompare(String(b.title), 'ru'));
+  }
+  function readAll(k) {
+    const out = [];
+    for (const it of listDocs(k)) { try { const d = readJson(docFile(k, it.id)); d.id = it.id; out.push(d); } catch (_) {} }
+    return out;
+  }
+  // переименовали диалог/сцену/задание/переменную — поправить ссылки во всех файлах проекта
+  function walk(v, fn) {
+    if (Array.isArray(v)) { let ch = false; const a = v.map((x) => { const r = walk(x, fn); if (r !== x) ch = true; return r; }); return ch ? a : v; }
+    if (v && typeof v === 'object') {
+      let o = fn(v);
+      let ch = o !== v;
+      const c = {};
+      for (const k of Object.keys(o)) { const r = walk(o[k], fn); if (r !== o[k]) ch = true; c[k] = r; }
+      return ch ? c : v;
+    }
+    return v;
+  }
+  function fixRefs(fn, strFn) {
+    let files = 0;
+    for (const k of Object.keys(KINDS)) {
+      for (const it of listDocs(k)) {
+        const f = docFile(k, it.id);
+        let d;
+        try { d = readJson(f); } catch (_) { continue; }
+        let n = walk(d, fn);
+        if (strFn) n = walkStr(n, strFn);
+        if (n !== d) { writeJson(f, n); files++; }
+      }
+    }
+    return files;
+  }
+  function walkStr(v, fn) {
+    if (typeof v === 'string') return fn(v);
+    if (Array.isArray(v)) { let ch = false; const a = v.map((x) => { const r = walkStr(x, fn); if (r !== x) ch = true; return r; }); return ch ? a : v; }
+    if (v && typeof v === 'object') { let ch = false; const c = {}; for (const k of Object.keys(v)) { const r = walkStr(v[k], fn); if (r !== v[k]) ch = true; c[k] = r; } return ch ? c : v; }
+    return v;
+  }
+  const refFixers = {
+    dialogs: (from, to) => (o) => {
+      if (o.do === 'dialog' && o.id === from) return { ...o, id: to };
+      if (o.dialog === from) return { ...o, dialog: to };
+      return o;
+    },
+    scenes: (from, to) => (o) => (o.scene === from ? { ...o, scene: to } : o),
+    quests: (from, to) => (o) => (o.quest === from ? { ...o, quest: to } : o)
+  };
+
   handle('studio:open', () => {
     ensure();
-    return { dir: root(), out: outDir(), dev: devOn(), project: readProject(), scenes: list(), link: status() };
+    return { dir: root(), out: outDir(), dev: devOn(), project: readProject(), scenes: list(), dialogs: listDocs('dialogs'), quests: listDocs('quests'), link: status() };
+  });
+  // ---- диалоги и задания (и сцены тем же путём): kind = 'scenes' | 'dialogs' | 'quests' ----
+  handle('studio:docList', (k) => listDocs(k));
+  handle('studio:docRead', ({ kind, id }) => {
+    const f = docFile(kind, id);
+    if (!fs.existsSync(f)) throw new Error('Файл «' + id + '.json» (' + kindOf(kind).what.toLowerCase() + ') не найден');
+    const d = readJson(f);
+    if (!d.id) d.id = id;
+    return d;
+  });
+  handle('studio:docSave', ({ kind, doc }) => {
+    if (!doc || typeof doc !== 'object') throw new Error('Пустой файл');
+    const f = docFile(kind, doc.id);
+    writeJson(f, kindOf(kind).clean(doc));
+    return { mtime: fs.statSync(f).mtimeMs };
+  });
+  handle('studio:docDelete', ({ kind, id }) => {
+    const f = docFile(kind, id);
+    if (!fs.existsSync(f)) return true;
+    const trash = path.join(root(), '.trash', kindOf(kind).dir);
+    fs.mkdirSync(trash, { recursive: true });
+    fs.renameSync(f, path.join(trash, id + '-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json'));
+    return true;
+  });
+  // fixRefs: true — поправить ссылки в других файлах; вернёт { refs: сколько файлов поправлено }
+  handle('studio:docRename', ({ kind, from, to, title, fixRefs: fix }) => {
+    const a = docFile(kind, from), b = docFile(kind, to);
+    if (from === to) return { refs: 0 };
+    if (fs.existsSync(b)) throw new Error(kindOf(kind).what + ' с именем «' + to + '» уже есть');
+    const d = readJson(a);
+    d.id = to;
+    if (title) d.title = title;
+    writeJson(b, d);
+    fs.unlinkSync(a);
+    return { refs: fix === false ? 0 : fixRefs(refFixers[kind](from, to)) };
+  });
+  handle('studio:docDuplicate', ({ kind, from, to, title }) => {
+    const b = docFile(kind, to);
+    if (fs.existsSync(b)) throw new Error(kindOf(kind).what + ' с именем «' + to + '» уже есть');
+    const d = readJson(docFile(kind, from));
+    d.id = to;
+    d.title = title || (d.title || from) + ' (копия)';
+    writeJson(b, d);
+    return true;
+  });
+  // переменная переименована: условия, действия, событие сцены «Переменная», {var:имя} в текстах
+  handle('studio:renameVar', ({ from, to }) => {
+    if (!V.isVarName(from) || !V.isVarName(to)) throw new Error('Имя переменной — латиница, цифры, _ . -');
+    const esc = from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('\\{var:' + esc + '\\}', 'g');
+    try { // и в project.json
+      const pr = readProject();
+      if ((pr.vars || []).some((v) => v && v.name === from) && !(pr.vars || []).some((v) => v && v.name === to)) writeJson(projectFile(), V.cleanProject({ ...pr, vars: pr.vars.map((v) => (v && v.name === from ? { ...v, name: to } : v)) }));
+    } catch (_) {}
+    return { refs: fixRefs((o) => {
+      let c = o;
+      if (c.var === from) c = { ...c, var: to };
+      if (c.set === from) c = { ...c, set: to };
+      if (c.add === from && typeof c.add === 'string') c = { ...c, add: to };
+      if (c.do === 'var' && c.name === from) c = { ...c, name: to };
+      return c;
+    }, (s) => (s.includes('{var:' + from + '}') ? s.replace(re, '{var:' + to + '}') : s)) };
+  });
+  // где используются переменные: { имя: [{ kind, id, title }] }
+  handle('studio:varUsage', () => {
+    const use = {};
+    const note = (name, k, d) => { if (!name || typeof name !== 'string') return; const a = (use[name] = use[name] || []); if (!a.some((x) => x.kind === k && x.id === d.id)) a.push({ kind: k, id: d.id, title: d.title || d.id }); };
+    for (const k of Object.keys(KINDS)) {
+      for (const d of readAll(k)) {
+        walk(d, (o) => {
+          if (typeof o.var === 'string') note(o.var, k, d);
+          if (typeof o.set === 'string') note(o.set, k, d);
+          if (typeof o.add === 'string') note(o.add, k, d);
+          if (o.do === 'var') note(o.name, k, d);
+          return o;
+        });
+        walkStr(d, (s) => { for (const m of s.matchAll(/\{var:([^}]+)\}/g)) note(m[1], k, d); return s; });
+      }
+    }
+    return use;
   });
   handle('studio:list', () => list());
   handle('studio:read', (id) => {
@@ -87,6 +245,7 @@ module.exports = function setupStudio({ handle, send, store }) {
     if (title) s.title = title;
     writeJson(b, s);
     fs.unlinkSync(a);
+    fixRefs(refFixers.scenes(from, to));
     return true;
   });
   handle('studio:duplicate', ({ from, to, title }) => {
@@ -110,6 +269,7 @@ module.exports = function setupStudio({ handle, send, store }) {
   });
   handle('studio:build', () => {
     const project = readProject();
+    const docs = { dialogs: [], quests: [] };
     const scenes = [];
     const issues = [];
     for (const it of list()) {
@@ -121,9 +281,19 @@ module.exports = function setupStudio({ handle, send, store }) {
         scenes.push(s);
       } catch (e) { issues.push({ sev: V.ERR, scene: it.id, sel: null, msg: 'Файл сцены не читается: ' + e.message }); }
     }
-    issues.push(...V.validateProject(project, scenes));
+    for (const k of ['dialogs', 'quests']) {
+      for (const it of listDocs(k)) {
+        try {
+          const d = readJson(docFile(k, it.id));
+          if (d.id && d.id !== it.id) issues.push({ sev: V.WARN, kind: k === 'dialogs' ? 'dialog' : 'quest', doc: it.id, sel: null, msg: 'Файл ' + it.id + '.json, а внутри id «' + d.id + '» — при сборке берётся имя файла' });
+          d.id = it.id;
+          docs[k].push(d);
+        } catch (e) { issues.push({ sev: V.ERR, kind: k === 'dialogs' ? 'dialog' : 'quest', doc: it.id, sel: null, msg: 'Файл не читается: ' + e.message }); }
+      }
+    }
+    issues.push(...V.validateProject(project, scenes, docs));
     const errors = issues.filter((i) => i.sev === V.ERR).length;
-    if (errors) return { ok: false, issues, errors, count: 0, dir: outDir() };
+    if (errors) return { ok: false, issues, errors, count: 0, dialogs: 0, quests: 0, dir: outDir() };
     const out = outDir();
     const outScenes = path.join(out, 'scenes');
     fs.mkdirSync(outScenes, { recursive: true });
@@ -133,8 +303,15 @@ module.exports = function setupStudio({ handle, send, store }) {
     // убрать из сборки сцены, которых больше нет в проекте
     let removed = 0;
     for (const f of fs.readdirSync(outScenes)) if (f.endsWith('.json') && !keep.has(f)) { fs.unlinkSync(path.join(outScenes, f)); removed++; }
-    writeJson(path.join(out, 'index.json'), { v: 1, built: new Date().toISOString(), scenes: scenes.map((s) => s.id) });
-    return { ok: true, issues, errors: 0, count: scenes.length, removed, dir: out };
+    for (const k of ['dialogs', 'quests']) {
+      const dir = path.join(out, k);
+      fs.mkdirSync(dir, { recursive: true });
+      const keepK = new Set();
+      for (const d of docs[k]) { writeJson(path.join(dir, d.id + '.json'), KINDS[k].norm(d)); keepK.add(d.id + '.json'); }
+      for (const f of fs.readdirSync(dir)) if (f.endsWith('.json') && !keepK.has(f)) { fs.unlinkSync(path.join(dir, f)); removed++; }
+    }
+    writeJson(path.join(out, 'index.json'), { v: 2, built: new Date().toISOString(), scenes: scenes.map((s) => s.id), dialogs: docs.dialogs.map((d) => d.id), quests: docs.quests.map((d) => d.id) });
+    return { ok: true, issues, errors: 0, count: scenes.length, dialogs: docs.dialogs.length, quests: docs.quests.length, removed, dir: out };
   });
 
   // ---------- живая связь с игрой ----------
@@ -233,4 +410,18 @@ module.exports = function setupStudio({ handle, send, store }) {
   handle('studio:tp', (a) => write(Array.isArray(a) ? { t: 'tp', pos: a } : { t: 'tp', pos: a && a.pos, yaw: a && a.yaw, pitch: a && a.pitch }));
   handle('studio:getView', () => request({ t: 'getView' }, 'view'));
   handle('studio:getSel', () => request({ t: 'getSel' }, 'sel'));
+  // фаза 2: открыть диалог у автора, управлять заданием, прочитать переменные из игры
+  handle('studio:dialog', (dialog) => write({ t: 'dialog', dialog: V.normalizeDialog(dialog) }));
+  handle('studio:quest', ({ op, id, step, quest }) => {
+    if (!['start', 'advance', 'complete', 'fail', 'reset', 'status'].includes(op)) throw new Error('Неизвестная команда задания: ' + op);
+    const msg = { t: 'quest', op, id };
+    if (step) msg.step = step;
+    if (quest) msg.quest = V.normalizeQuest(quest);
+    return write(msg);
+  });
+  handle('studio:vars', () => request({ t: 'vars' }, 'vars', 4000));
+  handle('studio:setVar', ({ name, value }) => {
+    if (!V.isVarName(name)) throw new Error('Имя переменной — латиница, цифры, _ . -');
+    return write({ t: 'setVar', name, value });
+  });
 };
