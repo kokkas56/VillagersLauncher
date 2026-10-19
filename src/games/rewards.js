@@ -2,7 +2,7 @@
 // kind: badge — значок у ника, title — титул у ника, scene — новый фон, music — lofi-трек, theme — цвет лаунчера,
 //       frame — рамка аватарки, cape — плащ для Minecraft (через систему скинов лаунчера).
 
-export const AUTHOR_NICK = 'Kokk'; // ник автора сборки: его скин рисуется в финале «Побега»
+export const AUTHOR_NICK = 'kokkas'; // аккаунт автора на Ely.by (скин «Kokk 2.0», ely.by/skins/s4749321) — рисуется в финале «Побега»
 
 export const GAME_NAMES = {
   prison: 'Побег', fishing: 'Рыбалка', defense: 'Защита деревни', runner: 'Побег от зомби', fair: 'Ярмарочный тир', mine: 'Вагонетка'
