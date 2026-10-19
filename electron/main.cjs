@@ -113,6 +113,9 @@ function handle(ch, fn) {
   });
 }
 
+// «Студия» автора: сцены, сборка, живая связь с игрой
+require('./studio.cjs')({ handle, send, store });
+
 // окно
 ipcMain.on('win:minimize', () => win && win.minimize());
 ipcMain.on('win:maximize', () => win && (win.isMaximized() ? win.unmaximize() : win.maximize()));
