@@ -284,6 +284,34 @@ handle('dialog:savePng', async ({ dataUrl, name }) => {
   return r.filePath;
 });
 
+// ---------------- мини-игры: общая таблица рекордов ----------------
+let scoresWin = null;
+let scoresReady = null;
+let scoresBoard = {};
+function scoresWorker() {
+  if (scoresWin && !scoresWin.isDestroyed()) return scoresReady;
+  scoresWin = new BrowserWindow({ show: false, width: 200, height: 100, skipTaskbar: true, webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false } });
+  scoresReady = new Promise((resolve) => ipcMain.once('scores-ready', () => resolve(scoresWin)));
+  scoresWin.loadFile(path.join(__dirname, 'scores', 'worker.html'));
+  scoresWin.on('closed', () => { scoresWin = null; });
+  scoresReady.then((w) => w.webContents.send('scores-cmd', { cmd: 'start', opts: { brokers: store.get().tunnelBrokers } }));
+  return scoresReady;
+}
+ipcMain.on('scores-board', (e, b) => { if (scoresWin && e.sender === scoresWin.webContents) { scoresBoard = b || {}; send('scores', scoresBoard); } });
+handle('games:board', async () => { scoresWorker(); return scoresBoard; });
+handle('games:submit', async ({ game, score }) => {
+  const s = store.get();
+  const best = { ...(s.gameBest || {}) };
+  const isBest = !(best[game] >= score);
+  if (isBest) { best[game] = score; store.set({ gameBest: best }); }
+  const acc = auth.publicAccounts().find((a) => a.id === s.selectedAccount);
+  if (isBest && score > 0 && s.gameShareScores !== false && acc) {
+    const w = await scoresWorker();
+    w.webContents.send('scores-cmd', { cmd: 'submit', opts: { game, score, nick: acc.name } });
+  }
+  return { best: best[game] || 0, isBest };
+});
+
 // ---------------- игра с друзьями: свой туннель ----------------
 let tunnelWin = null;
 let tunnelReady = null;

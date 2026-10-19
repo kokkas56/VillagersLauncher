@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useApp } from './lib/app.jsx';
 import { call } from './lib/api.js';
-import VillageScene from './components/VillageScene.jsx';
+import SceneHost from './components/SceneHost.jsx';
+import { useMusic } from './components/FunBar.jsx';
+import GamesPanel from './components/GamesPanel.jsx';
 import Icon from './components/Icon.jsx';
 import Head from './components/Head.jsx';
 import { TitleBar, Toasts, Modal } from './components/ui.jsx';
@@ -38,6 +40,8 @@ export default function App() {
   const [donateOpen, setDonateOpen] = useState(false);
   const [crash, setCrash] = useState(null);
   const [consoleOpen, setConsoleOpen] = useState(false);
+  const [gamesOpen, setGamesOpen] = useState(false);
+  useMusic(settings, gameState.state === 'running' || gameState.state === 'starting');
   const [skin, setSkin] = useState(null);
   const [skinTick, setSkinTick] = useState(0);
 
@@ -63,12 +67,13 @@ export default function App() {
   const go = (p) => { setPage(p); };
   const openEditor = (initial) => setEditor(initial || {});
 
-  const pageProps = { go, openEditor, openAccounts: () => setAccountsOpen(true), openDonate: () => setDonateOpen(true), skin, refreshSkin: () => setSkinTick((n) => n + 1) };
+  const pageProps = { go, openEditor, openAccounts: () => setAccountsOpen(true), openDonate: () => setDonateOpen(true), openGames: () => setGamesOpen(true), skin, refreshSkin: () => setSkinTick((n) => n + 1) };
 
   return (
     <div className={'app' + (settings.animations === false ? ' no-anim' : '')}>
-      <VillageScene paused={gameState.state === 'running' || !!editor} animations={settings.animations !== false} hourOverride={settings.theme === 'day' ? 12 : settings.theme === 'night' ? 23 : settings.theme === 'evening' ? 19.2 : null} />
+      <SceneHost sceneId={settings.scene || 'village'} paused={gameState.state === 'running' || !!editor || gamesOpen} animations={settings.animations !== false} hourOverride={settings.theme === 'day' ? 12 : settings.theme === 'night' ? 23 : settings.theme === 'evening' ? 19.2 : null} />
       <TitleBar />
+      {gamesOpen && <GamesPanel onClose={() => setGamesOpen(false)} />}
       {editor ? (
         <SkinEditor initial={editor} onClose={() => setEditor(null)} />
       ) : (

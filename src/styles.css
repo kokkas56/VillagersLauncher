@@ -260,7 +260,7 @@ input[type='range'] { accent-color: var(--emerald); width: 100%; }
 .play-btn:active:not(:disabled) { transform: translateY(1px); }
 .play-btn:disabled { cursor: default; filter: saturate(0.6) brightness(0.85); }
 .play-btn.running { background: linear-gradient(180deg, #ffe6a6, #e6b65c 50%, #b47f2c); color: #2a1a05; box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.55), inset 0 -5px 0 rgba(0, 0, 0, 0.22), 0 10px 40px rgba(230, 182, 92, 0.4); filter: none; }
-.play-glow { position: absolute; inset: -40%; background: conic-gradient(from 0deg, transparent 0 70%, rgba(255, 255, 255, 0.55) 80%, transparent 90%); animation: spin 3.2s linear infinite; mix-blend-mode: overlay; pointer-events: none; }
+.play-glow { position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.18) 44%, rgba(255, 255, 255, 0.42) 50%, rgba(255, 255, 255, 0.18) 56%, transparent 65%); background-size: 260% 100%; background-repeat: no-repeat; animation: sweep 3.6s ease-in-out infinite; pointer-events: none; }
 .play-btn.busy .play-glow { animation-duration: 1s; }
 .app.no-anim .play-glow { display: none; }
 .play-progress { margin-top: 18px; max-width: 560px; min-height: 52px; }
@@ -549,3 +549,32 @@ input[type='range'] { accent-color: var(--emerald); width: 100%; }
 .rel.hidden-rel { opacity: .55; }
 .rel { flex-wrap: wrap; }
 .row.wrap { flex-wrap: wrap; }
+
+@keyframes sweep { 0% { background-position: 130% 0; } 55%, 100% { background-position: -30% 0; } }
+
+/* ---- фон-сцены, музыка, мини-игры ---- */
+.fun-bar { margin-top: 14px; justify-content: flex-end; flex-wrap: wrap; display: flex; gap: 8px; align-items: center; }
+.fun-group { display: flex; align-items: center; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 3px 6px; backdrop-filter: blur(6px); }
+.fun-btn { background: none; border: 0; color: var(--muted); font-size: 12px; min-width: 22px; height: 22px; border-radius: 999px; cursor: pointer; }
+.fun-btn:hover { color: var(--text); background: var(--panel-2); }
+.fun-btn.on { color: var(--gold-2); }
+.fun-name { font-size: 11px; color: var(--text); min-width: 66px; text-align: center; }
+.fun-vol { width: 90px; accent-color: var(--gold); }
+.fun-play { display: flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--line-2); color: var(--gold-2); border-radius: 999px; padding: 6px 12px; font-size: 12px; cursor: pointer; backdrop-filter: blur(6px); }
+.fun-play:hover { border-color: var(--gold); }
+.games-overlay { position: fixed; inset: 0; z-index: 55; background: rgba(6, 4, 3, 0.65); backdrop-filter: blur(4px); display: grid; place-items: center; animation: fade 0.2s; }
+.games-panel { width: min(1000px, calc(100vw - 40px)); max-height: calc(100vh - 60px); display: flex; flex-direction: column; gap: 10px; background: var(--panel-solid); border: 1px solid var(--line-2); border-radius: 18px; padding: 14px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6); }
+.games-head { display: flex; align-items: center; gap: 10px; }
+.games-head .grow { flex: 1; text-align: center; }
+.games-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.game-card { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 16px; border-radius: 14px; background: var(--panel-2); border: 1px solid var(--line); color: var(--text); cursor: pointer; }
+.game-card:hover { border-color: var(--gold); }
+.games-share { grid-column: 1 / -1; }
+.game-stage { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.game-canvas { width: min(960px, calc(100vw - 80px), calc((100vh - 190px) * 16 / 9)); aspect-ratio: 16 / 9; image-rendering: pixelated; border-radius: 10px; background: #000; outline: none; }
+.game-result { position: absolute; inset: 0 0 24px 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; background: rgba(10, 7, 5, 0.78); border-radius: 10px; animation: fade 0.2s; }
+.game-score { font-family: var(--pixel); font-size: 34px; color: var(--gold-2); }
+.game-board { width: min(300px, 80%); display: flex; flex-direction: column; gap: 3px; margin: 6px 0; max-height: 200px; overflow: auto; }
+.board-row { display: flex; gap: 8px; font-size: 12px; }
+.board-row .grow { flex: 1; }
+.board-row.me { color: var(--emerald-2); }

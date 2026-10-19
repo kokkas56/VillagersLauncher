@@ -193,7 +193,17 @@ export default function Settings() {
           </div>
         </div>
         <Toggle checked={s.animations !== false} onChange={(v) => set({ animations: v })} label={t('Анимации')} hint={t('Бродящие жители, дым, снег и листопад на фоне')} />
-        <Toggle checked={s.showConsole} onChange={(v) => set({ showConsole: v })} label={t('Показывать консоль игры при запуске')} />
+        <Toggle checked={!!s.musicOn} onChange={(v) => set({ musicOn: v })} label={t('Музыка в лаунчере')} hint={t('Тихий пиксельный lofi. Также кнопка ♪ внизу главного экрана')} />
+        <div className="field">
+          <span>{t('Громкость музыки')}: <b>{Math.round((s.musicVol != null ? s.musicVol : 0.25) * 100)}%</b></span>
+          <input type="range" min="0" max="100" value={Math.round((s.musicVol != null ? s.musicVol : 0.25) * 100)} onChange={(e) => set({ musicVol: +e.target.value / 100 })} />
+        </div>
+        <div className="field">
+          <span>{t('Звуки мини-игр')}: <b>{Math.round((s.sfxVol != null ? s.sfxVol : 0.35) * 100)}%</b></span>
+          <input type="range" min="0" max="100" value={Math.round((s.sfxVol != null ? s.sfxVol : 0.35) * 100)} onChange={(e) => set({ sfxVol: +e.target.value / 100 })} />
+        </div>
+        <Toggle checked={s.gameShareScores !== false} onChange={(v) => set({ gameShareScores: v })} label={t('Делиться рекордами мини-игр')} hint={t('Твой лучший результат с ником аккаунта попадёт в общую таблицу игроков сборки')} />
+        <Toggle checked={s.showConsole}onChange={(v) => set({ showConsole: v })} label={t('Показывать консоль игры при запуске')} />
         <div className="field">
           <span>{t('Потоков загрузки')}: <b>{s.downloadThreads}</b></span>
           <input type="range" min="2" max="24" value={s.downloadThreads} onChange={(e) => set({ downloadThreads: +e.target.value })} />

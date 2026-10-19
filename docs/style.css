@@ -45,7 +45,7 @@ h1 .gold { background: linear-gradient(180deg, #ffe6a6, #e6b65c 55%, #b47f2c); -
 .btn-play { position: relative; overflow: hidden; display: inline-flex; align-items: center; gap: 14px; padding: 20px 40px; border-radius: 16px; text-decoration: none; font-family: 'PS2P'; font-size: 15px; color: #052a12; background: linear-gradient(180deg, #5ef09a, #2ecc71 45%, #1e9e55); box-shadow: inset 0 2px 0 rgba(255, 255, 255, .55), inset 0 -5px 0 rgba(0, 0, 0, .22), 0 10px 40px rgba(46, 204, 113, .45), 0 0 0 1px #6ee7a0; transition: transform .15s, box-shadow .2s; }
 .btn-play:hover { transform: translateY(-2px) scale(1.02); box-shadow: inset 0 2px 0 rgba(255, 255, 255, .55), inset 0 -5px 0 rgba(0, 0, 0, .22), 0 16px 60px rgba(46, 204, 113, .6), 0 0 0 1px #9ff5c2; }
 .btn-play svg { width: 18px; height: 18px; fill: currentColor; shape-rendering: crispEdges; }
-.shine { position: absolute; inset: -40%; background: conic-gradient(from 0deg, transparent 0 70%, rgba(255, 255, 255, .5) 80%, transparent 90%); animation: spin 3.2s linear infinite; mix-blend-mode: overlay; pointer-events: none; }
+.shine { position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.18) 44%, rgba(255, 255, 255, 0.42) 50%, rgba(255, 255, 255, 0.18) 56%, transparent 65%); background-size: 260% 100%; background-repeat: no-repeat; animation: sweep 3.6s ease-in-out infinite; pointer-events: none; }
 .cta-meta { display: flex; flex-direction: column; font-size: 13px; color: var(--muted); padding: 8px 12px; border-radius: 10px; background: rgba(14, 10, 7, 0.6); }
 .perks { list-style: none; padding: 0; margin: 30px 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; }
 .perks li { padding: 10px 14px 10px 36px; border-radius: 12px; background: rgba(14, 10, 7, 0.62); border: 1px solid var(--line); position: relative; font-weight: 600; font-size: 14px; backdrop-filter: blur(6px); }
@@ -125,3 +125,5 @@ footer > * { background: rgba(14, 10, 7, .6); padding: 6px 12px; border-radius: 
 .early-banner .early-title { font-weight: 700; color: var(--gold-2); }
 .early-banner p { margin: 6px 0 10px; color: #e5d8c4; }
 .btn-donate.sm { padding: 8px 14px; font-size: 13px; }
+
+@keyframes sweep { 0% { background-position: 130% 0; } 55%, 100% { background-position: -30% 0; } }

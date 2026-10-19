@@ -34,6 +34,13 @@ const DEFAULTS = {
   pinnedPackVersion: null, // null = всегда последняя
   pinnedEarly: false, // закреплённая версия — из раннего доступа
   useEarly: true, // получать ранние версии, если есть доступ
+  scene: 'village', // сцена на фоне: village | zombies | prison | fair | mine
+  sceneAuto: false, // сцены меняются сами
+  musicOn: false, // тихая музыка в лаунчере
+  musicVol: 0.25,
+  sfxVol: 0.35, // звуки мини-игр
+  gameBest: {}, // лучшие результаты мини-игр
+  gameShareScores: true, // отправлять рекорды в общую таблицу
   disabledOptional: [],
   downloadThreads: 8,
   // Публичный репозиторий сборки (откуда качают все)
