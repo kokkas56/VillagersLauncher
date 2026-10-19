@@ -115,10 +115,15 @@ function handle(ch, fn) {
 }
 
 // «Студия» автора: сцены, сборка, живая связь с игрой
-const studioApi = require('./studio.cjs')({ handle, send, store });
+// Студия — только у автора: режим автора + сохранённый токен GitHub (без них любой вызов studio:* отклоняется)
+const authorOnly = (name, fn) => handle(name, (...a) => {
+  if (!store.get().authorMode || !store.getSecret('githubToken')) throw new Error('Студия только для автора сборки');
+  return fn(...a);
+});
+const studioApi = require('./studio.cjs')({ handle: authorOnly, send, store });
 // отдельное окно «Студия Кокка» (как Cinema 4D) и встраивание окна игры в него
 studioWins = require('./studio-window.cjs')({
-  handle, store, dev: DEV, getGame: () => game, linkInfo: () => studioApi.info(), mainWindow: () => win,
+  handle: authorOnly, store, dev: DEV, getGame: () => game, linkInfo: () => studioApi.info(), mainWindow: () => win,
   log: (l) => console.log('[studio] ' + l)
 });
 
