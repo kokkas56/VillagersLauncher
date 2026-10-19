@@ -5,7 +5,7 @@
 import { drawText, textWidth, drawInt, intWidth, drawLabel, labelWidth, drawIcon } from './pixfont.js';
 import {
   W, H, FLOOR, ANVIL_X, SMITH_X, DIG_X, CROUCH_X, CRATE_X, TUN_Y, TUN_H, SHAFT_LEN, TUN_LEN, SEGS, SHIFT,
-  AUTHOR_NEED, FREE_NEED, needOf, SHOVELS, ITEMS, PRISONS, REWARD_AT, ARTEFACTS, DAILY
+  authorNeedOf, FREE_NEED, needOf, EXPECT_TOOL, SHOVELS, ITEMS, PRISONS, REWARD_AT, ARTEFACTS, DAILY
 } from './prison/config.js';
 import { freshData, readRoot, buildRoot, rollDaily, albumCount, hasArt, addArt, rewardsFor } from './prison/progress.js';
 import { alphaTable, pickA, rng, drawArt, drawIco } from './prison/art.js';
@@ -104,8 +104,8 @@ export default {
     loadSave();
     checkDay();
     const isFree = () => !variant && D.cur > 10;
-    const curNeed = () => (authorMode ? AUTHOR_NEED : isFree() ? FREE_NEED : needOf(Math.min(10, D.cur)));
-    const toolMul = () => SHOVELS[D.tool].mul;
+    const curNeed = () => (isFree() ? (authorMode ? 30 : FREE_NEED) : authorMode ? authorNeedOf(Math.min(10, D.cur)) : needOf(Math.min(10, D.cur)));
+    const toolMul = () => (authorMode ? Math.max(SHOVELS[D.tool].mul, EXPECT_TOOL[Math.min(10, D.cur) - 1]) : SHOVELS[D.tool].mul);
 
     // ---------- Кокк ----------
     let kokk = buildKokk(null);
@@ -500,7 +500,14 @@ export default {
       }
       if (g.post) {
         // часовой: стоит, иногда оборачивается (с предупреждением «?»)
-        if (g.state === 'suspect') { if (g.t > 0.65) { g.dir = -g.dir; g.state = 'stand'; g.t = 0; g.len = 2.2 + rand() * 3 - k; } }
+        if (g.state === 'suspect') {
+          if (g.t > 0.65) {
+            g.dir = -g.dir; g.state = 'stand'; g.t = 0;
+            // к тайнику смотрит недолго, в другую сторону — подольше
+            const toward = (DIG_X + 5 - g.x) * g.dir > 0;
+            g.len = toward ? 0.9 + rand() * 1.2 + k * 0.6 : 3.5 + rand() * 3.5 - k;
+          }
+        }
         else if (g.state === 'stand') { if (g.t > g.len) { g.state = 'suspect'; g.t = 0; } }
         else { g.state = 'stand'; g.t = 0; g.len = 2 + rand() * 2; g.x = g.home; }
         return;
@@ -584,7 +591,7 @@ export default {
         if (b.t > b.len) {
           b.st = 'walk'; b.t = 0;
           // в смене звери чаще подбираются к тайнику
-          if (play && rand() < 0.4) b.tx = Math.max(b.min, Math.min(b.max, DIG_X + 5 + (rand() - 0.5) * 50));
+          if (play && rand() < 0.25) b.tx = Math.max(b.min, Math.min(b.max, DIG_X + 5 + (rand() - 0.5) * 60));
           else b.tx = b.min + rand() * (b.max - b.min);
         }
       } else if (b.st === 'warn') {
@@ -928,6 +935,7 @@ export default {
       saveT += dt;
       dayT += dt;
       if (dayT > 30) { dayT = 0; checkDay(); }
+      if (D.dug >= curNeed()) { startEscape(); return; }
       if (time >= SHIFT) { finish(true, 'shift'); return; }
       if (hitCd > 0) hitCd -= dt;
       if (lastQT > 0) lastQT -= dt;
@@ -947,7 +955,7 @@ export default {
       }
       // перемещение между наковальней и лазом
       const want = (digHoldKey || digHoldPtr) && faintT <= 0;
-      const swT = hz.slip ? 0.5 : 0.12;
+      const swT = hz.slip ? 0.34 : 0.12;
       sw = want ? Math.min(1, sw + dt / swT) : Math.max(0, sw - dt / swT);
       tileOpen = sw > 0 ? 1 : 0;
       digging = want && sw >= 1 && stunT <= 0;
@@ -1140,7 +1148,7 @@ export default {
       drawBack(ctx, S, clock, dark, bellT, crateN);
     };
 
-    const tunnelFrac = () => (variant ? 0 : Math.max(0, Math.min(1, D.dug / curNeed())));
+    const tunnelFrac = () => (variant ? 0 : phase === 'escape' && !escArrived ? 1 : Math.max(0, Math.min(1, D.dug / curNeed())));
     const drawTunnel = () => {
       const f = tunnelFrac();
       const P = S.pal;

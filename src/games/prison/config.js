@@ -16,16 +16,19 @@ export const SHAFT_LEN = TUN_Y + TUN_H - (FLOOR + 4);
 export const TUN_LEN = SHAFT_LEN + (W - 2 - (DIG_X + 10)); // длина всего хода в пикселях
 export const SEGS = 24; // пролётов (крепей) в одном подкопе
 export const SHIFT = 180; // смена, секунд
-export const AUTHOR_NEED = 42; // рабочих секунд копания в режиме автора (~1 мин реального времени)
+// режим автора: подкоп за ~1 минуту реальной игры (в 24–150 раз быстрее, чем у игрока)
+export const AUTHOR_MIN = 27;
 export const FREE_NEED = 420; // «испытание» после свободы
 
-// Часы реальной игры на каждую тюрьму (сумма 15 ч) и доля копания в реальном времени,
-// измеренная «разумным» ботом (копает, когда не видят, кует остальное время, иногда попадается).
+// Часы реальной игры на каждую тюрьму (сумма 15 ч) и доля времени, когда реально удаётся копать.
+// Доля измерена ботом-«разумным игроком» (копает, только когда никто не видит, остальное время кует,
+// пользуется хитростями) и умножена на 0.85 — живой игрок чуть медленнее и иногда попадается.
 export const HOURS = [0.4, 0.6, 0.9, 1.1, 1.4, 1.6, 1.9, 2.2, 2.4, 2.5];
-export const DIG_SHARE = [0.52, 0.42, 0.42, 0.38, 0.36, 0.38, 0.36, 0.33, 0.32, 0.3];
+export const DIG_SHARE = [0.39, 0.19, 0.32, 0.27, 0.13, 0.225, 0.225, 0.265, 0.275, 0.145];
 // какой лопатой игрок обычно копает в этой тюрьме (множитель скорости)
 export const EXPECT_TOOL = [1, 1.1, 1.1, 1.22, 1.22, 1.36, 1.36, 1.52, 1.52, 1.7];
 export const needOf = (p) => Math.round(HOURS[p - 1] * 3600 * DIG_SHARE[p - 1] * EXPECT_TOOL[p - 1]);
+export const authorNeedOf = (p) => Math.max(6, Math.round(AUTHOR_MIN * DIG_SHARE[p - 1] * EXPECT_TOOL[p - 1]));
 
 // Лопаты — постоянные улучшения
 export const SHOVELS = [
@@ -62,17 +65,17 @@ export const PRISONS = [
     pal: { wall: '#56585e', wall2: '#3e4046', brick: '#64666c', brick2: '#4a4c52', floor: '#5a5650', floor2: '#6e6a62', earth: '#463a30', earth2: '#56483a', tun: '#160e0c', beam: '#5e4630', fire: '#ff9a40', fire2: '#fff0a0', glow: [255, 160, 70] },
     guards: [
       { look: 'knight', x: 250, min: 30, max: 296, spd: 22, vis: 96, sus: 0.12 },
-      { look: 'houndman', x: 70, post: true, min: 60, max: 80, spd: 0, vis: 70, sus: 0.22 }
+      { look: 'houndman', x: 62, post: true, min: 60, max: 80, spd: 0, vis: 64, sus: 0.22 }
     ],
-    beasts: [{ kind: 'dog', x: 200, min: 130, max: 290, spd: 34, rad: 30 }],
+    beasts: [{ kind: 'dog', x: 200, min: 130, max: 290, spd: 34, rad: 26 }],
     seers: [], wards: [], hazards: {},
     ambient: 'banner'
   },
   {
     n: 3, name: 'Болотный острог', short: 'Острог', warden: 'Надсмотрщик с арбалетом',
     pal: { wall: '#3c3a26', wall2: '#2c2a1a', brick: '#55502e', brick2: '#47422a', floor: '#3e4428', floor2: '#4e5632', earth: '#2e2a1a', earth2: '#3a3622', tun: '#0e0c06', beam: '#5a4a2a', fire: '#ffa040', fire2: '#fff0a0', glow: [230, 190, 90] },
-    guards: [{ look: 'swamp', x: 240, min: 30, max: 296, spd: 22, vis: 104, sus: 0.13 }],
-    beasts: [{ kind: 'croc', x: 70, min: 60, max: 150, spd: 12, rad: 34, pond: true }],
+    guards: [{ look: 'swamp', x: 240, min: 30, max: 296, spd: 22, vis: 112, sus: 0.14 }],
+    beasts: [{ kind: 'croc', x: 70, min: 60, max: 170, spd: 12, rad: 28, pond: true }],
     seers: [], wards: [], hazards: {},
     ambient: 'swamp'
   },
@@ -92,9 +95,9 @@ export const PRISONS = [
     pal: { wall: '#8ab0cc', wall2: '#6a90ae', brick: '#a6c8e0', brick2: '#7ca2c0', floor: '#c8e4f4', floor2: '#e8f6ff', earth: '#5a7088', earth2: '#6e86a0', tun: '#1a2232', beam: '#7a6a5a', fire: '#ffa860', fire2: '#fff0c0', glow: [255, 180, 120] },
     guards: [
       { look: 'north', x: 240, min: 30, max: 296, spd: 22, vis: 104, sus: 0.14 },
-      { look: 'north2', x: 60, post: true, min: 50, max: 70, spd: 0, vis: 78, sus: 0.2 }
+      { look: 'north2', x: 52, post: true, min: 40, max: 60, spd: 0, vis: 72, sus: 0.2 }
     ],
-    beasts: [{ kind: 'wolf', x: 220, min: 120, max: 296, spd: 30, rad: 32 }],
+    beasts: [{ kind: 'wolf', x: 220, min: 120, max: 296, spd: 30, rad: 26 }],
     seers: [], wards: [], hazards: { slip: 1 },
     ambient: 'snow'
   },
@@ -103,10 +106,10 @@ export const PRISONS = [
     pal: { wall: '#5a3e26', wall2: '#46301c', brick: '#6a4a2e', brick2: '#523820', floor: '#7a5634', floor2: '#8e6840', earth: '#3a2a1a', earth2: '#2a3a44', tun: '#120c08', beam: '#8a6a40', fire: '#ffa040', fire2: '#ffe8a0', glow: [255, 170, 80] },
     guards: [
       { look: 'pirate', x: 240, min: 30, max: 296, spd: 24, vis: 100, sus: 0.15 },
-      { look: 'cabin', x: 80, min: 40, max: 200, spd: 26, vis: 70, sus: 0.18 }
+      { look: 'cabin', x: 220, min: 150, max: 300, spd: 26, vis: 60, sus: 0.18 }
     ],
     beasts: [{ kind: 'rat', x: 200, min: 120, max: 300, spd: 40, rad: 22 }, { kind: 'rat', x: 90, min: 40, max: 200, spd: 40, rad: 22 }],
-    seers: [{ kind: 'parrot', x: 200, y: 54, rad: 48 }],
+    seers: [{ kind: 'parrot', x: 200, y: 54, rad: 40 }],
     wards: [], hazards: { sway: 1 },
     ambient: 'sea'
   },
@@ -115,7 +118,7 @@ export const PRISONS = [
     pal: { wall: '#3a3430', wall2: '#2a2522', brick: '#4a423c', brick2: '#342e2a', floor: '#4e463e', floor2: '#5e554c', earth: '#2e2620', earth2: '#3a3028', tun: '#0c0806', beam: '#7a5a34', fire: '#ff7020', fire2: '#ffd060', glow: [255, 130, 50] },
     guards: [
       { look: 'dwarf', x: 240, min: 30, max: 296, spd: 18, vis: 120, sus: 0.15 },
-      { look: 'dwarf2', x: 60, min: 30, max: 200, spd: 20, vis: 90, sus: 0.16 }
+      { look: 'dwarf2', x: 260, min: 150, max: 300, spd: 20, vis: 90, sus: 0.16 }
     ],
     beasts: [], seers: [{ kind: 'bat', x: 200, y: 40, rad: 0 }],
     wards: [], hazards: { quake: 1 },
@@ -124,18 +127,18 @@ export const PRISONS = [
   {
     n: 8, name: 'Башня магов', short: 'Башня', warden: 'Каменный голем',
     pal: { wall: '#3a2e4e', wall2: '#2a2040', brick: '#4a3c62', brick2: '#34284a', floor: '#4a3e5e', floor2: '#5e4e76', earth: '#2a2232', earth2: '#382c42', tun: '#0e0a14', beam: '#6a5a7a', fire: '#c060ff', fire2: '#f0c0ff', glow: [190, 110, 255] },
-    guards: [{ look: 'golem', x: 240, min: 30, max: 296, spd: 13, vis: 130, sus: 0.12 }],
+    guards: [{ look: 'golem', x: 240, min: 30, max: 296, spd: 13, vis: 140, sus: 0.13 }],
     beasts: [],
-    seers: [{ kind: 'wisp', x: 200, y: 70, rad: 36 }, { kind: 'wisp', x: 90, y: 90, rad: 36 }],
+    seers: [{ kind: 'wisp', x: 200, y: 70, rad: 40 }, { kind: 'wisp', x: 90, y: 90, rad: 40 }],
     wards: [{ x: 60, per: 9, off: 0 }, { x: 250, per: 11, off: 4.5 }], hazards: {},
     ambient: 'arcane'
   },
   {
     n: 9, name: 'Царство теней', short: 'Тени', warden: 'Тюремщик-тень',
     pal: { wall: '#1e1a2a', wall2: '#141020', brick: '#2a2438', brick2: '#1a1626', floor: '#2a2436', floor2: '#3a3248', earth: '#16121e', earth2: '#201a2a', tun: '#050308', beam: '#4a405a', fire: '#60a0ff', fire2: '#d0f0ff', glow: [110, 160, 255] },
-    guards: [{ look: 'shade', x: 240, min: 30, max: 296, spd: 24, vis: 110, sus: 0.16 }],
+    guards: [{ look: 'shade', x: 240, min: 30, max: 296, spd: 26, vis: 118, sus: 0.17 }],
     beasts: [],
-    seers: [{ kind: 'ghost', x: 220, y: 90, rad: 42, through: 1 }, { kind: 'ghost', x: 60, y: 70, rad: 42, through: 1 }],
+    seers: [{ kind: 'ghost', x: 220, y: 90, rad: 52, through: 1 }, { kind: 'ghost', x: 60, y: 70, rad: 52, through: 1 }],
     wards: [], hazards: {},
     ambient: 'shadow'
   },
@@ -144,7 +147,7 @@ export const PRISONS = [
     pal: { wall: '#4a2a2a', wall2: '#361e1e', brick: '#5a3434', brick2: '#422626', floor: '#6a5a40', floor2: '#8a7650', earth: '#2e2218', earth2: '#3a2c20', tun: '#0c0806', beam: '#c8a040', fire: '#ffb040', fire2: '#fff0b0', glow: [255, 200, 110] },
     guards: [
       { look: 'royal', x: 240, min: 30, max: 296, spd: 24, vis: 112, sus: 0.16 },
-      { look: 'royal', x: 50, post: true, min: 40, max: 60, spd: 0, vis: 86, sus: 0.22 }
+      { look: 'royal', x: 40, post: true, min: 30, max: 50, spd: 0, vis: 84, sus: 0.22 }
     ],
     beasts: [],
     seers: [{ kind: 'ghost', x: 200, y: 80, rad: 38, through: 1 }],
