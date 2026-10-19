@@ -195,6 +195,7 @@ handle('early:status', async () => { early.reset(); return early.status(); });
 handle('early:releases', () => early.releases());
 handle('early:config', () => early.config(true));
 handle('early:setConfig', (patch) => early.setConfig(patch));
+handle('pack:closeToEarly', async (tag) => { try { return await pack.closeToEarly(tag, progress); } finally { progress(null); } });
 handle('early:redeem', (code) => early.redeem(code));
 handle('early:author', async () => {
   const m = early.masterNow();

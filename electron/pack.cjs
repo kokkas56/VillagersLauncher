@@ -535,6 +535,53 @@ async function openEarly(tag, progress = () => {}) {
   return true;
 }
 
+/** Автор: уже открытый выпуск pack-N → снова ранний доступ (early-N, файлы этого выпуска зашифрованы).
+ *  У кого версия уже скачана — играют дальше; скачать её смогут только с кодом. Обратное — openEarly. */
+async function closeToEarly(tag, progress = () => {}) {
+  const token = needToken();
+  const pub = repo();
+  const pr = await gh('GET', `/repos/${pub}/releases/tags/${tag}`, token);
+  const m = await manifestByTag(tag);
+  const version = m.version;
+  const newTag = `early-${version}`;
+  let er = null;
+  try { er = await gh('GET', `/repos/${pub}/releases/tags/${newTag}`, token); } catch (_) {}
+  if (er) throw new Error('Ранний выпуск ' + newTag + ' уже есть');
+  const title = String(pr.name || '').replace(/^#\d+\s*/, '');
+  const prep = await early.prepareRelease(newTag, version, { title, freeAt: null });
+  er = await gh('POST', `/repos/${pub}/releases`, token, { tag_name: newTag, name: '★ #' + version + (title ? ' ' + title : ''), body: 'Ранний доступ (файлы зашифрованы).', draft: true, prerelease: true });
+  try {
+    const assets = new Map((pr.assets || []).map((a) => [a.name, a]));
+    const mine = m.files.filter((f) => f.url && f.url.includes(`/releases/download/${tag}/`));
+    let n = 0;
+    for (const f of mine) {
+      const name = decodeURIComponent(f.url.split('/').pop());
+      const a = assets.get(name);
+      if (!a) throw new Error('В выпуске нет файла ' + name);
+      const res = await netu.fetchRaw(a.browser_download_url);
+      if (!res.ok) throw new Error('Не скачался ' + name + ': HTTP ' + res.status);
+      const enc = early.encrypt(prep.key, Buffer.from(await res.arrayBuffer()));
+      await gh('POST', `https://uploads.github.com/repos/${pub}/releases/${er.id}/assets?name=${encodeURIComponent(name)}`, token, enc, { 'Content-Type': 'application/octet-stream' }).catch((e) => { if (e.status !== 422) throw e; });
+      f.url = `https://github.com/${pub}/releases/download/${newTag}/${name}`;
+      f.enc = newTag;
+      progress({ stage: 'publish', text: `Закрываю #${version}: ${++n}/${mine.length}`, bytes: n, total: mine.length || 1 });
+    }
+    m.tag = newTag;
+    m.early = { freeAt: null };
+    await gh('POST', `https://uploads.github.com/repos/${pub}/releases/${er.id}/assets?name=manifest.enc`, token, early.encrypt(prep.key, Buffer.from(JSON.stringify(m))), { 'Content-Type': 'application/octet-stream' });
+    await prep.commit();
+    await gh('PATCH', `/repos/${pub}/releases/${er.id}`, token, { draft: false, prerelease: true, make_latest: 'false' });
+  } catch (e) {
+    await gh('DELETE', `/repos/${pub}/releases/${er.id}`, token).catch(() => {});
+    throw e;
+  }
+  // открытый выпуск убираем (файлы старых версий, на которые ссылаются другие выпуски, не трогаем)
+  await gh('DELETE', `/repos/${pub}/releases/${pr.id}`, token).catch(() => {});
+  await gh('DELETE', `/repos/${pub}/git/refs/tags/${encodeURIComponent(tag)}`, token).catch(() => {});
+  try { const c = await early.config(true); if (!c.latest || c.latest.version < version) await early.setConfig({ latest: { version, title, freeAt: null } }); } catch (_) {}
+  return newTag;
+}
+
 /** Автор: открыть всем ранние выпуски, чья дата наступила (при запуске лаунчера автора). */
 async function openDue(progress) {
   if (!store.get().authorMode || !store.getSecret('githubToken') || !early.masters().length) return [];
@@ -724,4 +771,4 @@ async function checkToken(token) {
   return { ok: true, repo: r.full_name };
 }
 
-module.exports = { readCatalog, writeCatalog, chosenManifest, authorEarlyReleases, openEarly, openDue, setEarlyFreeAt, deleteEarly, readNews, applyNews, authorNews, setNews, latestManifest, manifestByTag, listReleases, sync, localChanges, publish, makeLatest, deleteRelease, hideRelease, renameRelease, checkToken, readState, isAuthorHome, scanSource };
+module.exports = { closeToEarly, readCatalog, writeCatalog, chosenManifest, authorEarlyReleases, openEarly, openDue, setEarlyFreeAt, deleteEarly, readNews, applyNews, authorNews, setNews, latestManifest, manifestByTag, listReleases, sync, localChanges, publish, makeLatest, deleteRelease, hideRelease, renameRelease, checkToken, readState, isAuthorHome, scanSource };
