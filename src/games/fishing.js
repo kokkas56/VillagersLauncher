@@ -1,18 +1,23 @@
 // Мини-игра «Рыбалка» и живой фон «Озеро».
-// Фон (idle): причал на озере, старый рыбак сам спокойно рыбачит — забрасывает, ждёт, иногда
-// вытаскивает рыбку и кидает в корзину, иногда ничего. Утки, стрекозы (ночью — светлячки),
-// всплески рыбы, облака; день/закат/ночь по реальным часам (api.env().dark).
-// Вступление: игрок приходит по причалу, старик сматывает леску, отдаёт удочку и садится
-// на ящик у корзины смотреть. Игра: 10 забросов (держи — сила, клик — подсечка, держи — подмотка).
+// Фон (idle): причал на текущем озере игрока, старый рыбак сам спокойно рыбачит — забрасывает, ждёт,
+// иногда вытаскивает рыбку и кидает в корзину. Утки, стрекозы (ночью — светлячки), дождь/облака,
+// день/закат/ночь по реальным часам (api.env().dark).
+// Вступление: игрок приходит по причалу, старик отдаёт удочку и садится на ящик.
+// Игра — бесконечная: забросы без лимита, забег кончается, когда иссякают силы (термос ~3–5 мин).
+// Прогресс (api.load/api.save): уровень рыболова, 4 озера × 3 места, 28 видов (4 легенды с особым
+// вываживанием), альбом, снасти за монеты, 3 задания дня, награды лаунчера.
 // Выход: игрок отдаёт удочку и улов старику, уходит; старик садится и рыбачит дальше.
 // Всё рисуется целочисленными fillRect, цвета из кэша — без выделений памяти в кадре.
 
-import { drawNumber, drawText, textWidth, drawIcon, rgbStr, rgbMix } from './pixfont.js';
+import { drawText, textWidth, drawIcon, rgbStr, rgbMix, drawLabel, labelWidth, drawInt, intWidth } from './pixfont.js';
+import {
+  sprite, drawSprite, drawSilhouette, SPECIES, LAKES, TIERS, SPOT_NAMES, BOOT, CHEST, MINNOW, UPGRADES, xpNeed, ALBUM_TOTAL, MAX_LVL
+} from './fishing/data.js';
+import { createProgress, albumCount, upgradePrice } from './fishing/progress.js';
 
 const W = 320;
 const H = 180;
 const HORIZON = 92;
-const CASTS = 10;
 
 const PIER_X = 232;
 const DECK_Y = 118;
@@ -23,104 +28,62 @@ const BUCKET_X = 268; // ведро игрока
 const EXIT_X = 336; // за правым краем
 const MAN_Y = DECK_Y - 12;
 
+const FAT_MAX = 100;
+const FAT_CAST = 4;
+const FAT_SEC = 0.15;
+const CLOCK_SPEED = 0.01; // смена времени суток в игре: полный круг ~400 с
+
 const lerp = (a, b, t) => a + (b - a) * t;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
-// ---------- спрайты улова ----------
-function sprite(pal, rows) {
-  const r = [];
-  for (let y = 0; y < rows.length; y++) {
-    const row = rows[y];
-    let x = 0;
-    while (x < row.length) {
-      const ch = row[x];
-      if (ch !== '.' && pal[ch]) {
-        let e = x;
-        while (e < row.length && row[e] === ch) e++;
-        r.push(pal[ch], x, y, e - x);
-        x = e;
-      } else x++;
-    }
-  }
-  let w = 0;
-  for (let i1 = 0; i1 < rows.length; i1++) { const row = rows[i1]; w = Math.max(w, row.length); }
-  return { w, h: rows.length, r };
-}
-function drawSprite(ctx, sp, x, y, s = 1, flip = false) {
-  x = Math.round(x);
-  y = Math.round(y);
-  const r = sp.r;
-  for (let j = 0; j < r.length; j += 4) {
-    ctx.fillStyle = r[j];
-    const px = flip ? sp.w - r[j + 1] - r[j + 3] : r[j + 1];
-    ctx.fillRect(x + px * s, y + r[j + 2] * s, r[j + 3] * s, s);
-  }
-}
-
-// типы улова: очки, поведение рыбы в шкале, размер зоны, скорость наполнения
-const KINDS = {
-  boot: {
-    pts: 2, speed: 0.22, jumpy: 0.25, zone: 0.36, gain: 0.34, drain: 0.16, dip: 1, sfx: 'click',
-    sp: sprite({ a: '#6b4a2e', b: '#c8b080', c: '#3a2a1e', d: '#8a6440' }, [
-      '.aaa....', '.aba....', '.ada....', '.aaa....', '.aaaaa..', 'aaaaaaaa', 'cccccccc'
-    ])
-  },
-  small: {
-    pts: 10, speed: 0.55, jumpy: 0.6, zone: 0.32, gain: 0.3, drain: 0.18, dip: 2, sfx: 'coin',
-    sp: sprite({ a: '#c9a640', b: '#efe0a0', c: '#6b5a20', e: '#1a1410', t: '#d9763a' }, [
-      '...aaa....', '.aacacaa.t', 'eaacacaatt', '.aabbbaa.t', '...bbb....'
-    ])
-  },
-  large: {
-    pts: 25, speed: 0.8, jumpy: 0.9, zone: 0.27, gain: 0.25, drain: 0.2, dip: 3, sfx: 'coin',
-    sp: sprite({ a: '#5f8a5a', b: '#c8d8a8', c: '#2f5a32', e: '#141a10', t: '#4a7a46' }, [
-      '....aaaaaa....', '.aaacacaacaa.t', 'eaaaaaaaaaaatt', '.abbbbbbbbba.t', '....bbbbbb....'
-    ])
-  },
-  chest: {
-    pts: 40, speed: 0.45, jumpy: 0.5, zone: 0.25, gain: 0.22, drain: 0.2, dip: 3, sfx: 'win',
-    sp: sprite({ a: '#5a3a1e', b: '#9a6a34', c: '#3a2a18', g: '#f0c040', h: '#fff2a0' }, [
-      '.aaaaaaaa.', 'abbbbbbbba', 'cccccccccc', 'abbbgbbbba', 'abbbhbbbba', 'abbbbbbbba', 'aaaaaaaaaa'
-    ])
-  },
-  golden: {
-    pts: 75, speed: 1.25, jumpy: 1.5, zone: 0.24, gain: 0.24, drain: 0.22, dip: 4, sfx: 'win',
-    sp: sprite({ a: '#f2c230', s: '#fff6b0', c: '#c08a10', b: '#ffe070', t: '#e0a020', e: '#3a2a00' }, [
-      '...sss....', '.ascaasa.t', 'eaaaaaaatt', '.aabbbaa.t', '...bbb....'
-    ])
-  }
+// ---------- мелкие иконки HUD ----------
+const IC = {
+  book: sprite({ a: '#8a4a2a', b: '#e8dcc0', c: '#5a2a18' }, ['aaaaaaa', 'abbcbba', 'abbcbba', 'abbcbba', 'abbcbba', 'aaaaaaa']),
+  bag: sprite({ a: '#a8723e', b: '#7a4e2a', c: '#ffd34a' }, ['..b.b..', '.b...b.', 'aaaaaaa', 'aaacaaa', 'aaaaaaa', '.aaaaa.']),
+  map: sprite({ a: '#d8c890', b: '#5ab0e0', c: '#7a6a40', d: '#e04848' }, ['aaaaaaa', 'abbaaca', 'abbbada', 'aabbaaa', 'aaabbaa', 'aaaaaaa']),
+  coin: sprite({ a: '#ffd34a', b: '#fff2a8', c: '#c8901e' }, ['.aaa.', 'abaac', 'abaac', 'aaaac', '.ccc.']),
+  fish: sprite({ a: '#9ad0f0', b: '#5a90c0' }, ['.aaa.b', 'aaaaab', '.aaa.b']),
+  star: sprite({ a: '#c070ff', b: '#f0d0ff' }, ['..a..', '.aba.', 'aaaaa', '.a.a.', 'a...a']),
+  chain: sprite({ a: '#c0c8d0' }, ['aa.aa', 'a.a.a', 'aa.aa']),
+  moon: sprite({ a: '#e8ecf8', b: '#9aa4c0' }, ['.aa.', 'aa..', 'aa..', 'aab.', '.aa.']),
+  sun: sprite({ a: '#ffe070', b: '#ffb030' }, ['..a..', '.bab.', 'aabaa', '.bab.', '..a..']),
+  dusk: sprite({ a: '#ff9a50', b: '#c05a50' }, ['.....', '.aaa.', 'aaaaa', 'bbbbb', '.....']),
+  cloud: sprite({ a: '#d8dce4', b: '#a0a8b8' }, ['.aa..', 'aaaa.', 'aaaaa', 'bbbbb']),
+  rain: sprite({ a: '#a0a8b8', b: '#7ab0e0' }, ['.aa..', 'aaaaa', 'b.b.b', '.b.b.']),
+  pin: sprite({ a: '#5ab0e0' }, ['.a.', 'aaa', '.a.']),
+  check: sprite({ a: '#60e070' }, ['....a', '...a.', 'a.a..', '.a...']),
+  lock: sprite({ a: '#8a8070', b: '#5a5048' }, ['.aa.', 'a..a', 'bbbb', 'bbbb']),
+  flask: sprite({ a: '#c0c8d0', b: '#e05a40' }, ['.aa.', 'abba', 'abba', 'abba', '.aa.']),
+  gold: sprite({ a: '#ffd34a', b: '#c8901e' }, ['.a.', 'aab', '.b.'])
 };
-// маленькая рыбка для всплесков
-const MINNOW = sprite({ a: '#9ab0b8', b: '#d8e4e8', t: '#7a9098' }, ['.aaa.t', 'abbbaa', '.aaa.t']);
+const UPG_ICON = [
+  sprite({ a: '#a8723e', b: '#7a4e2a' }, ['......a', '.....a.', '....a..', '...a...', '..a....', '.b.....', 'b......']),
+  sprite({ a: '#e8e8f0', b: '#9aa0b0' }, ['.aaa.', 'a...a', 'a.b.a', 'a...a', '.aaa.']),
+  sprite({ a: '#9aa4b2', b: '#5e6878', c: '#2a2e36' }, ['.aaa.', 'abbba', 'abcba', 'abbba', '.aaa.']),
+  sprite({ a: '#e0a060', b: '#a06030' }, ['..a..', '.aba.', 'aabaa', '.aba.', '..a..']),
+  IC.flask
+];
+// подсказки снастей в две строки
+const HINTS = UPGRADES.map((u) => { const i = u.hint.indexOf(' '); return i > 0 ? [u.hint.slice(0, i), u.hint.slice(i + 1)] : [u.hint, '']; });
+const DAILY_ICON = [IC.fish, IC.fish, IC.star, IC.coin, IC.chain, IC.moon, IC.pin];
 
-function pickKind(d, rand) {
-  // d = дальность заброса 0..1: дальше — больше шанс на редкое
-  const w0 = 18 - 12 * d, w1 = 50 - 22 * d, w2 = 22 + 12 * d, w3 = 5 + 9 * d, w4 = 2 + 9 * d;
-  let v = rand() * (w0 + w1 + w2 + w3 + w4);
-  if ((v -= w0) <= 0) return 'boot';
-  if ((v -= w1) <= 0) return 'small';
-  if ((v -= w2) <= 0) return 'large';
-  if ((v -= w3) <= 0) return 'chest';
-  return 'golden';
-}
-// улов старика в фоне: в основном мелочь, редко — золотая
-function npcKind(rand) {
-  const v = rand();
-  if (v < 0.16) return 'boot';
-  if (v < 0.78) return 'small';
-  if (v < 0.97) return 'large';
-  return 'golden';
-}
-
-// палитры: день -> закат -> ночь (s = 0..2)
-const DAY = { top: [96, 158, 226], bot: [196, 226, 246], water: [62, 120, 168], deep: [34, 76, 120], hill: [86, 128, 92], sun: [255, 238, 170] };
-const SET = { top: [74, 62, 132], bot: [250, 150, 90], water: [92, 82, 120], deep: [40, 36, 70], hill: [52, 44, 66], sun: [255, 170, 90] };
-const NIGHT = { top: [12, 16, 40], bot: [40, 40, 84], water: [26, 34, 66], deep: [10, 14, 34], hill: [16, 20, 34], sun: [214, 222, 250] };
-const PKEYS = ['top', 'bot', 'water', 'deep', 'hill', 'sun'];
+// палитры неба: день -> закат -> ночь (s = 0..2)
+const DAY = { top: [96, 158, 226], bot: [196, 226, 246], sun: [255, 238, 170] };
+const SET = { top: [74, 62, 132], bot: [250, 150, 90], sun: [255, 170, 90] };
+const NIGHT = { top: [12, 16, 40], bot: [40, 40, 84], sun: [214, 222, 250] };
+// облик озёр: вода, глубина, лес (день / закат / ночь)
+const LOOKS = [
+  { water: [[62, 120, 168], [92, 82, 120], [26, 34, 66]], deep: [[34, 76, 120], [40, 36, 70], [10, 14, 34]], hill: [[86, 128, 92], [52, 44, 66], [16, 20, 34]], trees: 'round' },
+  { water: [[52, 112, 120], [74, 78, 100], [20, 34, 50]], deep: [[24, 66, 72], [32, 36, 56], [8, 16, 26]], hill: [[46, 92, 62], [38, 40, 52], [10, 18, 24]], trees: 'pine' },
+  { water: [[70, 150, 190], [96, 100, 140], [24, 40, 72]], deep: [[30, 90, 140], [44, 46, 84], [8, 18, 40]], hill: [[70, 110, 96], [56, 50, 76], [16, 22, 38]], trees: 'mount' },
+  { water: [[70, 100, 104], [84, 78, 96], [22, 30, 42]], deep: [[34, 56, 60], [40, 36, 56], [10, 14, 22]], hill: [[72, 104, 80], [52, 50, 62], [16, 22, 28]], trees: 'willow' }
+];
+const MTN_C = [[120, 136, 160], [96, 80, 110], [30, 34, 56]];
 
 const WHITE = [255, 255, 255];
 const BLACK = [0, 0, 0];
 const SHADE = [30, 20, 40];
+const GREY = [110, 116, 130];
 const CLOUD_SET = [250, 190, 170];
 const CLOUD_NIGHT = [70, 76, 110];
 const PAD_C = [70, 140, 70], PAD_D = [40, 50, 50];
@@ -142,13 +105,22 @@ const HAIR_C = [96, 60, 34];
 const DUCK_BODY = [150, 110, 70], DUCK_HEAD = [40, 110, 60], DUCK_WHITE = [230, 226, 210], DUCKLING = [240, 214, 90];
 const DUCK_BEAK = [240, 150, 40];
 const DRAGON = [60, 150, 220];
+const ROCK_C = [110, 112, 120], ROCK_D = [40, 42, 52];
+const SNAG_C = [80, 60, 44], SNAG_D = [30, 24, 24];
+const CAPE_OLD = [190, 160, 60], CAPE_YOU = [60, 70, 90];
+const FOG_C = [220, 226, 230];
+
+// панели
+const PX = 16, PY = 16, PW = 288, PH = 150;
+const BTN_Y = 165;
+const BTN_X = [4, 19, 34];
 
 export default {
   id: 'fishing',
   title: 'Рыбалка',
   sceneTitle: 'Озеро',
-  desc: 'Забрось удочку, дождись поклёвки и вытащи улов — 10 забросов.',
-  controls: 'Пробел / мышь: держи — сила заброса, клик — подсечка, держи — подмотка',
+  desc: 'Бесконечная рыбалка: 4 озера, 28 видов рыб, альбом, снасти и задания дня.',
+  controls: 'Пробел / мышь: держи — сила заброса, клик — подсечка, держи — подмотка · Tab альбом · B лавка · M карта',
   mount(canvas, api) {
     canvas.width = W;
     canvas.height = H;
@@ -157,30 +129,77 @@ export default {
     const rand = Math.random;
     const prevTouch = canvas.style.touchAction;
     canvas.style.touchAction = 'none';
+    const variant = typeof api.variant === 'number' && api.variant > 0 ? api.variant : 0;
 
     const getMode = () => {
+      if (variant) return 'idle';
       if (typeof api.mode === 'function') return api.mode();
       if (typeof api.auto === 'function') return api.auto() ? 'idle' : 'play';
       return 'play';
     };
     const getEnv = () => (typeof api.env === 'function' ? api.env() : null);
 
+    // ---------- прогресс ----------
+    const P = createProgress(api);
+    P.load();
+
     // ---------- мир ----------
-    const treeline = [];
-    for (let x = 0; x < W; x += 3) treeline.push(HORIZON - 4 - Math.floor(4 + 4 * Math.sin(x / 23) + 3 * Math.sin(x / 7 + 1) + rand() * 3));
+    const treeline = new Int16Array(Math.ceil(W / 3));
+    const mtn = new Int16Array(Math.ceil(W / 2));
     const ripples = [];
     for (let i = 0; i < 26; i++) ripples.push({ rp: 1, x: rand() * W, y: HORIZON + 3 + rand() * (H - HORIZON - 6), w: 3 + Math.floor(rand() * 7), v: 2 + rand() * 4, p: rand() * 6 });
     const reeds = [];
-    for (let i = 0; i < 9; i++) reeds.push({ x: 2 + Math.floor(rand() * 34), h: 10 + Math.floor(rand() * 14), p: rand() * 6 });
-    // вторая куртина камыша у причала (видна из-под интерфейса)
-    for (let i = 0; i < 6; i++) reeds.push({ x: 212 + Math.floor(rand() * 16), h: 8 + Math.floor(rand() * 10), p: rand() * 6 });
+    for (let i = 0; i < 24; i++) reeds.push({ on: false, x: 0, h: 0, p: 0 });
     const pads = [];
-    for (let i = 0; i < 4; i++) pads.push({ x: 20 + Math.floor(rand() * 140), y: 150 + Math.floor(rand() * 22) });
-    pads.push({ x: 178, y: 138 }, { x: 196, y: 160 });
+    for (let i = 0; i < 9; i++) pads.push({ on: false, x: 0, y: 0 });
+    const rocks = [];
+    for (let i = 0; i < 4; i++) rocks.push({ on: false, x: 0, y: 0, w: 0 });
     const clouds = [];
-    for (let i = 0; i < 4; i++) clouds.push({ cl: 1, x: rand() * W, y: 10 + rand() * 40, w: 22 + rand() * 30, v: 1 + rand() * 2 });
+    for (let i = 0; i < 5; i++) clouds.push({ cl: 1, x: rand() * W, y: 10 + rand() * 40, w: 22 + rand() * 30, v: 1 + rand() * 2 });
     const stars = [];
     for (let i = 0; i < 40; i++) stars.push({ x: Math.floor(rand() * W), y: Math.floor(rand() * (HORIZON - 14)), p: rand() * 6, big: rand() > 0.9 });
+    const drops = [];
+    for (let i = 0; i < 44; i++) drops.push({ x: rand() * W, y: rand() * H, v: 90 + rand() * 60, gy: HORIZON + 4 + rand() * (H - HORIZON - 6) });
+    const fogs = [];
+    for (let i = 0; i < 4; i++) fogs.push({ x: rand() * W, y: HORIZON - 10 + i * 9, w: 90 + rand() * 80, v: 1.5 + rand() * 2 });
+    let scene = { lake: -1, spot: -1, snag: false };
+
+    const buildScene = (lake, spot) => {
+      scene.lake = lake;
+      scene.spot = spot;
+      const look = LOOKS[lake];
+      const R = Math.random;
+      for (let i = 0; i < treeline.length; i++) {
+        const x = i * 3;
+        let h;
+        if (look.trees === 'pine') h = 6 + (i % 4 === 1 ? 6 : i % 4 === 2 ? 9 : i % 4 === 3 ? 4 : 1) + Math.floor(3 * Math.sin(x / 31) + R() * 3);
+        else if (look.trees === 'mount') h = 3 + (i % 3 === 1 ? 5 : 2) + Math.floor(R() * 2);
+        else if (look.trees === 'willow') h = Math.floor(9 + 6 * Math.abs(Math.sin(x / 26)) + 2 * Math.sin(x / 9) + R() * 2);
+        else h = Math.floor(4 + 4 * Math.sin(x / 23) + 3 * Math.sin(x / 7 + 1) + R() * 3) + 4;
+        treeline[i] = HORIZON - 4 - h;
+      }
+      for (let i = 0; i < mtn.length; i++) {
+        const x = i * 2;
+        const a = 38 - Math.abs(((x + 30) % 120) - 60) * 0.9;
+        const b = 30 - Math.abs(((x + 95) % 90) - 45) * 0.95;
+        mtn[i] = HORIZON - 6 - Math.max(0, Math.round(Math.max(a, b)));
+      }
+      // камыш и кувшинки: больше на «Камышах», меньше на «Омуте»
+      const nRL = spot === 1 ? 12 : spot === 2 ? 5 : 8;
+      let k = 0;
+      for (let i = 0; i < reeds.length; i++) reeds[i].on = false;
+      for (let i = 0; i < nRL; i++) { const r = reeds[k++]; r.on = true; r.x = 2 + Math.floor(R() * (spot === 1 ? 60 : 34)); r.h = 10 + Math.floor(R() * 14); r.p = R() * 6; }
+      for (let i = 0; i < 6; i++) { const r = reeds[k++]; r.on = true; r.x = 212 + Math.floor(R() * 16); r.h = 8 + Math.floor(R() * 10); r.p = R() * 6; }
+      if (spot === 1) for (let i = 0; i < 5 && k < reeds.length; i++) { const r = reeds[k++]; r.on = true; r.x = 150 + Math.floor(R() * 40); r.h = 6 + Math.floor(R() * 8); r.p = R() * 6; }
+      const nP = lake === 2 ? 0 : spot === 2 ? 2 : spot === 1 ? 5 : 4;
+      for (let i = 0; i < pads.length; i++) pads[i].on = false;
+      for (let i = 0; i < nP; i++) { const p = pads[i]; p.on = true; p.x = 20 + Math.floor(R() * 140); p.y = 150 + Math.floor(R() * 22); }
+      if (nP) { pads[nP].on = true; pads[nP].x = 178; pads[nP].y = 138; }
+      for (let i = 0; i < rocks.length; i++) rocks[i].on = false;
+      if (lake === 2) for (let i = 0; i < 3; i++) { const r = rocks[i]; r.on = true; r.x = 30 + Math.floor(R() * 150); r.y = 130 + Math.floor(R() * 40); r.w = 5 + Math.floor(R() * 6); }
+      scene.snag = spot === 2;
+    };
+    buildScene(P.p.lake, P.p.spot);
 
     const parts = [];
     for (let i = 0; i < 48; i++) parts.push({ fp: 1, on: false, x: 0.5, y: 0.5, vx: 0.5, vy: 0.5, life: 0.5, c: '#fff' });
@@ -194,64 +213,151 @@ export default {
     };
     // летящий улов (дуга): в корзину, в воду, или прыжок рыбки
     const flyers = [];
-    for (let i = 0; i < 8; i++) flyers.push({ ff: 1, on: false, kind: 'small', mini: false, x0: 0.5, y0: 0.5, x1: 0.5, y1: 0.5, h: 0.5, t: 0.5, dur: 1.5, delay: 0.5, dest: 0, flip: false });
-    const toss = (kind, x0, y0, x1, y1, h, dur, dest, delay = 0, mini = false) => {
+    for (let i = 0; i < 8; i++) flyers.push({ ff: 1, on: false, spr: MINNOW, x0: 0.5, y0: 0.5, x1: 0.5, y1: 0.5, h: 0.5, t: 0.5, dur: 1.5, delay: 0.5, dest: 0, flip: false });
+    const toss = (spr, x0, y0, x1, y1, h, dur, dest, delay = 0) => {
       for (let i3 = 0; i3 < flyers.length; i3++) { const f = flyers[i3];
         if (f.on) continue;
-        f.on = true; f.kind = kind; f.mini = mini; f.x0 = x0; f.y0 = y0; f.x1 = x1; f.y1 = y1; f.h = h; f.t = 0; f.dur = dur; f.dest = dest; f.delay = delay; f.flip = x1 > x0;
+        f.on = true; f.spr = spr; f.x0 = x0; f.y0 = y0; f.x1 = x1; f.y1 = y1; f.h = h; f.t = 0; f.dur = dur; f.dest = dest; f.delay = delay; f.flip = x1 < x0;
         return;
       }
     };
-    // утки
     const duck = { dk: 1, on: false, x: 0.5, y: 0.5, dir: 1, spd: 6.5, n: 0, dive: 0.5, next: 6 + rand() * 10 };
-    // стрекозы / светлячки
     const flies = [];
     for (let i = 0; i < 3; i++) flies.push({ fl: 1, x: 150 + rand() * 70, y: 100 + rand() * 30, tx: 0.5, ty: 0.5, hover: rand() * 2, p: rand() * 6 });
     for (let i4 = 0; i4 < flies.length; i4++) { const f = flies[i4]; f.tx = f.x; f.ty = f.y; }
 
     // ---------- персонажи ----------
-    // old — старый рыбак (соломенная шляпа), you — игрок (синяя рубаха)
     const old = { pa: 1, x: SPOT_X, dir: -1, tx: SPOT_X, spd: 46, sit: true, emote: 0, emoteT: 0, look: 0, step: 0 };
     const you = { pa: 1, x: EXIT_X, dir: -1, tx: EXIT_X, spd: 72, sit: false, emote: 0, emoteT: 0, look: 0, step: 0 };
-    let holder = old; // у кого удочка
-    let passT = -1; // анимация передачи удочки 0..1
+    let holder = old;
+    let passT = -1;
     let passTo = you;
-    let basketN = 2; // рыбы в корзине старика (для вида)
+    let basketN = 2;
 
     // ---------- состояние ----------
     const g = {
       phase: 'idle', // idle | intro | play | finish | wait | outro
-      pt: 0, // время в фазе
-      hold: 1.3, // показать спокойный вид при старте сразу в 'play'
-      sawOver: false,
+      pt: 0, hold: 1.3, sawOver: false,
       t: 0, st: 'rest', timer: 2 + rand() * 2,
-      cast: 0, score: 0,
+      score: 0, casts: 0, fat: FAT_MAX, fatMax: FAT_MAX, streak: 0, runFish: 0,
       power: 0, powDir: 1, npcPow: 0.5, npcReact: 0, npcHook: true,
       bob: { x: 0, y: 0, sx: 0, sy: 0, tx: 0, ty: 0 },
-      dist: 0, kind: 'small', nibble: 0, spooked: 0, spookCount: 0,
-      fish: 0.5, fishT: 0.5, fishTimer: 0,
+      dist: 0, catchSp: null, nibble: 0, spooked: 0, spookCount: 0, goldCast: false,
+      fish: 0.5, fishT: 0.5, fishTimer: 0, fishVis: 1, beh: 0, behT: 0, dashT: 0,
       zone: 0.1, zv: 0, prog: 0.3, thrash: 0,
-      caught: [], showKind: null, showPts: 0, overSent: false,
-      sky: 0, sky0: 0, hud: 0, still: false, jumpT: 5 + rand() * 8
+      R: { speed: 0.5, jumpy: 0.6, zone: 0.3, gain: 0.3, drain: 0.2 },
+      caughtN: 0, lastSpr: null, show: null, showSize: 0, showCoins: 0, showNew: false, overSent: false,
+      sky: 0, clock: 0, hud: 0, jumpT: 5 + rand() * 8,
+      wx: 0, wxT: 60, cloudK: 0, rainK: 0,
+      panel: null, sel: 0, msel: 0, fade: 0, fadeTo: -1, fadeSpot: 0,
+      toast: null, toastT: 0
     };
     {
       const env = getEnv();
       g.sky = env ? clamp((env.dark || 0) * 2, 0, 2) : 0.3;
+      g.clock = g.sky;
     }
+    const pickWeather = () => {
+      const r = rand();
+      const rain = LAKES[scene.lake].rain;
+      g.wx = r < rain ? 2 : r < rain + 0.25 ? 1 : 0;
+    };
+    pickWeather();
+    if (g.wx === 2 && rand() < 0.5) g.wx = 1;
+
     let held = false;
     let pressedEdge = false;
-
     const playing = () => g.phase === 'play';
+
+    // ---------- панели ----------
+    const openPanel = (name) => {
+      if (!playing()) return;
+      if (g.panel === name) { g.panel = null; api.sfx('click'); return; }
+      g.panel = name;
+      held = false;
+      pressedEdge = false;
+      if (name === 'map') g.msel = scene.lake * 3 + scene.spot;
+      api.sfx('click');
+    };
+    const travel = (lake, spot) => {
+      if (!P.lakeOpen(lake)) { api.sfx('hit'); return; }
+      if (!P.spotOpen(lake, spot)) { api.sfx('hit'); return; }
+      if (lake === scene.lake && spot === scene.spot) { g.panel = null; return; }
+      P.setPlace(lake, spot);
+      g.fadeTo = lake; g.fadeSpot = spot; g.fade = 0.001;
+      g.panel = null;
+      api.sfx('step');
+    };
+    const shopBuy = (i) => {
+      if (i < 0 || i >= UPGRADES.length) return;
+      if (P.buy(i)) { api.sfx('coin'); applyUpgrades(); } else api.sfx('hit');
+    };
+    const applyUpgrades = () => {
+      const up = P.p.up;
+      const prev = g.fatMax;
+      g.fatMax = FAT_MAX * (1 + 0.12 * up[4]);
+      if (g.fatMax > prev) g.fat += g.fatMax - prev;
+    };
+
+    // ---------- ввод ----------
     const press = () => {
       if (!playing()) return;
       if (!held) pressedEdge = true;
       held = true;
     };
     const release = () => { held = false; };
+    const PT = { x: 0, y: 0 };
+    const toLocal = (e) => {
+      const r = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { left: 0, top: 0, width: W, height: H };
+      PT.x = ((e.clientX - r.left) / Math.max(1, r.width)) * W;
+      PT.y = ((e.clientY - r.top) / Math.max(1, r.height)) * H;
+      return PT;
+    };
+    const inR = (p, x, y, w, h) => p.x >= x && p.x < x + w && p.y >= y && p.y < y + h;
 
     const KEYS = { Space: 1, Enter: 1, ArrowUp: 1, KeyW: 1, NumpadEnter: 1 };
     const onKeyDown = (e) => {
-      if (!KEYS[e.code] || !playing()) return;
+      if (!playing()) return;
+      const c = e.code;
+      if (c === 'Tab' || c === 'KeyB' || c === 'KeyM' || c === 'KeyI') {
+        e.preventDefault();
+        if (e.repeat) return;
+        openPanel(c === 'Tab' || c === 'KeyI' ? 'album' : c === 'KeyB' ? 'shop' : 'map');
+        return;
+      }
+      if (P.author && (c === 'BracketRight' || c === 'BracketLeft')) {
+        e.preventDefault();
+        if (e.repeat) return;
+        const d = c === 'BracketRight' ? 1 : -1;
+        if (P.authorSkip(d)) { g.fadeTo = P.p.lake; g.fadeSpot = 0; g.fade = 0.001; applyUpgrades(); }
+        return;
+      }
+      if (g.panel) {
+        if (c.startsWith('Digit') || c.startsWith('Numpad')) {
+          const n = c.charCodeAt(c.length - 1) - 49;
+          e.preventDefault();
+          if (e.repeat || n < 0 || n > 8) return;
+          if (g.panel === 'shop') shopBuy(n);
+          else if (g.panel === 'map' && n < LAKES.length) travel(n, P.spotOpen(n, scene.spot) ? scene.spot : 0);
+          return;
+        }
+        if (c === 'ArrowLeft' || c === 'ArrowRight' || c === 'ArrowDown' || c === 'ArrowUp' || c === 'KeyA' || c === 'KeyD' || c === 'KeyS' || c === 'KeyW') {
+          e.preventDefault();
+          const dx = c === 'ArrowLeft' || c === 'KeyA' ? -1 : c === 'ArrowRight' || c === 'KeyD' ? 1 : 0;
+          const dy = c === 'ArrowUp' || c === 'KeyW' ? -1 : c === 'ArrowDown' || c === 'KeyS' ? 1 : 0;
+          if (g.panel === 'album') g.sel = (g.sel + dx + dy * 7 + ALBUM_TOTAL) % ALBUM_TOTAL;
+          else if (g.panel === 'map') g.msel = (g.msel + dx + dy * 3 + 12) % 12;
+          return;
+        }
+        if (c === 'Space' || c === 'Enter' || c === 'NumpadEnter' || c === 'Backspace') {
+          e.preventDefault();
+          if (e.repeat) return;
+          if (g.panel === 'map' && c !== 'Backspace') travel(Math.floor(g.msel / 3), g.msel % 3);
+          else g.panel = null;
+        }
+        return;
+      }
+      if (!KEYS[c]) return;
       e.preventDefault();
       if (e.repeat) return;
       press();
@@ -267,7 +373,26 @@ export default {
       if (canvas.setPointerCapture && e.pointerId != null) {
         try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
       }
+      const p = toLocal(e);
+      // кнопки HUD
+      for (let i = 0; i < 3; i++) if (inR(p, BTN_X[i] - 1, BTN_Y - 1, 14, 13)) { openPanel(i === 0 ? 'album' : i === 1 ? 'shop' : 'map'); return; }
+      if (g.panel) { panelClick(p); return; }
       press();
+    };
+    const panelClick = (p) => {
+      if (inR(p, PX + PW - 12, PY + 2, 10, 10) || !inR(p, PX, PY, PW, PH)) { g.panel = null; api.sfx('click'); return; }
+      if (g.panel === 'album') {
+        for (let i = 0; i < ALBUM_TOTAL; i++) {
+          const col = i % 7, row = Math.floor(i / 7);
+          if (inR(p, PX + 6 + col * 39, PY + 15 + row * 28, 38, 27)) { g.sel = i; api.sfx('click'); return; }
+        }
+      } else if (g.panel === 'shop') {
+        for (let i = 0; i < UPGRADES.length; i++) if (inR(p, PX + 6 + i * 56, PY + 16, 52, 104)) { shopBuy(i); return; }
+      } else if (g.panel === 'map') {
+        for (let l = 0; l < LAKES.length; l++) for (let s = 0; s < 3; s++) {
+          if (inR(p, PX + 120 + s * 55, PY + 22 + l * 31, 52, 14)) { g.msel = l * 3 + s; travel(l, s); return; }
+        }
+      }
     };
     const onPointerUp = () => release();
     const onCtx = (e) => e.preventDefault();
@@ -355,7 +480,6 @@ export default {
         api.sfx('splash');
       }
     };
-    // смотать леску (поплавок летит обратно к кончику)
     const startRetrieve = () => {
       if (g.st === 'fly') { g.bob.tx = Math.round(g.bob.x); g.bob.ty = Math.round(g.bob.y); }
       g.bob.sx = g.bob.tx; g.bob.sy = g.bob.ty;
@@ -372,7 +496,58 @@ export default {
     };
 
     const emote = (a, kind, time) => { a.emote = kind; a.emoteT = time; };
-    // 1 '!', 2 радость (руки вверх), 3 качает головой, 4 хлопает, 5 болтает (...), 6 зевает/потягивается
+
+    // ---------- выбор улова ----------
+    const tod = () => (g.sky < 0.6 ? 0 : g.sky < 1.4 ? 1 : 2);
+    const legendOk = (s, td) => {
+      const n = s.need;
+      if (!n) return true;
+      if (n.tod != null && n.tod !== td) return false;
+      if (n.wx != null && n.wx !== g.wx) return false;
+      if (n.spot != null && n.spot !== scene.spot) return false;
+      return true;
+    };
+    const pickCatch = (d) => {
+      const up = P.p.up;
+      const r0 = rand();
+      if (r0 < 0.07 * (1 - d * 0.5)) return BOOT;
+      if (r0 < 0.07 * (1 - d * 0.5) + 0.025 + d * 0.025) return CHEST;
+      const td = tod();
+      const auth = P.author;
+      let sum = 0;
+      for (let pass = 0; pass < 2; pass++) {
+        let acc = 0;
+        const target = pass === 1 ? rand() * sum : 0;
+        for (let i = 0; i < SPECIES.length; i++) {
+          const s = SPECIES[i];
+          if (s.lake !== scene.lake) continue;
+          const t = s.tier;
+          let w = TIERS[t].w;
+          if (t === 4) { if (!legendOk(s, td)) continue; } else w *= s.sp[scene.spot] * s.tod[td] * s.wx[g.wx];
+          w *= t === 0 ? 1.2 - 0.5 * d : t === 1 ? 0.8 + 0.4 * d : 0.5 + d;
+          if (t >= 2) w *= 1 + 0.18 * up[3];
+          else if (t === 1) w *= 1 + 0.08 * up[3];
+          if (g.goldCast && t >= 2) w *= 2;
+          if (auth) w = t === 4 ? 30 : 30; // автор: все виды поровну, чтобы быстро проверить альбом
+          acc += w;
+          if (pass === 1 && acc >= target) return s;
+        }
+        sum = acc;
+      }
+      return SPECIES[0];
+    };
+    // улов старика в фоне: обычные виды своего озера, изредка редкая
+    const npcPick = () => {
+      const v = rand();
+      if (v < 0.14) return BOOT;
+      const want = v < 0.97 ? (rand() < 0.75 ? 0 : 1) : 2;
+      let n = 0;
+      for (let i = 0; i < SPECIES.length; i++) if (SPECIES[i].lake === scene.lake && SPECIES[i].tier === want) n++;
+      let k = Math.floor(rand() * n);
+      for (let i = 0; i < SPECIES.length; i++) if (SPECIES[i].lake === scene.lake && SPECIES[i].tier === want) { if (k-- === 0) return SPECIES[i]; }
+      return SPECIES[0];
+    };
+    const tierOf = (c) => (c && c.tier != null ? c.tier : 0);
 
     // ---------- рыбак-автомат (фон) ----------
     const npcUpdate = (dt) => {
@@ -396,7 +571,7 @@ export default {
           if (g.nibble > 0) g.nibble -= dt;
           else if (rand() < dt * 0.7) g.nibble = 0.14;
           if (g.timer <= 0) {
-            g.kind = npcKind(rand);
+            g.catchSp = npcPick();
             g.st = 'bite';
             g.timer = 1.0;
             g.npcReact = 0.2 + rand() * 0.6;
@@ -420,14 +595,15 @@ export default {
           }
           if (g.timer <= 0) {
             if (rand() < 0.86) {
-              // в корзину через плечо (ботинок — обратно в воду)
+              const c = g.catchSp;
               puff(g.bob.tx, g.bob.ty, 8, '#e8f4ff', 22);
-              if (g.kind === 'boot') toss('boot', g.bob.tx, g.bob.ty - 4, g.bob.tx - 18, g.bob.ty + 6, 26, 0.9, 1);
-              else toss(g.kind, g.bob.tx, g.bob.ty - 4, BASKET_X - 2, DECK_Y - 9, 52, 1.3, 0);
+              if (c === BOOT) toss(BOOT.spr, g.bob.tx, g.bob.ty - 4, g.bob.tx - 18, g.bob.ty + 6, 26, 0.9, 1);
+              else toss(c.spr, g.bob.tx, g.bob.ty - 4, BASKET_X - 2, DECK_Y - 9, 52, 1.3, 0);
               g.st = 'show';
               g.timer = 1.4;
-              emote(old, g.kind === 'golden' ? 2 : g.kind === 'boot' ? 3 : 0, g.kind === 'golden' ? 2.2 : 1.0);
-              api.sfx(g.kind === 'boot' ? 'click' : 'coin');
+              const t = tierOf(c);
+              emote(old, t >= 2 ? 2 : c === BOOT ? 3 : 0, t >= 2 ? 2.2 : 1.0);
+              api.sfx(c === BOOT ? 'click' : 'coin');
             } else {
               puff(g.bob.tx, g.bob.ty, 6, '#e8f4ff', 18);
               g.st = 'miss';
@@ -451,57 +627,124 @@ export default {
     };
 
     // ---------- игра ----------
-    const nextCast = () => {
-      g.cast++;
-      if (g.cast >= CASTS) {
+    const endCast = () => {
+      if (g.fat <= 0) {
+        g.fat = 0;
         g.st = 'rest';
         g.phase = 'finish';
         g.pt = 0;
+        g.panel = null;
         emote(old, 4, 1.6);
         api.sfx('win');
-      } else {
-        g.st = 'ready';
-      }
+        P.p.best = Math.max(P.p.best, Math.round(g.score));
+        P.save();
+      } else g.st = 'ready';
     };
 
     const startReel = () => {
-      const k = KINDS[g.kind];
+      const c = g.catchSp;
+      const t = c.tier < 0 ? 0 : c.tier;
+      const T = TIERS[t];
+      const up = P.p.up;
+      const R = g.R;
+      R.speed = c === BOOT ? 0.22 : c === CHEST ? 0.45 : T.speed;
+      R.jumpy = c === BOOT ? 0.25 : c === CHEST ? 0.5 : T.jumpy;
+      R.zone = clamp((c === BOOT ? 0.36 : T.zone) + 0.025 * up[0], 0.12, 0.5);
+      R.gain = (c === BOOT ? 0.34 : T.gain) * (1 + 0.1 * up[2]);
+      R.drain = (c === BOOT ? 0.16 : T.drain) * (1 - 0.09 * up[1]);
+      g.beh = c.beh === 'blink' ? 1 : c.beh === 'dash' ? 2 : c.beh === 'ghost' ? 3 : c.beh === 'heavy' ? 4 : 0;
+      g.behT = 1.5;
+      g.dashT = 0;
+      g.fishVis = 1;
       g.st = 'reel';
       g.fish = 0.4 + rand() * 0.3;
       g.fishT = g.fish;
       g.fishTimer = 0.4;
-      g.zone = clamp(g.fish - k.zone / 2, 0, 1 - k.zone);
+      g.zone = clamp(g.fish - R.zone / 2, 0, 1 - R.zone);
       g.zv = 0;
       g.prog = 0.3;
       g.thrash = 1;
     };
 
+    const landCatch = () => {
+      const c = g.catchSp;
+      g.show = c;
+      g.showNew = false;
+      g.showSize = 0;
+      g.showCoins = 0;
+      g.streak++;
+      const ctxD = DCTX;
+      ctxD.tod = tod(); ctxD.spot = scene.spot; ctxD.streak = g.streak;
+      if (c === BOOT) {
+        g.score += 1;
+        P.daily(null, 0, ctxD);
+        P.save();
+      } else if (c === CHEST) {
+        const coins = Math.round((20 + rand() * 30) * LAKES[scene.lake].coin) * P.mul();
+        g.showCoins = coins;
+        g.score += coins;
+        if (rand() < 0.35) { P.p.gold += 3; }
+        P.addCoins(coins, ctxD);
+      } else {
+        const size = Math.round(lerp(c.len[0], c.len[1], Math.pow(rand(), 1.6 - 0.08 * P.p.up[3])));
+        const r = P.addCatch(c, size, ctxD);
+        g.showSize = size;
+        g.showCoins = r.coins;
+        g.showNew = r.isNew;
+        g.score += r.coins;
+        g.runFish++;
+        g.lastSpr = c.spr;
+      }
+      g.caughtN++;
+    };
+    const DCTX = { tod: 0, spot: 0, streak: 0 };
+
     const playUpdate = (dt) => {
       const press1 = pressedEdge;
       pressedEdge = false;
+      // время суток и погода в игре
+      const am = P.author ? 4 : 1;
+      g.clock = (g.clock + dt * CLOCK_SPEED * am) % 4;
+      g.wxT -= dt * am;
+      if (g.wxT <= 0) {
+        g.wxT = 60 + rand() * 60;
+        if (rand() < 0.35) pickWeather();
+      }
+      if (g.panel) return;
+      // силы
+      g.fat -= dt * FAT_SEC / (P.author ? 4 : 1);
+      if (g.fat < 0) g.fat = 0;
       switch (g.st) {
         case 'rest':
         case 'ready':
           g.st = 'ready';
+          if (g.fat <= 0) { endCast(); break; }
           if (press1) { g.st = 'charge'; g.power = 0; g.powDir = 1; }
           break;
         case 'charge': {
           g.power += g.powDir * dt / 1.1;
           if (g.power >= 1) { g.power = 1; g.powDir = -1; }
           if (g.power <= 0.05 && g.powDir < 0) { g.power = 0.05; g.powDir = 1; }
-          if (!held) launch(clamp(g.power, 0.08, 1));
+          if (!held) {
+            g.fat -= FAT_CAST * (1 - 0.06 * P.p.up[4]) / (P.author ? 4 : 1);
+            g.casts++;
+            g.goldCast = false;
+            if (P.p.gold > 0) { P.p.gold--; g.goldCast = true; }
+            launch(clamp(g.power, 0.08, 1));
+          }
           break;
         }
-        case 'fly':
-          stepFly(dt, 1.2, 3.2);
+        case 'fly': {
+          const bk = (1 - 0.06 * P.p.up[3]) * (P.author ? 0.35 : 1);
+          stepFly(dt, 1.2 * bk, 3.2 * bk);
           break;
+        }
         case 'wait':
           g.timer -= dt;
           if (g.nibble > 0) g.nibble -= dt;
           else if (rand() < dt * 0.9) g.nibble = 0.14;
           if (g.spooked > 0) g.spooked -= dt;
           if (press1 && g.spookCount < 3) {
-            // подсекать рано — спугнуть рыбу: поклёвка откладывается (не больше 3 раз за заброс)
             g.spookCount++;
             g.timer += 0.8 + rand() * 0.8;
             g.spooked = 0.8;
@@ -509,9 +752,9 @@ export default {
             api.sfx('click');
           }
           if (g.timer <= 0) {
-            g.kind = pickKind(g.dist, rand);
+            g.catchSp = pickCatch(g.dist);
             g.st = 'bite';
-            g.timer = 1.0;
+            g.timer = g.catchSp.tier === 4 ? 0.8 : 1.0;
             puff(g.bob.tx, g.bob.ty, 5, '#e8f4ff', 16);
             api.sfx('splash');
           }
@@ -519,45 +762,62 @@ export default {
         case 'bite':
           g.timer -= dt;
           if (press1) { startReel(); api.sfx('jump'); }
-          else if (g.timer <= 0) { g.st = 'miss'; g.timer = 1.2; api.sfx('hit'); emote(old, 3, 1.0); }
+          else if (g.timer <= 0) { g.st = 'miss'; g.timer = 1.2; g.streak = 0; api.sfx('hit'); emote(old, 3, 1.0); }
           break;
         case 'reel': {
-          const k = KINDS[g.kind];
+          const R = g.R;
           g.fishTimer -= dt;
-          if (g.fishTimer <= 0) {
-            const span = 0.25 + rand() * 0.6 * Math.min(1, k.jumpy);
-            g.fishT = clamp(g.fish + (rand() < 0.5 ? -span : span), 0.03, 0.97);
-            g.fishTimer = (0.35 + rand() * 1.1) / k.jumpy;
+          g.behT -= dt;
+          let spd = R.speed;
+          if (g.beh === 1 && g.behT <= 0) {
+            // золотой карась: пропадает и выныривает в другом месте
+            g.behT = 1.1 + rand() * 0.9;
+            g.fish = clamp(g.fish + (rand() < 0.5 ? -1 : 1) * (0.3 + rand() * 0.35), 0.04, 0.96);
+            g.fishT = g.fish;
+            puff(g.bob.tx, g.bob.ty, 4, '#fff6b0', 14);
+          } else if (g.beh === 2) {
+            // царица: долгие рывки с паузами
+            if (g.behT <= 0) { g.behT = 1.4 + rand() * 1.2; g.dashT = 0.45; g.fishT = g.fish < 0.5 ? 0.85 + rand() * 0.12 : 0.03 + rand() * 0.12; }
+            if (g.dashT > 0) { g.dashT -= dt; spd *= 3.4; }
+          } else if (g.beh === 3) {
+            // ледяной таймень: то исчезает подо льдом, то виден
+            g.fishVis = Math.sin(g.t * 2.6) > -0.15 ? 1 : 0;
           }
-          const step = k.speed * dt;
+          if (g.fishTimer <= 0) {
+            const span = 0.25 + rand() * 0.6 * Math.min(1, R.jumpy);
+            g.fishT = clamp(g.fish + (rand() < 0.5 ? -span : span), 0.03, 0.97);
+            if (g.beh === 4 && rand() < 0.6) g.fishT = 0.04 + rand() * 0.2; // древний сом тянет ко дну
+            g.fishTimer = (0.35 + rand() * 1.1) / R.jumpy;
+          }
+          const step = spd * dt;
           g.fish += clamp(g.fishT - g.fish, -step, step);
-          g.fish += Math.sin(g.t * 13) * 0.04 * k.jumpy * dt;
+          g.fish += Math.sin(g.t * 13) * 0.04 * R.jumpy * dt;
           g.fish = clamp(g.fish, 0.02, 0.98);
-          g.zv += (held ? 2.8 : -2.4) * dt;
+          const grav = g.beh === 4 ? -3.6 : -2.4;
+          g.zv += (held ? 2.8 : grav) * dt;
           g.zv = clamp(g.zv, -1.4, 1.4);
           g.zone += g.zv * dt;
           if (g.zone < 0) { g.zone = 0; g.zv = g.zv < -0.4 ? -g.zv * 0.3 : 0; }
-          if (g.zone > 1 - k.zone) { g.zone = 1 - k.zone; if (g.zv > 0) g.zv = 0; }
-          const inside = g.fish >= g.zone && g.fish <= g.zone + k.zone;
-          g.prog += (inside ? k.gain : -k.drain) * dt;
+          if (g.zone > 1 - R.zone) { g.zone = 1 - R.zone; if (g.zv > 0) g.zv = 0; }
+          const inside = g.fish >= g.zone && g.fish <= g.zone + R.zone;
+          g.prog += (inside ? R.gain * (P.author ? 2 : 1) : -R.drain) * dt;
           g.thrash -= dt;
           if (g.thrash <= 0) {
             g.thrash = 0.8 + rand() * 1.4;
             puff(g.bob.tx + Math.round((rand() - 0.5) * 6), g.bob.ty, 3, '#e8f4ff', 14);
           }
           if (g.prog >= 1) {
-            g.score += k.pts;
-            g.caught.push(g.kind);
-            g.showKind = g.kind;
-            g.showPts = k.pts;
+            landCatch();
             g.st = 'show';
-            g.timer = 1.7;
+            g.timer = 1.9;
             puff(g.bob.tx, g.bob.ty, 10, '#e8f4ff', 26);
-            api.sfx(k.sfx);
+            const t = tierOf(g.show);
+            api.sfx(t >= 2 || g.show === CHEST ? 'win' : g.show === BOOT ? 'click' : 'coin');
             emote(old, 2, 1.2);
           } else if (g.prog <= 0) {
             g.st = 'miss';
             g.timer = 1.2;
+            g.streak = 0;
             api.sfx('hit');
             emote(old, 3, 1.0);
           }
@@ -566,7 +826,7 @@ export default {
         case 'show':
         case 'miss':
           g.timer -= dt;
-          if (g.timer <= 0 || (press1 && g.timer < 1.0)) nextCast();
+          if (g.timer <= 0 || (press1 && g.timer < 1.1) || (P.author && g.timer < 0.9)) endCast();
           break;
         case 'retrieve':
           stepRetrieve(dt);
@@ -579,9 +839,9 @@ export default {
 
     // улов игрока — старику в корзину
     const handOverCatch = () => {
-      const n = Math.min(3, g.caught.length);
-      for (let i = 0; i < n; i++) toss(g.caught[g.caught.length - 1 - i], BUCKET_X + 1, DECK_Y - 9, BASKET_X - 2, DECK_Y - 9, 14, 0.6, 0, i * 0.22);
-      g.caught.length = 0;
+      const n = Math.min(3, g.caughtN);
+      for (let i = 0; i < n; i++) toss(g.lastSpr || SPECIES[0].spr, BUCKET_X + 1, DECK_Y - 9, BASKET_X - 2, DECK_Y - 9, 14, 0.6, 0, i * 0.22);
+      g.caughtN = 0;
     };
 
     // ---------- переходы ----------
@@ -591,14 +851,20 @@ export default {
       g.pt = 0;
       held = false;
       pressedEdge = false;
-      g.showKind = null;
+      g.show = null;
+      g.panel = null;
+      if (from === 'idle') {
+        // свежая копия прогресса (могла прийти с другого компьютера)
+        P.load();
+        if (P.p.lake !== scene.lake || P.p.spot !== scene.spot) buildScene(P.p.lake, P.p.spot);
+      }
       if (from === 'wait' || from === 'finish') handOverCatch();
       if (holder === old) {
         if (lineOut()) startRetrieve();
         else if (g.st !== 'retrieve') g.st = 'rest';
         if (you.x > W + 2) you.x = EXIT_X;
         you.tx = SPOT_X + 12;
-        old.tx = old.x; // ждёт с удочкой
+        old.tx = old.x;
       } else {
         if (lineOut()) startRetrieve();
         else if (g.st !== 'retrieve') g.st = 'rest';
@@ -610,26 +876,34 @@ export default {
     const beginPlay = () => {
       g.phase = 'play';
       g.pt = 0;
-      g.cast = 0;
       g.score = 0;
-      g.caught.length = 0;
+      g.casts = 0;
+      g.streak = 0;
+      g.runFish = 0;
+      g.caughtN = 0;
+      applyUpgrades();
+      g.fat = g.fatMax;
       g.st = 'ready';
-      g.sky0 = g.sky;
+      g.clock = g.sky;
       g.overSent = false;
       g.sawOver = false;
       held = false;
       pressedEdge = false;
+      if (P.checkDay()) P.save();
       api.sfx('click');
     };
     const startOutro = () => {
+      if (g.phase === 'play' || g.phase === 'intro') { P.p.best = Math.max(P.p.best, Math.round(g.score)); P.save(); }
       g.phase = 'outro';
       g.pt = 0;
       held = false;
       pressedEdge = false;
-      g.showKind = null;
+      g.show = null;
+      g.panel = null;
+      if (g.fade > 0) { g.fade = 0; if (g.fadeTo >= 0) buildScene(g.fadeTo, g.fadeSpot); g.fadeTo = -1; }
       if (lineOut() && g.st !== 'retrieve') startRetrieve();
       else if (g.st !== 'retrieve') g.st = 'rest';
-      if (g.caught.length) handOverCatch();
+      if (g.caughtN) handOverCatch();
       if (holder === you) {
         old.tx = SPOT_X + 12;
         you.tx = SPOT_X;
@@ -664,6 +938,7 @@ export default {
         c.x += c.v * dt;
         if (c.x > W + 10) c.x = -c.w - 10;
       }
+      for (let i = 0; i < fogs.length; i++) { const f = fogs[i]; f.x += f.v * dt; if (f.x > W + 20) f.x = -f.w - 20; }
       for (let i6 = 0; i6 < parts.length; i6++) { const p = parts[i6];
         if (!p.on) continue;
         p.life -= dt;
@@ -680,6 +955,21 @@ export default {
           f.on = false;
           if (f.dest === 0) { basketN++; puff(f.x1, f.y1, 3, '#e8e2c8', 8); }
           else puff(f.x1, f.y1, 5, '#e8f4ff', 14);
+        }
+      }
+      // погода: облачность и дождь плавно
+      const ck = g.wx >= 1 ? 1 : 0, rk = g.wx === 2 ? 1 : 0;
+      g.cloudK += clamp(ck - g.cloudK, -dt * 0.3, dt * 0.3);
+      g.rainK += clamp(rk - g.rainK, -dt * 0.3, dt * 0.3);
+      if (g.rainK > 0.02) {
+        for (let i = 0; i < drops.length; i++) {
+          const d = drops[i];
+          d.y += d.v * dt;
+          d.x -= d.v * 0.2 * dt;
+          if (d.y > d.gy) {
+            if (rand() < 0.25) puff(d.x, d.gy, 1, '#cfe8ff', 6);
+            d.y = -4 - rand() * 30; d.x = rand() * (W + 30);
+          }
         }
       }
       // утки
@@ -700,7 +990,6 @@ export default {
         else if (rand() < dt * 0.04) duck.dive = 1.6;
         if (duck.x < -40 || duck.x > W + 40) { duck.on = false; duck.next = 10 + rand() * 25; }
       }
-      // стрекозы
       for (let i8 = 0; i8 < flies.length; i8++) { const f = flies[i8];
         f.hover -= dt;
         if (f.hover <= 0) {
@@ -711,14 +1000,13 @@ export default {
         f.x += (f.tx - f.x) * Math.min(1, dt * 6);
         f.y += (f.ty - f.y) * Math.min(1, dt * 6);
       }
-      // прыгнула рыбка
       g.jumpT -= dt;
       if (g.jumpT <= 0) {
         g.jumpT = 7 + rand() * 14;
         const x = 110 + rand() * 110, y = 110 + rand() * 50;
         const d = rand() < 0.5 ? -1 : 1;
         puff(x, y, 3, '#e8f4ff', 10);
-        toss('small', x, y, x + d * 10, y, 9, 0.55, 1, 0, true);
+        toss(MINNOW, x, y, x + d * 10, y, 9, 0.55, 1, 0);
       }
     };
 
@@ -727,17 +1015,35 @@ export default {
       g.pt += dt;
       updateWorld(dt);
 
-      // цель неба: в фоне — по реальным часам, в игре — вечереет с каждым забросом
+      // небо: в фоне — по реальным часам, в игре — свои сутки
       const env = getEnv();
       const envSky = env ? clamp((env.dark || 0) * 2, 0, 2) : 0.3;
       let skyT = envSky;
-      if (g.phase === 'play' || g.phase === 'finish' || g.phase === 'wait') skyT = Math.min(2, g.sky0 + g.cast * 0.07);
+      if (g.phase === 'play' || g.phase === 'finish' || g.phase === 'wait') skyT = g.clock <= 2 ? g.clock : 4 - g.clock;
       const sr = (g.phase === 'idle' || g.phase === 'outro' ? 0.05 : 0.12) * dt;
       g.sky += clamp(skyT - g.sky, -sr, sr);
       const hudT = g.phase === 'play' || g.phase === 'finish' || g.phase === 'wait' || (g.phase === 'intro' && holder === you) ? 1 : 0;
       g.hud += clamp(hudT - g.hud, -dt * 3, dt * 3);
+      // погода в фоне: изредка меняется
+      if (g.phase === 'idle') {
+        g.wxT -= dt;
+        if (g.wxT <= 0) { g.wxT = 120 + rand() * 180; if (rand() < 0.4) pickWeather(); }
+      }
+      // переход на другое место: затемнение
+      if (g.fade > 0) {
+        const was = g.fade;
+        g.fade += dt * 2;
+        if (was < 1 && g.fade >= 1 && g.fadeTo >= 0) { buildScene(g.fadeTo, g.fadeSpot); g.fadeTo = -1; if (rand() < 0.5) pickWeather(); }
+        if (g.fade >= 2) g.fade = 0;
+      }
+      // всплывающие сообщения
+      if (g.toastT > 0) g.toastT -= dt;
+      else if (P.events.length && (g.phase === 'play' || g.phase === 'finish' || g.phase === 'wait')) {
+        g.toast = P.events.shift();
+        g.toastT = 2.2;
+        if (g.toast.kind >= 3) api.sfx('win');
+      }
 
-      // передача удочки
       if (passT >= 0) {
         passT += dt / 0.35;
         if (passT >= 1) {
@@ -755,7 +1061,7 @@ export default {
           if (arrived(you) && Math.abs(you.x - (SPOT_X + 12)) < 1) startPass(you);
         }
         if (holder === you && passT < 0 && g.st !== 'retrieve' && arrived(you) && atSpot(you) && g.pt > 1.0) beginPlay();
-        if (g.pt > 4) { // страховка
+        if (g.pt > 4) {
           passT = -1; holder = you; you.x = you.tx = SPOT_X; old.tx = SEAT_X; beginPlay();
         }
       } else if (g.phase === 'play') {
@@ -779,7 +1085,7 @@ export default {
           g.phase = 'idle';
           g.pt = 0;
         }
-        if (g.pt > 3.8) { // страховка
+        if (g.pt > 3.8) {
           passT = -1; holder = old; old.x = old.tx = SPOT_X; old.sit = true; you.tx = EXIT_X; g.st = 'rest'; g.timer = 1;
           g.phase = 'idle'; g.pt = 0;
         }
@@ -792,7 +1098,6 @@ export default {
 
       moveActor(old, dt);
       moveActor(you, dt);
-      // старик садится на ящик / табурет
       if (arrived(old) && (Math.abs(old.x - SEAT_X) < 0.5 || (Math.abs(old.x - SPOT_X) < 0.5 && g.phase !== 'intro'))) old.sit = true;
     };
 
@@ -837,7 +1142,6 @@ export default {
       }
     };
 
-    // зеркальный прямоугольник персонажа: смотрит влево (dir -1) как в оригинале
     let VX = 0, VD = -1;
     const vr = (ox, y, w, h) => ctx.fillRect(VD < 0 ? VX + ox : VX - ox - w + 1, y, w, h);
 
@@ -856,7 +1160,6 @@ export default {
       const yy = y + hop;
       ctx.fillStyle = 'rgba(0,0,0,0.2)';
       ctx.fillRect(VX - 3, DECK_Y, 8, 1);
-      // ноги
       ctx.fillStyle = rgbMix(LEG_C, SHADE, sd);
       if (sit) {
         vr(-5, yy + 9, 4, 2);
@@ -866,16 +1169,13 @@ export default {
         vr(-1 - st, yy + 10, 1, 2);
         vr(1 + st, yy + 10, 1, 2);
       }
-      // рубаха
       ctx.fillStyle = rgbMix(isOld ? OLD_SHIRT : YOU_SHIRT, SHADE, sd);
       vr(-2, yy + 4, 5, sit ? 6 : 7);
       ctx.fillStyle = rgbMix(isOld ? OLD_BELT : YOU_BELT, SHADE, sd);
       vr(-2, yy + 7, 5, 1);
-      // голова
       const shake = em === 3 ? Math.round(Math.sin(g.t * 16)) : 0;
       ctx.fillStyle = rgbMix(SKIN_C, SHADE, sd);
       vr(-1 + shake, yy, 4, 4);
-      // руки
       if (em === 2 || em === 6) {
         vr(-3, yy + 1, 1, 3);
         vr(3, yy + 1, 1, 3);
@@ -890,7 +1190,7 @@ export default {
       }
       ctx.fillStyle = rgbMix(EYE_C, SHADE, sd);
       vr(-1 + shake, yy + 1, 1, 1);
-      if (em === 6) vr(-1 + shake, yy + 3, 2, 1); // зевок
+      if (em === 6) vr(-1 + shake, yy + 3, 2, 1);
       if (isOld) {
         ctx.fillStyle = rgbMix(HAT_C, SHADE, sd);
         vr(-3 + shake, yy - 1, 8, 1);
@@ -902,7 +1202,11 @@ export default {
         vr(-1 + shake, yy - 1, 4, 1);
         vr(2 + shake, yy, 1, 2);
       }
-      // эмоции над головой
+      // в дождь — капюшон-плащ на плечах
+      if (g.rainK > 0.5) {
+        ctx.fillStyle = rgbMix(isOld ? CAPE_OLD : CAPE_YOU, SHADE, sd);
+        vr(-2, yy + 4, 5, 1);
+      }
       if (em === 1 || em === 5 || (em === 2 && isOld)) {
         const bx = VX - 3, by = yy - 13;
         ctx.fillStyle = 'rgba(42,26,16,0.85)';
@@ -919,18 +1223,35 @@ export default {
       x = Math.round(x); y = Math.round(y);
       ctx.fillStyle = '#f4f0e8';
       ctx.fillRect(x - 1, y - 2, 3, 2);
-      ctx.fillStyle = '#e04040';
+      ctx.fillStyle = g.goldCast && g.phase === 'play' ? '#ffd34a' : '#e04040';
       ctx.fillRect(x - 1, y, 3, 2);
       ctx.fillStyle = '#2a2420';
       ctx.fillRect(x, y - 3, 1, 1);
     };
 
-    const P = { top: [0, 0, 0], bot: [0, 0, 0], water: [0, 0, 0], deep: [0, 0, 0], hill: [0, 0, 0], sun: [0, 0, 0] };
+    const P3 = { top: [0, 0, 0], bot: [0, 0, 0], sun: [0, 0, 0], water: [0, 0, 0], deep: [0, 0, 0], hill: [0, 0, 0], mtn: [0, 0, 0] };
+    const mix3 = (o, arr, s) => {
+      const A = s <= 1 ? arr[0] : arr[1], B = s <= 1 ? arr[1] : arr[2], k = s <= 1 ? s : s - 1;
+      o[0] = lerp(A[0], B[0], k); o[1] = lerp(A[1], B[1], k); o[2] = lerp(A[2], B[2], k);
+    };
+    const SKY_ARR = { top: [DAY.top, SET.top, NIGHT.top], bot: [DAY.bot, SET.bot, NIGHT.bot], sun: [DAY.sun, SET.sun, NIGHT.sun] };
     const blendPal = (s) => {
-      const A = s <= 1 ? DAY : SET, B = s <= 1 ? SET : NIGHT, k = s <= 1 ? s : s - 1;
-      for (let i = 0; i < PKEYS.length; i++) {
-        const key = PKEYS[i], o = P[key], a = A[key], b = B[key];
-        o[0] = lerp(a[0], b[0], k); o[1] = lerp(a[1], b[1], k); o[2] = lerp(a[2], b[2], k);
+      const look = LOOKS[scene.lake];
+      mix3(P3.top, SKY_ARR.top, s);
+      mix3(P3.bot, SKY_ARR.bot, s);
+      mix3(P3.sun, SKY_ARR.sun, s);
+      mix3(P3.water, look.water, s);
+      mix3(P3.deep, look.deep, s);
+      mix3(P3.hill, look.hill, s);
+      mix3(P3.mtn, MTN_C, s);
+      // облачность приглушает небо
+      const ck = g.cloudK * 0.45;
+      if (ck > 0) {
+        for (let i = 0; i < 3; i++) {
+          P3.top[i] = lerp(P3.top[i], GREY[i] * (1 - s * 0.4), ck);
+          P3.bot[i] = lerp(P3.bot[i], GREY[i] * (1 - s * 0.35), ck);
+          P3.water[i] = lerp(P3.water[i], P3.water[i] * 0.8, ck);
+        }
       }
     };
     const disc = (cx, cy, r, color) => {
@@ -948,12 +1269,10 @@ export default {
       const bob = Math.round(Math.sin(g.t * 2 + x * 0.1) * 0.5);
       const d = duck.dir;
       const sd = dusk * 0.5;
-      // след
       ctx.fillStyle = 'rgba(230,245,255,0.35)';
       ctx.fillRect(x - d * 8, y + 2, 3, 1);
       ctx.fillRect(x - d * 12, y + 3, 3, 1);
       if (duck.dive > 0 && duck.dive < 1.4) {
-        // ныряет: только хвостик
         ctx.fillStyle = rgbMix(DUCK_BODY, SHADE, sd);
         ctx.fillRect(x - 1, y - 1 + bob, 3, 2);
         ctx.fillStyle = rgbMix(DUCK_WHITE, SHADE, sd);
@@ -966,7 +1285,7 @@ export default {
         ctx.fillStyle = rgbMix(DUCK_HEAD, SHADE, sd);
         ctx.fillRect(x + d * 3 - (d > 0 ? 0 : 1), y - 4 + bob, 2, 3);
         ctx.fillStyle = rgbMix(DUCK_BEAK, SHADE, sd);
-        ctx.fillRect(x + d * 5 - (d > 0 ? 0 : 0), y - 3 + bob, 1, 1);
+        ctx.fillRect(x + d * 5, y - 3 + bob, 1, 1);
       }
       ctx.fillStyle = rgbMix(DUCKLING, SHADE, sd);
       for (let i = 1; i <= duck.n; i++) {
@@ -977,17 +1296,42 @@ export default {
       }
     };
 
+    const drawTrees = (s, dusk) => {
+      const look = LOOKS[scene.lake];
+      if (look.trees === 'mount') {
+        // горы со снежными шапками
+        ctx.fillStyle = rgbStr(P3.mtn[0], P3.mtn[1], P3.mtn[2]);
+        for (let i = 0; i < mtn.length; i++) ctx.fillRect(i * 2, mtn[i], 2, HORIZON - mtn[i]);
+        ctx.fillStyle = rgbMix(WHITE, P3.mtn, 0.15 + s * 0.3);
+        for (let i = 0; i < mtn.length; i++) if (mtn[i] < HORIZON - 30) ctx.fillRect(i * 2, mtn[i], 2, Math.min(5, HORIZON - 30 - mtn[i] + 2));
+      }
+      ctx.fillStyle = rgbStr(P3.hill[0], P3.hill[1], P3.hill[2]);
+      for (let i = 0; i < treeline.length; i++) ctx.fillRect(i * 3, treeline[i], 3, HORIZON - treeline[i]);
+      if (look.trees === 'pine' || look.trees === 'mount') {
+        // макушки елей
+        for (let i = 1; i < treeline.length; i += 4) ctx.fillRect(i * 3 + 1, treeline[i] - 2, 1, 2);
+      }
+      if (look.trees === 'willow') {
+        // свисающие ветви ив
+        ctx.fillStyle = rgbMix(P3.hill, BLACK, 0.15);
+        for (let i = 0; i < treeline.length; i += 5) {
+          const sw = Math.round(Math.sin(g.t * 0.8 + i) * 0.7);
+          ctx.fillRect(i * 3 + sw, treeline[i] + 2, 1, HORIZON - treeline[i] + 2);
+        }
+      }
+      ctx.fillStyle = rgbMix(P3.hill, BLACK, 0.2);
+      ctx.fillRect(0, HORIZON - 2, W, 2);
+    };
+
     const draw = () => {
       const s = Math.round(clamp(g.sky, 0, 2) * 128) / 128;
       blendPal(s);
       const dusk = Math.min(1, s * 0.6);
-      const night = clamp((s - 1.15) / 0.6, 0, 1);
-      // небо полосами
+      const night = clamp((s - 1.15) / 0.6, 0, 1) * (1 - g.cloudK * 0.7);
       for (let y = 0; y < HORIZON; y += 4) {
-        ctx.fillStyle = rgbMix(P.top, P.bot, y / HORIZON);
+        ctx.fillStyle = rgbMix(P3.top, P3.bot, y / HORIZON);
         ctx.fillRect(0, y, W, 4);
       }
-      // звёзды
       if (night > 0) {
         for (let i9 = 0; i9 < stars.length; i9++) { const st = stars[i9];
           const a = night * (0.45 + 0.45 * Math.sin(g.t * 1.4 + st.p));
@@ -995,57 +1339,77 @@ export default {
           ctx.fillRect(st.x, st.y, st.big ? 2 : 1, 1);
         }
       }
-      // солнце: садится к горизонту; ночью — луна
       const sunX = 120;
       const sunY = Math.round(lerp(26, HORIZON + 10, clamp(s / 1.12, 0, 1)));
+      const sunA = 1 - g.cloudK * 0.75;
       if (s < 1.12) {
-        disc(sunX, sunY, 12, rgbStr(P.sun[0], P.sun[1], P.sun[2], 0.15));
-        disc(sunX, sunY, 8, rgbStr(P.sun[0], P.sun[1], P.sun[2], 0.35));
-        disc(sunX, sunY, 6, rgbMix(P.sun, WHITE, 0.4));
+        disc(sunX, sunY, 12, rgbStr(P3.sun[0], P3.sun[1], P3.sun[2], 0.15 * sunA));
+        disc(sunX, sunY, 8, rgbStr(P3.sun[0], P3.sun[1], P3.sun[2], 0.35 * sunA));
+        disc(sunX, sunY, 6, rgbMix(P3.sun, WHITE, 0.4, sunA));
       }
       const moonX = 196;
       const moonY = Math.round(lerp(HORIZON + 8, 22, clamp((s - 1) / 0.6, 0, 1)));
       if (s > 1) {
-        disc(moonX, moonY, 9, rgbStr(220, 228, 255, 0.12));
-        disc(moonX, moonY, 5, '#e8ecf8');
-        ctx.fillStyle = '#c4cadc';
+        disc(moonX, moonY, 9, rgbStr(220, 228, 255, 0.12 * sunA));
+        disc(moonX, moonY, 5, rgbStr(232, 236, 248, sunA));
+        ctx.fillStyle = rgbStr(196, 202, 220, sunA);
         if (moonY + 1 < HORIZON - 1) ctx.fillRect(moonX - 2, moonY - 1, 2, 2);
         if (moonY + 2 < HORIZON - 1) ctx.fillRect(moonX + 1, moonY + 1, 1, 1);
       }
-      // облака
       for (let i10 = 0; i10 < clouds.length; i10++) { const c = clouds[i10];
-        ctx.fillStyle = s <= 1 ? rgbMix(WHITE, CLOUD_SET, s, 0.7) : rgbMix(CLOUD_SET, CLOUD_NIGHT, s - 1, 0.7);
+        if (i10 >= 3 + Math.round(g.cloudK * 2)) break;
+        const base = s <= 1 ? rgbMix(WHITE, CLOUD_SET, s, 0.7 + g.cloudK * 0.2) : rgbMix(CLOUD_SET, CLOUD_NIGHT, s - 1, 0.7 + g.cloudK * 0.2);
+        ctx.fillStyle = base;
         const cx = Math.floor(c.x), cy = Math.floor(c.y);
-        ctx.fillRect(cx, cy, Math.floor(c.w), 4);
-        ctx.fillRect(cx + 4, cy - 2, Math.floor(c.w * 0.5), 2);
+        const cw = Math.floor(c.w * (1 + g.cloudK * 0.8));
+        ctx.fillRect(cx, cy, cw, 4 + Math.round(g.cloudK * 3));
+        ctx.fillRect(cx + 4, cy - 2, Math.floor(cw * 0.5), 2);
       }
-      // дальний лес
-      ctx.fillStyle = rgbStr(P.hill[0], P.hill[1], P.hill[2]);
-      for (let i = 0; i < treeline.length; i++) ctx.fillRect(i * 3, treeline[i], 3, HORIZON - treeline[i]);
-      ctx.fillStyle = rgbMix(P.hill, BLACK, 0.2);
-      ctx.fillRect(0, HORIZON - 2, W, 2);
-      // вода полосами
+      drawTrees(s, dusk);
+      // вода
       for (let y = HORIZON; y < H; y += 2) {
-        ctx.fillStyle = rgbMix(P.water, P.deep, (y - HORIZON) / (H - HORIZON));
+        ctx.fillStyle = rgbMix(P3.water, P3.deep, (y - HORIZON) / (H - HORIZON));
         ctx.fillRect(0, y, W, 2);
       }
-      // отражение солнца / луны
+      if (scene.snag) {
+        // омут: тёмное пятно глубины
+        ctx.fillStyle = rgbMix(P3.deep, BLACK, 0.3, 0.45);
+        ctx.fillRect(60, 112, 110, 3);
+        ctx.fillRect(48, 115, 134, 6);
+        ctx.fillRect(60, 121, 110, 3);
+      }
       const refX = s < 1.12 ? sunX : moonX;
-      const refA = s < 1.12 ? 1 - clamp((s - 0.9) / 0.22, 0, 1) * 0.7 : clamp((s - 1.1) / 0.4, 0, 1) * 0.7;
+      const refA = (s < 1.12 ? 1 - clamp((s - 0.9) / 0.22, 0, 1) * 0.7 : clamp((s - 1.1) / 0.4, 0, 1) * 0.7) * sunA;
       for (let y = HORIZON + 1; y < H; y += 3) {
         const w = Math.round(3 + (y - HORIZON) * 0.25 + Math.sin(g.t * 2 + y) * 2);
-        ctx.fillStyle = rgbStr(P.sun[0], P.sun[1], P.sun[2], Math.max(0, (0.35 - (y - HORIZON) / 360) * refA));
+        ctx.fillStyle = rgbStr(P3.sun[0], P3.sun[1], P3.sun[2], Math.max(0, (0.35 - (y - HORIZON) / 360) * refA));
         ctx.fillRect(refX - w, y, w * 2, 1);
       }
-      // блики
-      ctx.fillStyle = rgbMix(P.water, WHITE, 0.35, 0.6);
+      ctx.fillStyle = rgbMix(P3.water, WHITE, 0.35, 0.6);
       for (let i11 = 0; i11 < ripples.length; i11++) { const r = ripples[i11];
         const x = Math.floor((r.x + g.t * r.v) % (W + 20)) - 10;
         const w = Math.max(1, Math.round(r.w * (0.6 + 0.4 * Math.sin(g.t + r.p))));
         ctx.fillRect(x, Math.floor(r.y), w, 1);
       }
-      // кувшинки
+      // камни (горное озеро)
+      for (let i = 0; i < rocks.length; i++) { const r = rocks[i];
+        if (!r.on) continue;
+        ctx.fillStyle = rgbMix(ROCK_C, ROCK_D, dusk);
+        ctx.fillRect(r.x, r.y - 2, r.w, 3);
+        ctx.fillRect(r.x + 1, r.y - 3, r.w - 2, 1);
+        ctx.fillStyle = rgbMix(P3.water, WHITE, 0.4, 0.5);
+        ctx.fillRect(r.x - 1, r.y + 1, r.w + 2, 1);
+      }
+      if (scene.snag) {
+        // коряга
+        ctx.fillStyle = rgbMix(SNAG_C, SNAG_D, dusk);
+        ctx.fillRect(84, 124, 14, 2);
+        ctx.fillRect(95, 119, 2, 5);
+        ctx.fillRect(97, 117, 3, 2);
+        ctx.fillRect(86, 121, 2, 3);
+      }
       for (let i12 = 0; i12 < pads.length; i12++) { const p = pads[i12];
+        if (!p.on) continue;
         ctx.fillStyle = rgbMix(PAD_C, PAD_D, dusk);
         ctx.fillRect(p.x, p.y, 7, 2);
         ctx.fillRect(p.x + 1, p.y - 1, 4, 1);
@@ -1053,8 +1417,16 @@ export default {
         ctx.fillRect(p.x + 2, p.y - 2, 2, 1);
       }
       drawDuck(dusk);
-      // камыш
+      // туман у старицы
+      if (LOOKS[scene.lake].trees === 'willow') {
+        for (let i = 0; i < fogs.length; i++) { const f = fogs[i];
+          ctx.fillStyle = rgbMix(FOG_C, SHADE, s * 0.4, 0.16);
+          ctx.fillRect(Math.round(f.x), Math.round(f.y), Math.round(f.w), 5);
+          ctx.fillRect(Math.round(f.x) + 10, Math.round(f.y) - 2, Math.round(f.w) - 20, 2);
+        }
+      }
       for (let i13 = 0; i13 < reeds.length; i13++) { const r = reeds[i13];
+        if (!r.on) continue;
         const sway = Math.round(Math.sin(g.t * 1.3 + r.p));
         ctx.fillStyle = rgbMix(REED_C, REED_D, dusk);
         ctx.fillRect(r.x, H - r.h, 1, r.h);
@@ -1062,8 +1434,8 @@ export default {
         ctx.fillStyle = rgbMix(CAT_C, CAT_D, dusk);
         ctx.fillRect(r.x + sway, H - r.h - 6, 2, 4);
       }
-      // стрекозы днём, светлячки ночью
       for (let i14 = 0; i14 < flies.length; i14++) { const f = flies[i14];
+        if (g.rainK > 0.6) break;
         const fx = Math.round(f.x), fy = Math.round(f.y + Math.sin(g.t * 5 + f.p));
         if (night < 1) {
           ctx.fillStyle = rgbMix(DRAGON, SHADE, dusk * 0.5, 1 - night);
@@ -1086,7 +1458,7 @@ export default {
       for (let x = PIER_X + 4; x < W; x += 18) {
         ctx.fillStyle = woodDS;
         ctx.fillRect(x, DECK_Y, 3, H - DECK_Y);
-        ctx.fillStyle = rgbMix(P.water, WHITE, 0.3, 0.5);
+        ctx.fillStyle = rgbMix(P3.water, WHITE, 0.3, 0.5);
         ctx.fillRect(x - 2, DECK_Y + 30 + Math.round(Math.sin(g.t * 2 + x)), 7, 1);
       }
       ctx.fillStyle = woodS;
@@ -1094,8 +1466,6 @@ export default {
       ctx.fillStyle = woodDS;
       for (let x = PIER_X + 5; x < W; x += 6) ctx.fillRect(x, DECK_Y, 1, 4);
       ctx.fillRect(PIER_X, DECK_Y + 4, W - PIER_X, 1);
-      // табурет и ящик
-      ctx.fillStyle = woodDS;
       ctx.fillRect(SPOT_X - 1, DECK_Y - 3, 5, 1);
       ctx.fillRect(SPOT_X - 1, DECK_Y - 2, 1, 2);
       ctx.fillRect(SPOT_X + 3, DECK_Y - 2, 1, 2);
@@ -1103,7 +1473,6 @@ export default {
       ctx.fillRect(SEAT_X - 2, DECK_Y - 4, 7, 4);
       ctx.fillStyle = woodDS;
       ctx.fillRect(SEAT_X - 2, DECK_Y - 2, 7, 1);
-      // корзина старика с уловом
       const nb = Math.min(5, basketN);
       for (let i = 0; i < nb; i++) {
         ctx.fillStyle = i % 2 ? '#c9a640' : '#5f8a5a';
@@ -1114,30 +1483,26 @@ export default {
       ctx.fillStyle = rgbMix(WICK_C, BLACK, 0.25 + dusk * 0.3);
       ctx.fillRect(BASKET_X, DECK_Y - 5, 8, 1);
       ctx.fillRect(BASKET_X, DECK_Y - 2, 8, 1);
-      // ведро игрока
       ctx.fillStyle = rgbMix(BUCK_C, BUCK_D, dusk);
       ctx.fillRect(BUCKET_X, DECK_Y - 7, 8, 7);
       ctx.fillStyle = rgbMix(BUCK2_C, BUCK2_D, dusk);
       ctx.fillRect(BUCKET_X, DECK_Y - 7, 8, 1);
-      if (g.caught.length) {
+      if (g.caughtN) {
         ctx.fillStyle = '#c9a640';
         ctx.fillRect(BUCKET_X + 2, DECK_Y - 9, 3, 2);
       }
-      if (g.caught.length > 3) {
+      if (g.caughtN > 3) {
         ctx.fillStyle = '#5f8a5a';
         ctx.fillRect(BUCKET_X + 4, DECK_Y - 10, 3, 3);
       }
 
-      // люди: дальний — раньше
       if (old.x >= you.x) { drawPerson(old, true, dusk); drawPerson(you, false, dusk); }
       else { drawPerson(you, false, dusk); drawPerson(old, true, dusk); }
-      // удочка
       const tip = rodTip();
       const tx = tip.x, ty = tip.y;
       const base = rodBase();
       line(base.x, base.y, tx, ty, rgbMix(ROD_C, ROD_D, dusk));
 
-      // леска и поплавок
       const lineC = 'rgba(240,240,240,0.7)';
       if (g.st === 'fly' || g.st === 'retrieve') {
         sagLine(tx, ty, g.bob.x, g.bob.y, 2, lineC);
@@ -1146,7 +1511,7 @@ export default {
         let by = g.bob.ty;
         let bx = g.bob.tx;
         if (g.st === 'wait') by += g.nibble > 0 ? 1 : Math.round(Math.sin(g.t * 2.5) * 0.6);
-        if (g.st === 'bite') by += KINDS[g.kind].dip + (Math.floor(g.t * 12) % 2);
+        if (g.st === 'bite') { const t = tierOf(g.catchSp); by += (t < 0 ? 1 : 1 + Math.min(3, t)) + (Math.floor(g.t * 12) % 2); }
         if (g.st === 'reel') { by += 2; bx += Math.round(Math.sin(g.t * 9) * 2); }
         sagLine(tx, ty, bx, by, g.st === 'reel' ? 0 : 6, lineC);
         const rr = Math.floor((g.t * 6) % 6);
@@ -1168,32 +1533,54 @@ export default {
         if (g.st === 'wait' && g.spooked > 0) drawText(ctx, '?', bx - 1, by - 12, '#ffffff', 1);
       }
 
-      // летящий улов
       for (let i15 = 0; i15 < flyers.length; i15++) { const f = flyers[i15];
         if (!f.on || f.delay > 0) continue;
         const k = f.t;
         const x = lerp(f.x0, f.x1, k);
         const y = lerp(f.y0, f.y1, k) - Math.sin(k * Math.PI) * f.h;
-        const sp = f.mini ? MINNOW : KINDS[f.kind].sp;
+        const sp = f.spr;
         drawSprite(ctx, sp, x - (sp.w >> 1), y - (sp.h >> 1), 1, f.flip);
       }
-      // частицы
       for (let i16 = 0; i16 < parts.length; i16++) { const p = parts[i16];
         if (!p.on) continue;
         ctx.fillStyle = p.c;
         ctx.fillRect(Math.round(p.x), Math.round(p.y), 1, 1);
       }
+      // дождь
+      if (g.rainK > 0.02) {
+        ctx.fillStyle = rgbStr(200, 220, 240, 0.45 * g.rainK);
+        const n = Math.round(drops.length * g.rainK);
+        for (let i = 0; i < n; i++) { const d = drops[i]; ctx.fillRect(Math.round(d.x), Math.round(d.y), 1, 3); }
+      }
+      // затемнение при переходе
+      if (g.fade > 0) {
+        ctx.fillStyle = rgbStr(10, 12, 20, g.fade < 1 ? g.fade : 2 - g.fade);
+        ctx.fillRect(0, 0, W, H);
+      }
 
       const hud = clamp(g.hud, 0, 1);
       if (hud <= 0.01) return;
       ctx.globalAlpha = hud;
-      const inPlay = g.phase === 'play';
+      drawHud();
+      ctx.globalAlpha = 1;
+    };
 
+    // ---------- HUD ----------
+    const box = (x, y, w, h, a) => {
+      ctx.fillStyle = rgbStr(20, 14, 10, a);
+      ctx.fillRect(x, y, w, h);
+    };
+    const shadowLabel = (str, x, y, c, sc = 1) => {
+      drawLabel(ctx, str, x + 1, y + 1, 'rgba(10,6,4,0.7)', sc);
+      return drawLabel(ctx, str, x, y, c, sc);
+    };
+    const drawHud = () => {
+      const inPlay = g.phase === 'play';
+      const pr = P.p;
       // шкала заряда
-      if (inPlay && g.st === 'charge') {
+      if (inPlay && g.st === 'charge' && !g.panel) {
         const bx = 196, by = DECK_Y - 40, bw = 44;
-        ctx.fillStyle = 'rgba(20,14,10,0.8)';
-        ctx.fillRect(bx - 1, by - 1, bw + 2, 6);
+        box(bx - 1, by - 1, bw + 2, 6, 0.8);
         for (let i = 0; i < bw; i += 4) {
           ctx.fillStyle = rgbStr(lerp(90, 250, i / bw), lerp(170, 200, i / bw), lerp(230, 50, i / bw), 0.45);
           ctx.fillRect(bx + i, by, 4, 4);
@@ -1210,70 +1597,99 @@ export default {
           ctx.fillRect(px, py + 2, 1, 1);
         }
       }
-
-      // мини-игра вываживания
-      if (inPlay && g.st === 'reel') {
-        const k = KINDS[g.kind];
-        const px = 282, py = 16, ph = 132;
-        ctx.fillStyle = 'rgba(24,16,10,0.85)';
-        ctx.fillRect(px - 4, py - 4, 34, ph + 8);
+      // вываживание
+      if (inPlay && g.st === 'reel' && !g.panel) {
+        const R = g.R;
+        const px = 282, py = 34, ph = 118;
+        box(px - 4, py - 4, 34, ph + 8, 0.85);
         ctx.fillStyle = '#7a5530';
         ctx.fillRect(px - 4, py - 4, 34, 1);
         ctx.fillRect(px - 4, py + ph + 3, 34, 1);
-        ctx.fillStyle = rgbMix(P.water, P.deep, 0.5);
+        ctx.fillStyle = rgbMix(P3.water, P3.deep, 0.5);
         ctx.fillRect(px, py, 14, ph);
-        const zh = Math.round(k.zone * ph);
+        if (g.beh === 3) {
+          ctx.fillStyle = 'rgba(220,240,255,0.18)';
+          for (let y = py + 4; y < py + ph; y += 9) ctx.fillRect(px + 1, y, 12, 1);
+        }
+        const zh = Math.round(R.zone * ph);
         const zy = Math.round(py + ph - (g.zone * ph) - zh);
-        const inside = g.fish >= g.zone && g.fish <= g.zone + k.zone;
+        const inside = g.fish >= g.zone && g.fish <= g.zone + R.zone;
         ctx.fillStyle = inside ? '#5fd36a' : '#3e9a4a';
         ctx.fillRect(px + 1, zy, 12, zh);
         ctx.fillStyle = 'rgba(255,255,255,0.35)';
         ctx.fillRect(px + 1, zy, 12, 1);
         ctx.fillRect(px + 1, zy + zh - 1, 12, 1);
         const fy = Math.round(py + ph - g.fish * ph) - 2;
-        const fc = g.kind === 'golden' ? '#ffd34a' : g.kind === 'chest' ? '#b07a3a' : g.kind === 'boot' ? '#7a5a3a' : g.kind === 'large' ? '#7ab070' : '#e0c050';
-        ctx.fillStyle = '#1a1410';
-        ctx.fillRect(px + 3, fy - 1, 9, 6);
-        ctx.fillStyle = fc;
-        ctx.fillRect(px + 4, fy, 5, 4);
-        ctx.fillRect(px + 9, fy + 1, 2, 2);
-        ctx.fillStyle = '#1a1410';
-        ctx.fillRect(px + 5, fy + 1, 1, 1);
+        const c = g.catchSp;
+        const t = tierOf(c);
+        const fc = c === BOOT ? '#7a5a3a' : c === CHEST ? '#b07a3a' : t >= 0 ? TIERS[t].col : '#e0c050';
+        if (g.fishVis > 0) {
+          ctx.fillStyle = '#1a1410';
+          ctx.fillRect(px + 3, fy - 1, 9, 6);
+          ctx.fillStyle = fc;
+          ctx.fillRect(px + 4, fy, 5, 4);
+          ctx.fillRect(px + 9, fy + 1, 2, 2);
+          ctx.fillStyle = '#1a1410';
+          ctx.fillRect(px + 5, fy + 1, 1, 1);
+        } else {
+          ctx.fillStyle = 'rgba(200,240,255,0.25)';
+          ctx.fillRect(px + 4, fy + 1, 5, 2);
+        }
         const prh = Math.round(clamp(g.prog, 0, 1) * ph);
         ctx.fillStyle = '#2a1c14';
         ctx.fillRect(px + 18, py, 6, ph);
         ctx.fillStyle = g.prog < 0.25 ? '#e05040' : g.prog < 0.6 ? '#f0c040' : '#60d870';
         ctx.fillRect(px + 19, py + ph - prh, 4, prh);
-        const blink = Math.floor(g.t * 3) % 2 === 0;
         drawIcon(ctx, 'up', px + 4, py + ph + 6);
-        if (held && blink) {
+        if (held && Math.floor(g.t * 3) % 2 === 0) {
           ctx.fillStyle = 'rgba(255,255,255,0.15)';
           ctx.fillRect(px, py, 14, ph);
         }
+        if (t === 4) {
+          ctx.fillStyle = Math.floor(g.t * 4) % 2 ? '#ffd34a' : '#fff2a8';
+          ctx.fillRect(px - 4, py - 4, 34, 1);
+          ctx.fillRect(px - 4, py + ph + 3, 34, 1);
+        }
       }
-
       // показ улова
-      if (inPlay && g.st === 'show' && g.showKind) {
-        const sp = KINDS[g.showKind].sp;
-        const sc = 3;
-        const age = 1.7 - g.timer;
+      if (inPlay && g.st === 'show' && g.show && !g.panel) {
+        const c = g.show;
+        const sp = c.spr;
+        const sc = sp.w > 14 ? 2 : 3;
+        const age = 1.9 - g.timer;
         const pop = Math.min(1, age * 5);
-        const cx = 150, cy = 44 - Math.round((1 - pop) * 10);
-        ctx.fillStyle = 'rgba(20,14,10,0.6)';
-        ctx.fillRect(cx - 34, cy - 14, 68, 46);
-        ctx.fillStyle = 'rgba(255,230,150,0.25)';
-        ctx.fillRect(cx - 34, cy - 14, 68, 1);
-        drawSprite(ctx, sp, cx - Math.round(sp.w * sc / 2), cy - 8 + Math.round(Math.sin(age * 6) * 1), sc);
-        if (g.showKind === 'golden' || g.showKind === 'chest') {
+        const cx = 150, cy = 40 - Math.round((1 - pop) * 10);
+        const t = tierOf(c);
+        box(cx - 52, cy - 16, 104, 62, 0.65);
+        ctx.fillStyle = t >= 0 ? TIERS[t].col : '#a08060';
+        ctx.fillRect(cx - 52, cy - 16, 104, 1);
+        ctx.fillRect(cx - 52, cy + 45, 104, 1);
+        drawSprite(ctx, sp, cx - Math.round(sp.w * sc / 2), cy - 6 + Math.round(Math.sin(age * 6) * 1) - Math.round(sp.h * sc / 2) + 6, sc);
+        if (t >= 2 || c === CHEST) {
           ctx.fillStyle = '#fff6b0';
           const kk = Math.floor(age * 10) % 4;
-          ctx.fillRect(cx - 24 + kk * 14, cy - 10 + (kk % 2) * 20, 1, 3);
-          ctx.fillRect(cx - 25 + kk * 14, cy - 9 + (kk % 2) * 20, 3, 1);
+          ctx.fillRect(cx - 34 + kk * 20, cy - 10 + (kk % 2) * 22, 1, 3);
+          ctx.fillRect(cx - 35 + kk * 20, cy - 9 + (kk % 2) * 22, 3, 1);
         }
-        const str = g.showPts === 2 ? '+2' : g.showPts === 10 ? '+10' : g.showPts === 25 ? '+25' : g.showPts === 40 ? '+40' : '+75';
-        const tw = textWidth(str, 2);
-        drawText(ctx, str, cx - tw / 2 + 1, cy + 18, '#2a1a10', 2);
-        drawText(ctx, str, cx - tw / 2, cy + 17, '#ffe070', 2);
+        const nw = labelWidth(c.name);
+        shadowLabel(c.name, cx - (nw >> 1), cy + 20, t >= 0 ? TIERS[t].col : '#e0d0b0');
+        if (g.showSize > 0) {
+          drawInt(ctx, g.showSize, cx - 40, cy + 30, '#e8e2d4');
+          drawLabel(ctx, 'СМ', cx - 40 + intWidth(g.showSize) + 3, cy + 30, '#a89a88');
+        }
+        if (g.showCoins > 0) {
+          const cw = intWidth(g.showCoins) + 9;
+          drawSprite(ctx, IC.coin, cx + 40 - cw, cy + 30);
+          drawText(ctx, '+', cx + 40 - cw - 4, cy + 30, '#ffe070');
+          drawInt(ctx, g.showCoins, cx + 46 - cw, cy + 30, '#ffe070');
+        }
+        if (g.showNew && Math.floor(age * 4) % 2 === 0) {
+          const w2 = labelWidth('НОВЫЙ ВИД!');
+          shadowLabel('НОВЫЙ ВИД!', cx - (w2 >> 1), cy - 13, '#ffe070');
+        } else if (t >= 0) {
+          const w2 = labelWidth(TIERS[t].name);
+          drawLabel(ctx, TIERS[t].name, cx - (w2 >> 1), cy - 13, TIERS[t].col);
+        }
       }
       if (inPlay && g.st === 'miss') {
         const bx = g.bob.tx, by = g.bob.ty;
@@ -1281,36 +1697,246 @@ export default {
         drawText(ctx, 'x', bx - 3, by - 17, '#ff7060', 2);
       }
 
-      // ---------- HUD ----------
-      for (let i = 0; i < CASTS; i++) {
-        const x = 5 + i * 6, y = 5;
-        const used = g.phase !== 'intro' && (i < g.cast || (i === g.cast && g.st !== 'ready' && g.st !== 'charge' && g.st !== 'rest'));
-        ctx.fillStyle = used ? 'rgba(40,30,30,0.5)' : '#f4f0e8';
-        ctx.fillRect(x, y, 3, 2);
-        ctx.fillStyle = used ? 'rgba(40,30,30,0.5)' : '#e04040';
-        ctx.fillRect(x, y + 2, 3, 2);
+      // ---- верх слева: уровень, опыт, монеты, силы ----
+      box(2, 2, 104, 30, 0.55);
+      drawLabel(ctx, 'УР', 5, 5, '#c8b890');
+      drawInt(ctx, pr.lvl, 16, 5, '#ffffff');
+      const need = xpNeed(pr.lvl);
+      const xw = pr.lvl >= MAX_LVL ? 60 : Math.round(60 * clamp(pr.xp / need, 0, 1));
+      ctx.fillStyle = '#2a2018';
+      ctx.fillRect(28, 6, 62, 3);
+      ctx.fillStyle = '#8fd0ff';
+      ctx.fillRect(29, 7, xw, 1);
+      if (P.author) {
+        ctx.fillStyle = '#ff6ab0';
+        ctx.fillRect(94, 4, 9, 7);
+        drawLabel(ctx, 'A', 96, 5, '#ffffff');
       }
-      let ix = 5;
-      for (let i = 0; i < g.caught.length; i++) {
-        const sp = KINDS[g.caught[i]].sp;
-        drawSprite(ctx, sp, ix, 13);
-        ix += sp.w + 2;
+      drawSprite(ctx, IC.coin, 5, 13);
+      drawInt(ctx, pr.coins, 12, 13, '#ffe070');
+      if (pr.gold > 0) {
+        drawSprite(ctx, IC.gold, 60, 14);
+        drawInt(ctx, pr.gold, 65, 13, '#ffd34a');
       }
+      // силы
+      drawSprite(ctx, IC.flask, 5, 21);
+      ctx.fillStyle = '#2a2018';
+      ctx.fillRect(11, 22, 62, 4);
+      const fw = Math.round(60 * clamp(g.fat / g.fatMax, 0, 1));
+      ctx.fillStyle = g.fat < g.fatMax * 0.2 ? (Math.floor(g.t * 4) % 2 ? '#ff7050' : '#c04030') : '#f0a040';
+      ctx.fillRect(12, 23, fw, 2);
+      // время суток и погода
+      const td = tod();
+      drawSprite(ctx, td === 0 ? IC.sun : td === 1 ? IC.dusk : IC.moon, 77, 21);
+      if (g.wx) drawSprite(ctx, g.wx === 2 ? IC.rain : IC.cloud, 85, 21);
+      // место
+      box(2, 34, labelWidth(LAKES[scene.lake].name) + 6, 15, 0.4);
+      drawLabel(ctx, LAKES[scene.lake].name, 5, 36, '#cfe8ff');
+      drawLabel(ctx, SPOT_NAMES[scene.spot], 5, 42, '#8fb0c8');
+
+      // ---- верх справа: счёт и рекорд ----
       const scoreV = g.phase === 'intro' ? 0 : Math.round(g.score);
-      const sw = textWidth(scoreV < 10 ? '0' : scoreV < 100 ? '00' : '000', 2);
-      drawNumber(ctx, scoreV, W - 6 - sw + 1, 6, 'rgba(20,14,10,0.6)', 2);
-      drawNumber(ctx, scoreV, W - 6 - sw, 5, '#ffffff', 2);
+      const sw = intWidth(scoreV, 2);
+      drawInt(ctx, scoreV, W - 6 - sw + 1, 6, 'rgba(20,14,10,0.6)', 2);
+      drawInt(ctx, scoreV, W - 6 - sw, 5, '#ffffff', 2);
       const best = Math.max(0, Math.floor(api.best || 0));
-      const bw2 = textWidth(best < 10 ? '0' : best < 100 ? '00' : best < 1000 ? '000' : '0000', 1);
-      drawNumber(ctx, best, W - 6 - bw2, 18, '#ffe070', 1);
+      const bw2 = intWidth(best);
+      drawInt(ctx, best, W - 6 - bw2, 18, '#ffe070');
       drawIcon(ctx, 'trophy', W - 6 - bw2 - 10, 17);
 
+      // ---- задания дня ----
+      if (!(inPlay && g.st === 'reel') && pr.d) {
+        const d = pr.d;
+        const x0 = W - 52;
+        box(x0 - 2, 27, 52, 25, 0.45);
+        for (let i = 0; i < 3; i++) {
+          const tk = d.l[i];
+          if (!tk) continue;
+          const y = 29 + i * 8;
+          drawSprite(ctx, DAILY_ICON[tk[0]] || IC.fish, x0, y + (tk[0] === 4 ? 1 : 0));
+          if (d.c[i]) {
+            drawSprite(ctx, IC.check, x0 + 8, y + 1);
+            drawLabel(ctx, 'ГОТОВО', x0 + 15, y, '#60e070');
+          } else {
+            let x = x0 + 8;
+            x += drawInt(ctx, tk[3], x, y, '#e8e2d4') + 1;
+            x += drawText(ctx, '/', x, y, '#8a7a70') + 1;
+            drawInt(ctx, tk[2], x, y, '#c8b890');
+          }
+        }
+      }
+      // ---- кнопки ----
+      if (inPlay) {
+        for (let i = 0; i < 3; i++) {
+          const on = (i === 0 && g.panel === 'album') || (i === 1 && g.panel === 'shop') || (i === 2 && g.panel === 'map');
+          box(BTN_X[i] - 1, BTN_Y - 1, 13, 11, on ? 0.9 : 0.55);
+          if (on) { ctx.fillStyle = '#ffe070'; ctx.fillRect(BTN_X[i] - 1, BTN_Y + 9, 13, 1); }
+          drawSprite(ctx, i === 0 ? IC.book : i === 1 ? IC.bag : IC.map, BTN_X[i] + 2, BTN_Y + 1);
+        }
+      }
       // подсказка: держи
-      if ((inPlay && g.st === 'ready') || (g.phase === 'intro' && holder === you && passT < 0)) {
+      if (((inPlay && g.st === 'ready') || (g.phase === 'intro' && holder === you && passT < 0)) && !g.panel) {
         if (Math.floor(g.t * 2) % 2 === 0) drawIcon(ctx, 'down', SPOT_X - 2, DECK_Y - 26);
       }
-      ctx.globalAlpha = 1;
+      // всплывашка
+      if (g.toast && g.toastT > 0) {
+        const a = clamp(g.toastT * 3, 0, 1) * clamp((2.2 - g.toastT) * 5, 0, 1);
+        const tw = labelWidth(g.toast.text);
+        const ga = ctx.globalAlpha;
+        ctx.globalAlpha = ga * a;
+        box(160 - (tw >> 1) - 4, 150, tw + 8, 11, 0.8);
+        drawLabel(ctx, g.toast.text, 160 - (tw >> 1), 153, g.toast.color);
+        ctx.globalAlpha = ga;
+      }
+      if (inPlay && g.panel) drawPanel();
     };
+
+    // ---------- панели ----------
+    const panelFrame = (title) => {
+      box(PX, PY, PW, PH, 0.9);
+      ctx.fillStyle = '#7a5530';
+      ctx.fillRect(PX, PY, PW, 1);
+      ctx.fillRect(PX, PY + PH - 1, PW, 1);
+      ctx.fillRect(PX, PY, 1, PH);
+      ctx.fillRect(PX + PW - 1, PY, 1, PH);
+      drawLabel(ctx, title, PX + 6, PY + 5, '#ffe070');
+      // крестик
+      ctx.fillStyle = '#5a3a20';
+      ctx.fillRect(PX + PW - 12, PY + 3, 9, 8);
+      drawText(ctx, 'x', PX + PW - 10, PY + 4, '#ffffff');
+    };
+    const drawPanel = () => {
+      const pr = P.p;
+      if (g.panel === 'album') {
+        panelFrame('АЛЬБОМ');
+        const n = albumCount(pr);
+        let x = PX + 50;
+        x += drawInt(ctx, n, x, PY + 5, '#ffffff') + 1;
+        x += drawText(ctx, '/', x, PY + 5, '#8a7a70') + 1;
+        drawInt(ctx, ALBUM_TOTAL, x, PY + 5, '#c8b890');
+        for (let i = 0; i < SPECIES.length; i++) {
+          const s = SPECIES[i];
+          const col = i % 7, row = Math.floor(i / 7);
+          const cx = PX + 6 + col * 39, cy = PY + 15 + row * 28;
+          const a = pr.alb[s.id];
+          const got = a && a[0] > 0;
+          const open = P.lakeOpen(s.lake);
+          ctx.fillStyle = i === g.sel ? 'rgba(120,90,50,0.9)' : s.tier === 4 ? 'rgba(70,56,20,0.8)' : 'rgba(46,36,28,0.8)';
+          ctx.fillRect(cx, cy, 38, 27);
+          ctx.fillStyle = TIERS[s.tier].col;
+          ctx.fillRect(cx, cy + 26, 38, 1);
+          const sp = s.spr;
+          const sx = cx + 19 - (sp.w >> 1), sy = cy + 10 - (sp.h >> 1);
+          if (got) drawSprite(ctx, sp, sx, sy);
+          else drawSilhouette(ctx, sp, sx, sy, 1, open ? '#120c08' : '#2a221c');
+          if (got) drawInt(ctx, a[0], cx + 2, cy + 20, '#c8b890');
+          else if (!open) drawSprite(ctx, IC.lock, cx + 2, cy + 20);
+        }
+        // описание выбранной
+        const s = SPECIES[g.sel];
+        const a = pr.alb[s.id];
+        const got = a && a[0] > 0;
+        const y = PY + PH - 20;
+        if (got) {
+          let x2 = PX + 6;
+          x2 += drawLabel(ctx, s.name, x2, y, TIERS[s.tier].col) + 6;
+          x2 += drawLabel(ctx, TIERS[s.tier].name, x2, y, '#8a7a70') + 6;
+          x2 += drawText(ctx, 'x', x2, y, '#8a7a70') + 2;
+          drawInt(ctx, a[0], x2, y, '#e8e2d4');
+          let x3 = PX + 6;
+          x3 += drawLabel(ctx, 'РЕКОРД', x3, y + 8, '#8a7a70') + 4;
+          x3 += drawInt(ctx, a[1], x3, y + 8, '#ffffff') + 3;
+          drawLabel(ctx, 'СМ', x3, y + 8, '#8a7a70');
+        } else {
+          drawLabel(ctx, '???', PX + 6, y, '#8a7a70');
+          drawLabel(ctx, P.lakeOpen(s.lake) ? LAKES[s.lake].name : 'ОЗЕРО ЗАКРЫТО', PX + 30, y, '#8fb0c8');
+        }
+        if (s.need) {
+          // подсказка к легенде
+          let x4 = PX + 150;
+          const n2 = s.need;
+          x4 += drawLabel(ctx, 'КЛЮЁТ:', x4, y + 8, '#ffd34a') + 4;
+          if (n2.tod != null) x4 += drawLabel(ctx, n2.tod === 0 ? 'ДНЁМ' : n2.tod === 1 ? 'НА ЗАКАТЕ' : 'НОЧЬЮ', x4, y + 8, '#e8e2d4') + 4;
+          if (n2.wx != null) x4 += drawLabel(ctx, n2.wx === 0 ? 'ЯСНО' : n2.wx === 1 ? 'ОБЛАЧНО' : 'ДОЖДЬ', x4, y + 8, '#e8e2d4') + 4;
+          if (n2.spot != null) drawLabel(ctx, SPOT_NAMES[n2.spot], x4, y + 8, '#e8e2d4');
+        }
+      } else if (g.panel === 'shop') {
+        panelFrame('ЛАВКА');
+        drawSprite(ctx, IC.coin, PX + 60, PY + 5);
+        drawInt(ctx, pr.coins, PX + 67, PY + 5, '#ffe070');
+        if (pr.gold > 0) { drawSprite(ctx, IC.gold, PX + 110, PY + 6); drawInt(ctx, pr.gold, PX + 115, PY + 5, '#ffd34a'); }
+        for (let i = 0; i < UPGRADES.length; i++) {
+          const u = UPGRADES[i];
+          const x = PX + 6 + i * 56, y = PY + 16;
+          const price = upgradePrice(pr, i);
+          const ok = price >= 0 && pr.coins >= price;
+          ctx.fillStyle = ok ? 'rgba(90,64,40,0.95)' : 'rgba(50,40,36,0.9)';
+          ctx.fillRect(x, y, 52, 104);
+          ctx.fillStyle = ok ? '#c8a060' : '#5a4a40';
+          ctx.fillRect(x, y, 52, 1);
+          ctx.fillRect(x, y + 103, 52, 1);
+          drawInt(ctx, i + 1, x + 2, y + 2, 'rgba(255,255,255,0.5)');
+          const ic = UPG_ICON[i];
+          drawSprite(ctx, ic, x + 26 - ic.w, y + 10, 2);
+          const nw = labelWidth(u.name);
+          drawLabel(ctx, u.name, x + 26 - (nw >> 1), y + 30, '#e8e2d4');
+          for (let k = 0; k < u.max; k++) {
+            ctx.fillStyle = k < pr.up[i] ? '#ffe070' : '#3a2e28';
+            ctx.fillRect(x + 26 - u.max * 3 + k * 6, y + 40, 4, 3);
+          }
+          const h1 = HINTS[i][0], h2 = HINTS[i][1];
+          drawLabel(ctx, h1, x + 26 - (labelWidth(h1) >> 1), y + 50, '#8a7a70');
+          if (h2) drawLabel(ctx, h2, x + 26 - (labelWidth(h2) >> 1), y + 57, '#8a7a70');
+          if (price < 0) drawLabel(ctx, 'МАКС', x + 26 - (labelWidth('МАКС') >> 1), y + 88, '#8a7a70');
+          else {
+            const pw = intWidth(price) + 7;
+            drawSprite(ctx, IC.coin, x + 26 - (pw >> 1), y + 88);
+            drawInt(ctx, price, x + 26 - (pw >> 1) + 7, y + 88, ok ? '#8af0a8' : '#c06060');
+          }
+        }
+        drawLabel(ctx, 'ЗОЛОТАЯ НАЖИВКА - ЗА ВСЕ ЗАДАНИЯ ДНЯ', PX + 6, PY + PH - 12, '#8a7a70');
+      } else if (g.panel === 'map') {
+        panelFrame('КАРТА');
+        for (let l = 0; l < LAKES.length; l++) {
+          const L = LAKES[l];
+          const y = PY + 18 + l * 31;
+          const open = P.lakeOpen(l);
+          ctx.fillStyle = l === scene.lake ? 'rgba(40,70,90,0.9)' : 'rgba(40,32,26,0.85)';
+          ctx.fillRect(PX + 6, y, PW - 12, 28);
+          // миниатюра воды
+          const look = LOOKS[l];
+          ctx.fillStyle = rgbStr(look.water[0][0], look.water[0][1], look.water[0][2], open ? 1 : 0.3);
+          ctx.fillRect(PX + 9, y + 3, 20, 22);
+          ctx.fillStyle = rgbStr(look.hill[0][0], look.hill[0][1], look.hill[0][2], open ? 1 : 0.3);
+          ctx.fillRect(PX + 9, y + 3, 20, 6);
+          if (!open) drawSprite(ctx, IC.lock, PX + 17, y + 12);
+          drawInt(ctx, l + 1, PX + 33, y + 4, 'rgba(255,255,255,0.5)');
+          drawLabel(ctx, L.name, PX + 40, y + 4, open ? '#e8e2d4' : '#6a5a50');
+          // прогресс альбома этого озера
+          let got = 0;
+          for (let i = 0; i < SPECIES.length; i++) if (SPECIES[i].lake === l && pr.alb[SPECIES[i].id] && pr.alb[SPECIES[i].id][0] > 0) got++;
+          drawSprite(ctx, IC.fish, PX + 40, y + 15);
+          let x = PX + 48;
+          x += drawInt(ctx, got, x, y + 14, '#c8b890') + 1;
+          x += drawText(ctx, '/', x, y + 14, '#8a7a70') + 1;
+          drawInt(ctx, 7, x, y + 14, '#8a7a70');
+          if (!open) { drawLabel(ctx, 'УР', PX + 80, y + 14, '#c06060'); drawInt(ctx, L.lvl, PX + 92, y + 14, '#c06060'); }
+          for (let s = 0; s < 3; s++) {
+            const bx = PX + 120 + s * 55, by = y + 4;
+            const so = P.spotOpen(l, s);
+            const cur = l === scene.lake && s === scene.spot;
+            const selc = g.msel === l * 3 + s;
+            ctx.fillStyle = cur ? 'rgba(90,150,90,0.95)' : so ? 'rgba(90,64,40,0.95)' : 'rgba(50,40,36,0.8)';
+            ctx.fillRect(bx, by, 52, 14);
+            if (selc) { ctx.fillStyle = '#ffe070'; ctx.fillRect(bx, by + 13, 52, 1); }
+            if (so) drawLabel(ctx, SPOT_NAMES[s], bx + 26 - (labelWidth(SPOT_NAMES[s]) >> 1), by + 5, '#e8e2d4');
+            else { drawLabel(ctx, 'УР', bx + 14, by + 5, '#8a6a60'); drawInt(ctx, L.spots[s], bx + 26, by + 5, '#8a6a60'); }
+          }
+        }
+      }
+    };
+
+    if (typeof api._debug === 'function') { try { api._debug({ g, P, scene }); } catch (e) { /* тесты */ } }
 
     // ---------- цикл ----------
     let raf = 0;
@@ -1335,7 +1961,11 @@ export default {
           g.sky = clamp((env.dark || 0) * 2, 0, 2);
         }
       } else pressedEdge = false;
-      if (g.phase !== shownPhase) { shownPhase = g.phase; if (canvas.dataset) canvas.dataset.gamePhase = shownPhase; }
+      if (g.phase !== shownPhase) {
+        shownPhase = g.phase;
+        if (canvas.dataset) canvas.dataset.gamePhase = shownPhase;
+        if (typeof api._phase === 'function') { try { api._phase(shownPhase); } catch (e) { /* отладка */ } }
+      }
       draw();
       raf = requestAnimationFrame(loop);
     };
@@ -1344,6 +1974,7 @@ export default {
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
+      if (g.phase === 'play') { P.p.best = Math.max(P.p.best, Math.round(g.score)); P.save(); }
       if (canvas.dataset) delete canvas.dataset.gamePhase;
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
@@ -1356,3 +1987,4 @@ export default {
     };
   }
 };
+

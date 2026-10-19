@@ -1,24 +1,28 @@
-// «Тюремная смена» — куй заказы на наковальне в ритм и тайком копай подкоп, пока стражник не смотрит.
-// Одновременно живой фон лаунчера «Тюрьма»: заключённый спокойно кует, стражник бродит и зевает,
-// крыса, капель. По «Играть» стражник уходит в обход, заключённый подмигивает — смена началась.
-// При выходе звенит колокол, стражник возвращается, заключённый прикрывает лаз и снова кует.
-import { drawText, textWidth, drawIcon, drawInt, intWidth } from './pixfont.js';
+// «Побег» — кампания из 10 тюрем. В каждой своя охрана и свои звери; куй заказы на наковальне ради милости
+// и тайком копай подкоп, пока никто не видит. Готовый подкоп — ползёшь в следующую тюрьму.
+// В последнем зале ждёт сам Кокк (нарисован по его настоящему скину) и вручает плащ беглеца.
+// Одновременно живой фон лаунчера: тюрьма, в которой игрок сидит сейчас (idle → intro → play → over/outro).
+import { drawText, textWidth, drawInt, intWidth, drawLabel, labelWidth, drawIcon } from './pixfont.js';
+import {
+  W, H, FLOOR, ANVIL_X, SMITH_X, DIG_X, CROUCH_X, CRATE_X, TUN_Y, TUN_H, SHAFT_LEN, TUN_LEN, SEGS, SHIFT,
+  AUTHOR_NEED, FREE_NEED, needOf, SHOVELS, ITEMS, PRISONS, REWARD_AT, ARTEFACTS, DAILY
+} from './prison/config.js';
+import { freshData, readRoot, buildRoot, rollDaily, albumCount, hasArt, addArt, rewardsFor } from './prison/progress.js';
+import { alphaTable, pickA, rng, drawArt, drawIco } from './prison/art.js';
+import { drawGuard, drawBeast, drawSeer, drawPrisoner } from './prison/figures.js';
+import { makeScene, drawStatic, updateScene, drawBack, drawFront } from './prison/scenes.js';
+import { buildKokk, skinPixels, drawKokk } from './prison/kokk.js';
 
-const W = 320;
-const H = 180;
-const FLOOR = 148; // линия пола (ноги)
-const U = 2; // масштаб человечков
-const ANVIL_X = 168;
-const SMITH_X = 150; // где стоит заключённый у наковальни
-const DIG_X = 112; // тайник с подкопом
-const CROUCH_X = DIG_X + 6; // где сидит заключённый, когда копает
-const CRATE_X = 214;
-const VIS = 96; // дальность взгляда стражника
-const SHIFT = 120; // смена, секунд
 const BTN = { x: 274, y: 140, w: 42, h: 36 }; // кнопка-лопата
-const INTRO_T = 1.8;
+const BOOK = { x: 3, y: 3, w: 16, h: 16 }; // кнопка-книга
+const SLOT_Y = 160;
+const INTRO_T = 1.9;
 const OUTRO_T = 3.0;
 const OUTRO_MAX = 3.8;
+const ESC_DROP = 0.8; // прыжок в лаз
+const ESC_CRAWL = 3.8; // конец ползка
+const ESC_END = 6.2; // конец баннера новой тюрьмы
+const FIN_END = 14.5;
 
 const ORDERS = [
   { icon: 'horseshoe', speed: 0.85, mult: 1 },
@@ -26,42 +30,27 @@ const ORDERS = [
   { icon: 'sword', speed: 1.35, mult: 2 }
 ];
 
-// полупрозрачные заливки — заранее, чтобы не собирать строки каждый кадр
-const AN = 16;
-const alphaTable = (r, g, b, maxA) => {
-  const t = [];
-  for (let i = 0; i < AN; i++) t.push(`rgba(${r},${g},${b},${((maxA * i) / (AN - 1)).toFixed(3)})`);
-  return t;
-};
-const pickA = (tbl, k) => tbl[Math.max(0, Math.min(AN - 1, Math.round(k * (AN - 1))))];
-const FORGE1 = alphaTable(255, 140, 60, 0.17);
-const FORGE2 = alphaTable(255, 160, 70, 0.1);
-const TORCH = alphaTable(255, 170, 70, 0.1);
-const LANT = alphaTable(255, 200, 90, 0.18);
 const DIM = alphaTable(10, 6, 10, 0.45);
-const MOONBEAM = alphaTable(170, 190, 255, 0.07);
-const SUNBEAM = alphaTable(255, 220, 150, 0.09);
-const mixC = (a, b, t) => `rgb(${Math.round(a[0] + (b[0] - a[0]) * t)},${Math.round(a[1] + (b[1] - a[1]) * t)},${Math.round(a[2] + (b[2] - a[2]) * t)})`;
-const PANE = [];
-for (let i = 0; i < 8; i++) PANE.push(mixC([138, 180, 226], [44, 52, 86], i / 7));
+const BLACK = alphaTable(0, 0, 0, 1);
+const WHITE = alphaTable(255, 250, 230, 1);
+const WARDG = alphaTable(200, 120, 255, 0.5);
+const CONE_N = 'rgba(255,220,120,0.16)';
+const CONE_A = 'rgba(255,60,50,0.26)';
+const CONE_E = 'rgba(255,230,150,0.35)';
+const CONE_EA = 'rgba(255,90,80,0.55)';
+const PANEL = 'rgba(16,12,18,0.86)';
+const SHADE = 'rgba(20,14,18,0.6)';
 
-function rng(seed) {
-  let s = seed >>> 0;
-  return () => {
-    s = (s + 0x6d2b79f5) >>> 0;
-    let t = s;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+const FINALE_LINES = ['ПРИВЕТ, БЕГЛЕЦ!', 'ТЫ ПРОШЁЛ ВСЕ 10 ТЮРЕМ.', 'ДЕРЖИ ПЛАЩ БЕГЛЕЦА!', 'ТЫ СВОБОДЕН!'];
+const FINALE_AT = [2.4, 5.2, 8.0, 10.8];
+const PAGE_NAMES = ['ЛАВКА', 'АЛЬБОМ', 'ЗАДАНИЯ'];
 
 export default {
   id: 'prison',
-  title: 'Тюремная смена',
+  title: 'Побег',
   sceneTitle: 'Тюрьма',
-  desc: 'Куй заказы в ритм на наковальне и тайком копай подкоп, пока стражник не смотрит.',
-  controls: 'Пробел/↑/клик — удар молотом · держи ↓ или кнопку-лопату — копать',
+  desc: 'Десять тюрем, одна лопата. Куй заказы ради милости охраны и тайком копай подкоп, пока никто не видит.',
+  controls: 'Пробел/↑/клик — молот · держи ↓ или кнопку-лопату — копать · 1–5 — хитрости · Tab — книга',
 
   mount(canvas, api) {
     canvas.width = W;
@@ -71,40 +60,111 @@ export default {
     const prevTouch = canvas.style.touchAction;
     canvas.style.touchAction = 'none';
     const rand = rng((Date.now() ^ 0xa11e) >>> 0);
-    const readBest = () => Math.max(0, Math.floor(Number(api && api.best) || 0));
-    let best = readBest();
+    const variant = Math.max(0, Math.min(10, Math.floor(Number(api && api.variant) || 0)));
     const sfx = (n) => { try { api.sfx && api.sfx(n); } catch (e) { /* звук не обязателен */ } };
     const getMode = () => {
+      if (variant) return 'idle';
       try { return typeof api.mode === 'function' ? api.mode() : 'play'; } catch (e) { return 'idle'; }
     };
+    const readBest = () => Math.max(0, Math.floor(Number(api && api.best) || 0));
+    let best = readBest();
 
-    // ---- фон: кирпичи считаем один раз ----
-    const bricks = [];
-    for (let row = 0; row * 9 < FLOOR; row++) {
-      const off = row & 1 ? 9 : 0;
-      for (let x = -off; x < W; x += 18) {
-        const r = rand();
-        if (r < 0.28) bricks.push(x + 1, row * 9 + 1, 17, 8, r < 0.12 ? 0 : 1);
+    // ---------- прогресс ----------
+    let real = freshData();
+    let auth = freshData();
+    let authorMode = false;
+    let D = real;
+    const isAuthor = () => { try { return !!api.author; } catch (e) { return false; } };
+    const hasR = (id) => { try { return typeof api.hasReward === 'function' && !!api.hasReward(id); } catch (e) { return false; } };
+    const grant = (id) => {
+      if (variant) return;
+      if (authorMode) { msg('(АВТОР) НАГРАДА', '#c8a0ff'); return; }
+      if (hasR(id)) return;
+      try { typeof api.reward === 'function' && api.reward(id); } catch (e) { /* хост */ }
+    };
+    const loadSave = () => {
+      if (variant) { D = freshData(); D.cur = variant; return; }
+      let raw = {};
+      try { raw = typeof api.load === 'function' ? api.load() || {} : {}; } catch (e) { raw = {}; }
+      const r = readRoot(raw);
+      real = r.real; auth = r.author;
+      authorMode = isAuthor();
+      D = authorMode ? auth : real;
+      // потерянные награды восстанавливаются сами
+      if (!authorMode) for (const id of rewardsFor(real.cur)) if (!hasR(id)) { try { api.reward(id); } catch (e) { /* хост */ } }
+    };
+    let saveT = 0;
+    const persist = () => {
+      if (variant) return;
+      saveT = 0;
+      try { typeof api.save === 'function' && api.save(buildRoot(real, auth)); } catch (e) { /* хост */ }
+    };
+    const getDay = () => { try { return typeof api.day === 'function' ? api.day() : null; } catch (e) { return null; } };
+    const checkDay = () => { if (!variant && rollDaily(D.dy, getDay(), Math.min(10, D.cur))) persist(); };
+    loadSave();
+    checkDay();
+    const isFree = () => !variant && D.cur > 10;
+    const curNeed = () => (authorMode ? AUTHOR_NEED : isFree() ? FREE_NEED : needOf(Math.min(10, D.cur)));
+    const toolMul = () => SHOVELS[D.tool].mul;
+
+    // ---------- Кокк ----------
+    let kokk = buildKokk(null);
+    try {
+      if (typeof api.skin === 'function') {
+        const pr0 = api.skin(api.authorNick || 'Kokk');
+        if (pr0 && typeof pr0.then === 'function') pr0.then((img) => { const px = skinPixels(img); if (px && alive) { kokk = buildKokk(px); if (S) S.kokk = kokk; } }, () => {});
       }
-    }
-    const stones = [];
-    for (let i = 0; i < 40; i++) stones.push(Math.floor(rand() * W), FLOOR + 6 + Math.floor(rand() * 26), 2 + Math.floor(rand() * 3));
+    } catch (e) { /* запасной Кокк */ }
+    const KK = { on: false, x: 300, tx: 300, walk: 0, reach: 0, wave: 0, t: 0, face: -1 }; // Кокк на полу
 
-    // ---- фазы: idle | intro | play | end (до over) | wait (карточка) | outro ----
+    // ---------- фазы ----------
+    // idle | intro | play | end | wait | escape | finale | outro
     let phase = 'idle';
     let pt = 0;
     let age = 0;
+    let clock = 0;
     let sawOver = false;
     let fl1 = false;
-    let endWin = false; // смена отработана (а не поймали)
+    let endWin = false;
+    let menu = false;
+    let page = 0;
+    let sel = 0;
 
-    // ---- состояние смены ----
-    let clock = 0;
+    // ---------- сцена ----------
+    let S = null;
+    let sceneP = 0;
+    const guards = [];
+    const beasts = [];
+    const seers = [];
+    const wards = [];
+    let bg = null;
+    let bgReady = false;
+    try {
+      if (typeof OffscreenCanvas !== 'undefined') bg = new OffscreenCanvas(W, H);
+      else if (typeof document !== 'undefined') { bg = document.createElement('canvas'); bg.width = W; bg.height = H; }
+    } catch (e) { bg = null; }
+
+    const setScene = (p) => {
+      sceneP = p;
+      S = makeScene(p, rand);
+      S.kokk = kokk;
+      S.kokkOnBalcony = p === 10 && !(isFree() && !variant);
+      bgReady = false;
+      const def = PRISONS[p];
+      guards.length = 0; beasts.length = 0; seers.length = 0; wards.length = 0;
+      for (const g of def.guards) guards.push({ look: g.look, x: g.x, y: g.ledge || FLOOR, ledge: !!g.ledge, dir: -1, state: 'ipause', t: 0, len: 1, spd: g.spd, base: g.spd, vis: g.vis, sus: g.sus, min: g.min, max: g.max, post: !!g.post, home: g.x, tx: g.x, after: '', moving: false, stir: 0, look2: 0, drunk: 0 });
+      for (const b of def.beasts) beasts.push({ kind: b.kind, x: b.x, dir: -1, st: 'idle', t: 0, len: 1, tx: b.x, min: b.min, max: b.max, spd: b.spd, rad: b.rad, pond: !!b.pond, sub: !!b.pond, home: false, warn: 0, chew: 0 });
+      for (const s of def.seers) seers.push({ kind: s.kind, x: s.x, y: s.y, bx: s.x, by: s.y, tx: s.x, ty: s.y, dir: 1, st: s.kind === 'parrot' ? 'perch' : 'fly', t: 0, len: 3, rad: s.rad, through: !!s.through });
+      for (const w of def.wards) wards.push({ x: w.x, per: w.per, off: w.off });
+      KK.on = p === 10 && isFree();
+      KK.x = 250; KK.tx = 250; KK.walk = 0; KK.reach = 0; KK.wave = 0;
+    };
+    setScene(variant || Math.min(10, D.cur));
+
+    // ---------- состояние смены ----------
     let time = 0;
     let scoreV = 0;
     let lastScore = 0;
-    let lives = 3;
-    // ковка
     let order = null;
     let orderGap = 0;
     let marker = 0;
@@ -115,35 +175,47 @@ export default {
     let lastQ = -1;
     let lastQT = 0;
     let combo = 0;
-    // подкоп
+    let runCombo = 0;
     let digHoldKey = false;
     let digHoldPtr = false;
     let digging = false;
-    let segs = 0;
-    let prog = 0;
+    let sw = 0; // 0 у наковальни … 1 у лаза
     let digSnd = 0;
     let seenT = 0;
+    let seenBy = 0; // 0 стражник, 1 зверь, 2 дух, 3 руна
+    let heat = 0;
+    let faintT = 0;
+    let flaskT = 0;
+    let cloakT = 0;
+    let quakeT = 40;
+    let quakeWarn = 0;
+    let stunT = 0;
+    let caughtLoss = 0;
+    let runFav = 0;
+    let runDig = 0;
+    let lastSeg = 0;
+    let wardClock = 0;
+    let finaleGiven = false;
+    let pendingFinal = false;
+    let crawlPal = null;
+    let crawlFrom = 1;
+    let escToP = 1;
+    let escWasFree = false;
+    let escArrived = false;
+    let bannerT = 0;
+    let bannerP = 0;
+    let dayT = 0;
     // подача
-    let hudA = 0; // HUD смены
-    let coneA = 0; // конус взгляда
-    let tunA = 0; // видимость лаза в разрезе
-    let pileA = 0; // кучка земли у тайника
-    let tileOpen = 0; // плитка-тайник отодвинута 0..1
-    let bellT = 0; // колокол качается
+    let hudA = 0;
+    let coneA = 0;
+    let tileOpen = 0;
+    let pileA = 0;
+    let bellT = 0;
     let dimA = 0;
-    let crateN = 2; // изделий в ящике
-    // заключённый (вне смены)
+    let crateN = 2;
     const pr = { x: SMITH_X, tx: SMITH_X, spd: 40, pose: 'forge', face: 1, st: 'forge', t: 0, hitT: 0.6, hits: 0, need: 6, icon: 'horseshoe', wink: 0 };
-    let tGlance = 8 + Math.random() * 8;
-    // стражник
-    const guard = { x: 236, dir: 1, state: 'iwalk', t: 0, look: 0, tx: 270, spd: 14, after: '', len: 1, moving: false, stir: 0 };
-    // крыса и капель
-    const rat = { on: false, x: 304, dir: -1, st: 0, t: 0, tx: 250 };
-    let tRat = 10 + Math.random() * 10;
-    const drops = [];
-    for (let i = 0; i < 3; i++) drops.push({ on: false, x: 0, y: 0, vy: 0, t: 0 });
-    let tDrop = 2;
-    // окружение
+    const prq = { x: SMITH_X, pose: 'forge', face: 1, wink: 0, dig: false, shovel: false, swing: 0, sheep: false, cape: false };
+    let tGlance = 8 + rand() * 8;
     let dark = 1;
     let anim = true;
     let envT = 0;
@@ -155,15 +227,14 @@ export default {
     };
     pollEnv();
 
+    // частицы и всплывающие надписи
     const parts = [];
-    for (let i = 0; i < 48; i++) parts.push({ on: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, c: '#fff', g: 1 });
+    for (let i = 0; i < 56; i++) parts.push({ on: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, c: '#fff', g: 1 });
     const spark = (x, y, n, c, spd, g = 1) => {
-      for (let i = 0; i < parts.length; i++) {
+      for (let i = 0; i < parts.length && n > 0; i++) {
         const p = parts[i];
-        if (n <= 0) break;
         if (p.on) continue;
-        p.on = true;
-        p.x = x; p.y = y;
+        p.on = true; p.x = x; p.y = y;
         const a = -Math.PI / 2 + (rand() - 0.5) * 2.4;
         const v = spd * (0.4 + rand() * 0.8);
         p.vx = Math.cos(a) * v; p.vy = Math.sin(a) * v;
@@ -179,12 +250,43 @@ export default {
       for (let i = 0; i < pops.length; i++) if (!pops[i].on) { p = pops[i]; break; }
       p.on = true; p.x = x; p.y = y; p.s = s; p.c = c; p.life = 1;
     };
+    const msgs = [];
+    for (let i = 0; i < 3; i++) msgs.push({ on: false, s: '', c: '#fff', t: 0, w: 0 });
+    function msg(s, c) {
+      let m = msgs[0];
+      for (let i = 0; i < msgs.length; i++) if (!msgs[i].on) { m = msgs[i]; break; }
+      if (m.on) { msgs[0].on = false; msgs.push(msgs.shift()); m = msgs[2]; }
+      m.on = true; m.s = s; m.c = c; m.t = 2.6; m.w = labelWidth(s, 1);
+    }
 
+    function setPhase(p) {
+      phase = p; pt = 0; fl1 = false;
+      if (typeof api._phase === 'function') { try { api._phase(p); } catch (e) { /* отладка */ } }
+    }
+
+    // ---------- ежедневные задания ----------
+    const task = (k, add, isMax) => {
+      if (variant) return;
+      const t = D.dy.t;
+      for (let i = 0; i < t.length; i++) {
+        const q = t[i];
+        if (q.done || DAILY[q.i].k !== k) continue;
+        q.n = isMax ? Math.max(q.n, add) : q.n + add;
+        if (q.n >= q.g) {
+          q.n = q.g; q.done = 1;
+          const f = DAILY[q.i].fav;
+          D.fav += f; runFav += f;
+          msg('ЗАДАНИЕ ВЫПОЛНЕНО +' + f, '#7dffaa');
+          sfx('win');
+          persist();
+        }
+      }
+    };
+
+    // ---------- ковка ----------
     const timeLeft = () => Math.max(0, SHIFT - time);
-    const guardSpeed = () => 20 + 26 * Math.min(1, time / SHIFT);
-    const zoneW = () => 0.15 - 0.05 * Math.min(1, time / SHIFT);
-    const segTime = () => 4.5 + segs * 0.9;
-
+    const hardK = () => (sceneP - 1) / 9;
+    const zoneW = () => (0.15 - 0.05 * Math.min(1, time / SHIFT)) * (1 - 0.15 * hardK());
     const newOrder = () => {
       const tier = time < 25 ? 1 : time < 60 ? 2 : 3;
       const o = ORDERS[Math.floor(rand() * tier)];
@@ -193,30 +295,9 @@ export default {
       zoneC = 0.2 + rand() * 0.6;
       marker = 0; mdir = 1;
     };
-
-    function setPhase(p) {
-      phase = p; pt = 0; fl1 = false;
-      if (typeof api._phase === 'function') { try { api._phase(p); } catch (e) { /* отладка */ } }
-    }
-
-    const finish = () => {
-      if (phase !== 'play') return;
-      endWin = lives > 0;
-      setPhase('end');
-      digging = false;
-      lastScore = Math.floor(scoreV);
-      sfx(endWin ? 'win' : 'lose');
-      if (endWin) { bellT = 1.4; guard.state = 'iwalk'; guard.tx = CRATE_X + 16; guard.after = 'stand'; guard.spd = 30; }
-      else {
-        pr.x = CROUCH_X; pr.tx = CROUCH_X; pr.pose = 'handsup';
-        guard.state = 'grab'; guard.t = 0;
-      }
-    };
-
-    // ---- удар молотом ----
     const hit = () => {
-      if (phase !== 'play' || !order || orderGap > 0) return;
-      if (hitCd > 0 || digging) return;
+      if (phase !== 'play' || menu || !order || orderGap > 0) return;
+      if (hitCd > 0 || sw > 0 || faintT > 0) return;
       const half = zoneW() / 2;
       const d = Math.abs(marker - zoneC);
       let q = 0;
@@ -230,11 +311,14 @@ export default {
       const ax = ANVIL_X + 2, ay = FLOOR - 22;
       if (q === 2) {
         combo++;
+        if (combo > runCombo) { runCombo = combo; task('combo', combo, true); }
         const pts = Math.round(10 * m) + Math.min(10, combo);
         scoreV += pts;
         pop(ax, ay - 14, '+' + pts, '#7dffaa');
         spark(ax, ay, 9, '#ffd060', 70);
         sfx('coin');
+        D.st.perf++;
+        task('perf', 1);
       } else if (q === 1) {
         combo = 0;
         const pts = Math.round(4 * m);
@@ -253,31 +337,98 @@ export default {
         let good = 0, perfect = true;
         for (let i = 0; i < order.hits.length; i++) { if (order.hits[i] > 0) good++; if (order.hits[i] !== 2) perfect = false; }
         let bonus = good >= 2 ? Math.round(10 * m) : 0;
-        if (perfect) bonus += Math.round(15 * m);
+        let fav = good >= 2 ? Math.round(2 * m) : 0;
+        if (perfect) { bonus += Math.round(15 * m); fav += Math.round(3 * m); }
         if (bonus > 0) {
           scoreV += bonus;
-          pop(40, 60, '+' + bonus, perfect ? '#7dffaa' : '#ffe08a');
+          D.fav += fav; runFav += fav;
+          pop(46, 74, '+' + fav, '#ffd34a');
           if (perfect) spark(ax, ay - 6, 12, '#7dffaa', 80);
           crateN = Math.min(6, crateN + 1);
+          D.st.ord++;
+          task('ord', 1);
         }
         orderGap = 0.7;
       }
     };
 
-    // ---- ввод (только в смене) ----
+    // ---------- предметы ----------
+    const useItem = (i) => {
+      if (phase !== 'play' || menu) return;
+      const it = ITEMS[i];
+      if (!it) return;
+      if (D.it[i] <= 0) { msg('НЕТ: ' + it.name.toUpperCase(), '#ff9a80'); sfx('hit'); return; }
+      let used = false;
+      if (it.id === 'bone') {
+        let b = null, bd = 1e9;
+        for (const q of beasts) { if (q.st === 'chew' || q.sub) continue; const d = Math.abs(q.x - DIG_X); if (d < bd) { bd = d; b = q; } }
+        if (b) { b.st = 'chew'; b.t = 0; b.chew = 25; b.warn = 0; used = true; msg('ГРЫЗЁТ КОСТЬ', '#ece4d0'); }
+        else msg('НЕКОМУ БРОСИТЬ', '#ff9a80');
+      } else if (it.id === 'bottle') {
+        let g = null, gd = 1e9;
+        for (const q of guards) { if (q.drunk > 0 || q.look === 'golem' || q.look === 'shade') continue; const d = Math.abs(q.x - DIG_X); if (d < gd) { gd = d; g = q; } }
+        if (g) { g.drunk = 12; g.state = 'drunk'; g.t = 0; used = true; msg('СТРАЖ ЗАДРЕМАЛ', '#9ae0a0'); }
+        else msg('ЭТОТ НЕ ПЬЁТ', '#ff9a80');
+      } else if (it.id === 'cloak') { cloakT = 20; used = true; msg('ПЛАЩ: МАГИЯ СЛЕПА', '#c8a0ff'); }
+      else if (it.id === 'flask') { heat = 0; faintT = 0; flaskT = 30; used = true; msg('ГЛОТОК ВОДЫ', '#8ad0ff'); }
+      else if (it.id === 'prop') { msg('ПОДПОРКА СРАБОТАЕТ САМА', '#e0c080'); }
+      if (used) { D.it[i]--; sfx('click'); task('item', 1); persist(); }
+    };
+
+    // ---------- лавка ----------
+    const shopRows = () => 1 + ITEMS.length;
+    const buy = (row) => {
+      if (row === 0) {
+        const nx = D.tool + 1;
+        if (nx >= SHOVELS.length) { msg('ЛУЧШЕ НЕ БЫВАЕТ', '#ffd34a'); return; }
+        if (D.fav < SHOVELS[nx].cost) { msg('МАЛО МИЛОСТИ', '#ff9a80'); sfx('hit'); return; }
+        D.fav -= SHOVELS[nx].cost; D.tool = nx; sfx('win'); msg('НОВАЯ: ' + SHOVELS[nx].name.toUpperCase(), '#7dffaa'); persist();
+        return;
+      }
+      const i = row - 1;
+      const it = ITEMS[i];
+      if (!it) return;
+      if (D.it[i] >= it.max) { msg('БОЛЬШЕ НЕ УНЕСТИ', '#ff9a80'); return; }
+      if (D.fav < it.cost) { msg('МАЛО МИЛОСТИ', '#ff9a80'); sfx('hit'); return; }
+      D.fav -= it.cost; D.it[i]++; sfx('coin'); persist();
+    };
+
+    // ---------- ввод ----------
     const KEYS_HIT = { Space: 1, Enter: 1, ArrowUp: 1, KeyW: 1 };
     const KEYS_DIG = { ArrowDown: 1, KeyS: 1 };
+    const KEYS_ITEM = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Digit5: 4, Numpad1: 0, Numpad2: 1, Numpad3: 2, Numpad4: 3, Numpad5: 4 };
+    const toggleMenu = () => {
+      if (phase !== 'play') return;
+      menu = !menu;
+      digHoldKey = false; digHoldPtr = false;
+      sfx('click');
+      if (menu) sel = 0;
+    };
+    const menuKey = (code) => {
+      const left = code === 'ArrowLeft' || code === 'KeyA', right = code === 'ArrowRight' || code === 'KeyD';
+      if (page === 1 && left && sel % 10 > 0) sel--;
+      else if (page === 1 && right && sel % 10 < 9) sel++;
+      else if (left) { page = (page + 2) % 3; sel = 0; sfx('click'); }
+      else if (right) { page = (page + 1) % 3; sel = 0; sfx('click'); }
+      else if (code === 'ArrowUp' || code === 'KeyW') { sel = page === 1 ? (sel + ARTEFACTS.length - 10) % ARTEFACTS.length : Math.max(0, sel - 1); }
+      else if (code === 'ArrowDown' || code === 'KeyS') { sel = page === 1 ? (sel + 10) % ARTEFACTS.length : Math.min(page === 0 ? shopRows() - 1 : 2, sel + 1); }
+      else if (code === 'Enter' || code === 'Space') { if (page === 0) buy(sel); }
+    };
     const onKeyDown = (e) => {
-      if (phase !== 'play') return; // в покое клавиши принадлежат лаунчеру
-      if (KEYS_HIT[e.code]) {
+      if (phase !== 'play') return; // в покое и в сценках клавиши принадлежат лаунчеру
+      const c = e.code;
+      if (c === 'Tab' || c === 'KeyB') { e.preventDefault(); if (!e.repeat) toggleMenu(); return; }
+      if (menu) {
+        if (c === 'Escape') return; // Esc — лаунчеру
         e.preventDefault();
-        if (e.repeat) return;
-        hit();
-      } else if (KEYS_DIG[e.code]) {
-        e.preventDefault();
-        if (e.repeat) return; // после поимки надо отпустить и нажать заново
-        digHoldKey = true;
+        if (!e.repeat || c.startsWith('Arrow')) menuKey(c);
+        return;
       }
+      if (authorMode && (e.key === ']' || c === 'BracketRight')) { e.preventDefault(); if (!e.repeat) authorSkip(1); return; }
+      if (authorMode && (e.key === '[' || c === 'BracketLeft')) { e.preventDefault(); if (!e.repeat) authorSkip(-1); return; }
+      if (KEYS_HIT[c]) { e.preventDefault(); if (!e.repeat) hit(); }
+      else if (KEYS_DIG[c]) { e.preventDefault(); if (!e.repeat) digHoldKey = true; }
+      else if (KEYS_ITEM[c] !== undefined) { e.preventDefault(); if (!e.repeat) useItem(KEYS_ITEM[c]); }
     };
     const onKeyUp = (e) => {
       if (KEYS_DIG[e.code]) { digHoldKey = false; if (phase === 'play') e.preventDefault(); }
@@ -293,15 +444,16 @@ export default {
       if (phase !== 'play') return;
       e.preventDefault();
       const p = toLocal(e);
+      if (p.x >= BOOK.x - 2 && p.x <= BOOK.x + BOOK.w + 2 && p.y >= BOOK.y - 2 && p.y <= BOOK.y + BOOK.h + 2) { toggleMenu(); return; }
+      if (menu) { menuClick(p.x, p.y); return; }
+      if (p.y >= SLOT_Y - 2 && p.x < 4 + ITEMS.length * 18) { useItem(Math.floor((p.x - 4) / 18)); return; }
       if (p.x >= BTN.x - 4 && p.y >= BTN.y - 4) {
         digHoldPtr = true;
         digPtrId = e.pointerId;
         try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ничего */ }
       } else hit();
     };
-    const onUp = (e) => {
-      if (e.pointerId === digPtrId) { digHoldPtr = false; digPtrId = null; }
-    };
+    const onUp = (e) => { if (e.pointerId === digPtrId) { digHoldPtr = false; digPtrId = null; } };
     const onCtx = (e) => { if (phase === 'play') e.preventDefault(); };
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
@@ -311,52 +463,66 @@ export default {
     canvas.addEventListener('pointercancel', onUp);
     canvas.addEventListener('contextmenu', onCtx);
 
-    // ---- стражник в смене ----
-    const looksAtDig = () => {
-      const dx = DIG_X - guard.x;
-      if (guard.state === 'alert') return false;
+    // книга: геометрия
+    const MB = { x: 40, y: 22, w: 240, h: 136 };
+    function menuClick(x, y) {
+      // вкладки
+      if (y >= MB.y + 4 && y <= MB.y + 14) {
+        for (let i = 0; i < 3; i++) if (x >= MB.x + 8 + i * 78 && x < MB.x + 8 + i * 78 + 72) { page = i; sel = 0; sfx('click'); return; }
+      }
+      if (x < MB.x || x > MB.x + MB.w || y < MB.y || y > MB.y + MB.h) { menu = false; return; }
+      if (page === 0) {
+        const r = Math.floor((y - (MB.y + 24)) / 16);
+        if (r >= 0 && r < shopRows()) { sel = r; buy(r); }
+      } else if (page === 1) {
+        const c = Math.floor((x - (MB.x + 10)) / 22), r = Math.floor((y - (MB.y + 26)) / 22);
+        if (c >= 0 && c < 10 && r >= 0 && r < 3) sel = r * 10 + c;
+      }
+    }
+
+    // ---------- стражники ----------
+    const guardGo = (g, tx, spd, after) => { g.state = 'iwalk'; g.tx = tx; g.spd = spd; g.after = after; g.t = 0; };
+    const sees = (g) => {
+      if (g.state === 'drunk' || g.state === 'doze' || g.drunk > 0) return false;
+      const dx = DIG_X + 5 - g.x;
       if (Math.abs(dx) < 10) return true;
-      return dx * guard.dir > 0 && Math.abs(dx) <= VIS;
+      return dx * g.dir > 0 && Math.abs(dx) <= g.vis;
     };
-    const updateGuardPlay = (dt) => {
-      const g = guard;
+    const updGuardPlay = (g, dt) => {
       g.t += dt;
       g.moving = false;
+      const k = Math.min(1, time / SHIFT);
+      if (g.drunk > 0) {
+        g.drunk -= dt;
+        g.state = 'drunk';
+        if (g.drunk <= 0) { g.state = g.post ? 'stand' : 'walk'; g.t = 0; g.stir = 0.8; }
+        return;
+      }
+      if (g.post) {
+        // часовой: стоит, иногда оборачивается (с предупреждением «?»)
+        if (g.state === 'suspect') { if (g.t > 0.65) { g.dir = -g.dir; g.state = 'stand'; g.t = 0; g.len = 2.2 + rand() * 3 - k; } }
+        else if (g.state === 'stand') { if (g.t > g.len) { g.state = 'suspect'; g.t = 0; } }
+        else { g.state = 'stand'; g.t = 0; g.len = 2 + rand() * 2; g.x = g.home; }
+        return;
+      }
       if (g.state === 'walk') {
         g.moving = true;
-        g.x += g.dir * guardSpeed() * dt;
-        if (g.x < 26) { g.x = 26; g.state = 'endpause'; g.t = 0; }
-        else if (g.x > 296) { g.x = 296; g.state = 'endpause'; g.t = 0; }
-        else {
-          const p = 0.1 + 0.22 * Math.min(1, time / SHIFT);
-          if (g.t > 1.5 && rand() < p * dt) { g.state = 'suspect'; g.t = 0; }
-        }
-      } else if (g.state === 'endpause') {
-        if (g.t > 0.7) { g.dir = -g.dir; g.state = 'walk'; g.t = 0; }
-      } else if (g.state === 'suspect') {
-        // «?» над головой — предупреждение, затем оглядывается назад
-        if (g.t > 0.65) { g.dir = -g.dir; g.state = 'look'; g.t = 0; g.look = 0.9 + rand() * 0.8; }
-      } else if (g.state === 'look') {
-        if (g.t > g.look) { g.dir = -g.dir; g.state = 'walk'; g.t = 0; }
-      } else if (g.state === 'alert') {
-        g.dir = DIG_X < g.x ? -1 : 1;
-        if (g.t > 1.8) { g.state = 'walk'; g.t = 0; }
-      } else {
-        // пришёл из покоя/вступления — просто начинает обход
-        g.state = 'walk'; g.t = 0;
-      }
+        g.x += g.dir * g.base * (1 + 0.5 * k) * (S.def.hazards.slip ? 0.9 : 1) * dt;
+        if (g.x < g.min) { g.x = g.min; g.state = 'endpause'; g.t = 0; }
+        else if (g.x > g.max) { g.x = g.max; g.state = 'endpause'; g.t = 0; }
+        else if (g.t > 1.5 && rand() < g.sus * (1 + k) * dt) { g.state = 'suspect'; g.t = 0; }
+        else if (S.def.hazards.sway && rand() < 0.05 * dt) { g.state = 'stumble'; g.t = 0; }
+      } else if (g.state === 'endpause') { if (g.t > 0.7) { g.dir = -g.dir; g.state = 'walk'; g.t = 0; } }
+      else if (g.state === 'suspect') { if (g.t > 0.65) { g.dir = -g.dir; g.state = 'look'; g.t = 0; g.look2 = 0.9 + rand() * 0.8; } }
+      else if (g.state === 'look') { if (g.t > g.look2) { g.dir = -g.dir; g.state = 'walk'; g.t = 0; } }
+      else if (g.state === 'stumble') { if (g.t > 0.8) { g.state = 'walk'; g.t = 0; } }
+      else { g.state = 'walk'; g.t = 0; if (g.x < g.min || g.x > g.max) g.x = Math.max(g.min, Math.min(g.max, g.x)); }
     };
-
-    // ---- стражник вне смены: бродит, зевает, дремлет, забирает изделия ----
-    const guardGo = (tx, spd, after) => {
-      const g = guard;
-      g.state = 'iwalk'; g.tx = tx; g.spd = spd; g.after = after; g.t = 0;
-    };
-    const updateGuardIdle = (dt) => {
-      const g = guard;
+    const updGuardIdle = (g, dt, i) => {
       g.t += dt;
       g.moving = false;
       if (g.stir > 0) g.stir -= dt;
+      if (g.drunk > 0) { g.drunk = 0; }
       if (g.state === 'iwalk') {
         const d = g.tx - g.x;
         if (Math.abs(d) <= g.spd * dt + 0.1) {
@@ -369,25 +535,106 @@ export default {
       } else if (g.state === 'ipause' || g.state === 'stand') {
         if (g.t > g.len) {
           const r = rand();
-          if (crateN >= 5 && r < 0.6) guardGo(CRATE_X + 18, 14, 'collect');
+          if (g.post) {
+            if (r < 0.3) { g.state = 'yawn'; g.t = 0; g.len = 2.2; }
+            else if (r < 0.45) { g.state = 'doze'; g.t = 0; g.len = 8 + rand() * 6; }
+            else { g.dir = -g.dir; g.state = 'ipause'; g.t = 0; g.len = 2 + rand() * 4; }
+            if (Math.abs(g.x - g.home) > 1) guardGo(g, g.home, 14, 'ipause');
+          } else if (i === 0 && !g.ledge && crateN >= 5 && r < 0.6) guardGo(g, CRATE_X + 18, 14, 'collect');
           else if (r < 0.2) { g.state = 'yawn'; g.t = 0; g.len = 2.2; }
-          else if (r < 0.36) guardGo(286, 14, 'doze');
-          else guardGo(rand() < 0.8 ? 236 + rand() * 60 : 74 + rand() * 46, 12 + rand() * 6, 'ipause');
+          else if (r < 0.34) guardGo(g, Math.min(g.max, 286), 14, 'doze');
+          else {
+            const lo = Math.max(g.min, 180), hi = g.max;
+            guardGo(g, rand() < 0.75 ? lo + rand() * (hi - lo) : g.min + rand() * Math.max(10, (hi - g.min) * 0.5), g.base * 0.6 + rand() * 4, 'ipause');
+          }
         }
-      } else if (g.state === 'yawn') {
-        if (g.t > g.len) { g.state = 'ipause'; g.t = 0; g.len = 0.6; }
-      } else if (g.state === 'doze') {
-        if (g.t > g.len) { g.state = 'ipause'; g.t = 0; g.len = 1.2; g.stir = 0.6; }
-      } else if (g.state === 'collect') {
-        if (g.t > 0.9 && crateN > 0) crateN = 0;
-        if (g.t > g.len) { g.state = 'ipause'; g.t = 0; g.len = 0.8; }
-      } else {
-        // из смены (walk/look/alert/grab...) — спокойно в обход
-        guardGo(236 + rand() * 50, 14, 'ipause');
+      } else if (g.state === 'yawn') { if (g.t > g.len) { g.state = 'ipause'; g.t = 0; g.len = 0.6; } }
+      else if (g.state === 'doze') { if (g.t > g.len) { g.state = 'ipause'; g.t = 0; g.len = 1.2; g.stir = 0.6; } }
+      else if (g.state === 'collect') { if (g.t > 0.9 && crateN > 0) crateN = 0; if (g.t > g.len) { g.state = 'ipause'; g.t = 0; g.len = 0.8; } }
+      else if (g.state === 'salute') { /* стоят смирно в финале */ }
+      else guardGo(g, g.post ? g.home : Math.max(g.min, Math.min(g.max, 236 + rand() * 50)), 14, 'ipause');
+    };
+
+    // ---------- звери ----------
+    const updBeast = (b, dt, play) => {
+      b.t += dt;
+      if (b.st === 'chew') {
+        b.chew -= dt;
+        if (b.chew <= 0 || !play) { b.st = 'idle'; b.t = 0; b.len = 1; }
+        return;
+      }
+      if (b.pond && b.sub) {
+        // крокодил в пруду
+        b.x += Math.sin(clock * 0.7) * 3 * dt;
+        if (b.x < 70) b.x = 70; if (b.x > 100) b.x = 100;
+        if (b.t > b.len) { b.sub = false; b.st = 'walk'; b.t = 0; b.tx = 110 + rand() * 40; b.dir = 1; }
+        return;
+      }
+      if (b.st === 'walk') {
+        const d = b.tx - b.x;
+        if (Math.abs(d) <= b.spd * dt + 0.2) {
+          b.x = b.tx;
+          const r = rand();
+          if (b.pond && b.home) { b.home = false; b.sub = true; b.st = 'idle'; b.t = 0; b.len = 6 + rand() * 8; }
+          else if (b.pond && r < 0.35) { b.st = 'walk'; b.tx = 84; b.t = 0; b.home = true; }
+          else if (!play && r < 0.15) { b.st = 'sleep'; b.t = 0; b.len = 6 + rand() * 8; }
+          else { b.st = 'sniff'; b.t = 0; b.len = 0.8 + rand() * 1.6; }
+        } else { b.dir = d > 0 ? 1 : -1; b.x += b.dir * b.spd * (play ? 1 : 0.6) * dt; }
+      } else if (b.st === 'sniff' || b.st === 'idle' || b.st === 'sleep') {
+        if (b.t > b.len) {
+          b.st = 'walk'; b.t = 0;
+          // в смене звери чаще подбираются к тайнику
+          if (play && rand() < 0.4) b.tx = Math.max(b.min, Math.min(b.max, DIG_X + 5 + (rand() - 0.5) * 50));
+          else b.tx = b.min + rand() * (b.max - b.min);
+        }
+      } else if (b.st === 'warn') {
+        if (b.t > 3) { b.st = 'sniff'; b.t = 0; b.len = 1; }
       }
     };
 
-    // ---- заключённый вне смены ----
+    // ---------- летающие ----------
+    const updSeer = (s, dt, play) => {
+      s.t += dt;
+      if (s.kind === 'parrot') {
+        if (s.st === 'perch' || s.st === 'sleep') {
+          s.x += (s.bx - s.x) * Math.min(1, dt * 4); s.y += (s.by - s.y) * Math.min(1, dt * 4);
+          if (s.t > s.len) {
+            const r = rand();
+            if (s.st === 'sleep' || r < 0.45) { s.st = 'fly'; s.t = 0; s.tx = 40 + rand() * 250; s.ty = 60 + rand() * 50; }
+            else { s.st = r < 0.75 ? 'sleep' : 'perch'; s.t = 0; s.len = 3 + rand() * (play ? 4 : 8); }
+          }
+        } else {
+          const dx = s.tx - s.x, dy = s.ty - s.y;
+          const d = Math.hypot(dx, dy);
+          s.dir = dx > 0 ? 1 : -1;
+          if (d < 2) {
+            if (s.tx === s.bx && s.ty === s.by) { s.st = 'perch'; s.t = 0; s.len = 3 + rand() * 4; }
+            else if (s.t > 2.5) { s.tx = s.bx; s.ty = s.by; s.t = 0; }
+          } else { const v = 46 * dt / d; s.x += dx * Math.min(1, v); s.y += dy * Math.min(1, v); }
+        }
+        return;
+      }
+      if (s.kind === 'bat') {
+        s.x += s.dir * 30 * dt; s.y = s.by + Math.sin(clock * 2 + s.bx) * 10;
+        if (s.x > 310) s.dir = -1; if (s.x < 100) s.dir = 1;
+        return;
+      }
+      // огонёк и призрак плывут к случайным точкам
+      const dx = s.tx - s.x, dy = s.ty - s.y;
+      const d = Math.hypot(dx, dy);
+      const spd = s.kind === 'wisp' ? 20 : 13;
+      if (d < 2 || s.t > 9) {
+        s.t = 0;
+        if (play && rand() < 0.35) { s.tx = DIG_X + 5 + (rand() - 0.5) * 120; s.ty = FLOOR - 20 - rand() * 40; }
+        else { s.tx = 20 + rand() * 280; s.ty = (s.kind === 'ghost' ? 50 : 50) + rand() * 70; }
+        s.tx = Math.max(10, Math.min(310, s.tx));
+      } else { const v = spd * dt / d; s.x += dx * Math.min(1, v); s.y += dy * Math.min(1, v); s.dir = dx > 0 ? 1 : -1; }
+    };
+
+    const wardPhase = (w) => { const c = (wardClock + w.off) % w.per; return c; };
+    const wardActive = (w) => wardPhase(w) > w.per - 0.9;
+
+    // ---------- заключённый вне смены ----------
     const prMove = (dt) => {
       const d = pr.tx - pr.x;
       if (Math.abs(d) <= pr.spd * dt + 0.1) { pr.x = pr.tx; return true; }
@@ -398,13 +645,14 @@ export default {
     const newPiece = () => { pr.hits = 0; pr.need = 5 + Math.floor(rand() * 4); pr.icon = ORDERS[Math.floor(rand() * 3)].icon; };
     const updPrisonerIdle = (dt) => {
       pr.t += dt;
+      const g0 = guards[0];
       if (pr.st === 'forge') {
         pr.pose = 'forge'; pr.face = 1;
         if (Math.abs(pr.x - SMITH_X) > 0.5) { pr.tx = SMITH_X; pr.spd = 40; pr.st = 'back'; return; }
         tGlance -= dt;
         if (tGlance <= 0) {
           tGlance = 10 + rand() * 12;
-          if (guard.state === 'doze' && guard.t < guard.len - 5) { pr.st = 'sneak'; pr.tx = CROUCH_X; pr.spd = 22; pr.t = 0; }
+          if (!variant && !isFree() && g0 && g0.state === 'doze' && g0.t < g0.len - 5) { pr.st = 'sneak'; pr.tx = CROUCH_X; pr.spd = 22; pr.t = 0; }
           else { pr.st = 'glance'; pr.t = 0; }
           return;
         }
@@ -418,7 +666,6 @@ export default {
           if (pr.hits >= pr.need) { pr.st = 'tocrate'; pr.tx = CRATE_X - 6; pr.spd = 30; pr.hitT = 0.9; }
         }
       } else if (pr.st === 'glance') {
-        // косится на тайник
         pr.pose = 'stand'; pr.face = -1;
         if (pr.t > 1.6) { pr.st = 'forge'; pr.t = 0; }
       } else if (pr.st === 'sneak') {
@@ -427,57 +674,82 @@ export default {
       } else if (pr.st === 'peek') {
         pr.pose = 'crouch';
         tileOpen = Math.min(0.6, tileOpen + dt * 1.5);
-        if (pr.t > 1.4) { guard.stir = 0.9; pr.st = 'hurry'; pr.tx = SMITH_X; pr.spd = 75; pr.t = 0; }
+        if (pr.t > 1.4) { if (g0) g0.stir = 0.9; pr.st = 'hurry'; pr.tx = SMITH_X; pr.spd = 75; pr.t = 0; }
       } else if (pr.st === 'hurry') {
         tileOpen = Math.max(0, tileOpen - dt * 4);
         pr.pose = tileOpen > 0 ? 'crouch' : 'walk';
         if (tileOpen <= 0 && prMove(dt)) { pr.st = 'forge'; pr.face = 1; pr.t = 0; }
       } else if (pr.st === 'tocrate') {
         pr.pose = 'carry';
-        if (prMove(dt)) {
-          pr.face = 1;
-          crateN = Math.min(6, crateN + 1);
-          pr.st = 'back'; pr.tx = SMITH_X; pr.spd = 30;
-          newPiece();
-        }
+        if (prMove(dt)) { pr.face = 1; crateN = Math.min(6, crateN + 1); pr.st = 'back'; pr.tx = SMITH_X; pr.spd = 30; newPiece(); }
       } else if (pr.st === 'back') {
         pr.pose = 'walk';
         if (prMove(dt)) { pr.st = 'forge'; pr.face = 1; pr.t = 0; }
-      } else {
-        pr.st = 'back'; pr.tx = SMITH_X; pr.spd = 40;
-      }
+      } else { pr.st = 'back'; pr.tx = SMITH_X; pr.spd = 40; }
     };
 
-    // ---- переходы ----
+    // Кокк на полу (после свободы и в финале)
+    const updKokkFloor = (dt) => {
+      if (!KK.on) return;
+      KK.t += dt;
+      const d = KK.tx - KK.x;
+      if (Math.abs(d) > 0.6) { KK.face = d > 0 ? 1 : -1; KK.x += KK.face * 22 * dt; KK.walk = (Math.floor(clock * 6) & 1) ? 1 : -1; }
+      else {
+        KK.walk = 0;
+        if (phase === 'idle' || phase === 'outro') {
+          if (KK.t > 4 + rand() * 6) { KK.t = 0; KK.tx = 190 + rand() * 100; KK.wave = rand() < 0.3 ? 2.2 : 0; }
+        }
+      }
+      if (KK.wave > 0) KK.wave -= dt;
+    };
+
+    // ---------- переходы ----------
+    const resetRun = () => {
+      time = 0; scoreV = 0; combo = 0; runCombo = 0; hitCd = 0; swing = 0; lastQT = 0; order = null; orderGap = 0;
+      seenT = 0; digSnd = 0; heat = 0; faintT = 0; flaskT = 0; cloakT = 0; stunT = 0; quakeWarn = 0; quakeT = 30 + rand() * 25;
+      runFav = 0; runDig = 0; sw = 0; menu = false; caughtLoss = 0;
+      digHoldKey = false; digHoldPtr = false; digging = false;
+      for (const b of beasts) { b.warn = 0; if (b.st === 'chew') b.st = 'idle'; }
+      for (const g of guards) { g.drunk = 0; }
+    };
     const startIntro = () => {
+      // свежая копия прогресса (могла прийти с другого компьютера)
+      const wasAuthor = authorMode;
+      loadSave();
+      checkDay();
+      const want = Math.min(10, D.cur);
+      if (want !== sceneP || wasAuthor !== authorMode) setScene(want);
       setPhase('intro');
       best = readBest();
-      digHoldKey = false; digHoldPtr = false; digging = false;
-      // стражник уходит в обход, просыпается, если дремал
-      if (guard.state === 'doze') guard.stir = 0.5;
-      guardGo(Math.min(296, Math.max(guard.x + 40, 250)), 45, 'ipause');
-      time = 0; scoreV = 0; lives = 3; combo = 0; order = null;
+      resetRun();
+      lastSeg = Math.floor(D.dug / (curNeed() / SEGS));
+      const g0 = guards[0];
+      if (g0) { if (g0.state === 'doze') g0.stir = 0.5; if (!g0.post) guardGo(g0, Math.min(g0.max, Math.max(g0.x + 40, 250)), 45, 'ipause'); }
       pr.tx = SMITH_X; pr.spd = 70;
+      bannerP = sceneP; bannerT = 2.4;
     };
     const beginPlay = () => {
       setPhase('play');
-      time = 0; scoreV = 0; lives = 3; combo = 0; hitCd = 0; swing = 0; lastQT = 0;
-      segs = 0; prog = 0; seenT = 0; digSnd = 0; tunA = 1; pileA = 0; tileOpen = 0;
-      orderGap = 0;
+      resetRun();
+      tileOpen = 0;
       pr.x = SMITH_X; pr.tx = SMITH_X;
-      guard.state = 'walk'; guard.dir = guard.x < 160 ? 1 : -1; guard.t = 0;
+      for (const g of guards) { g.state = g.post ? 'stand' : 'walk'; g.dir = g.post ? (g.x < DIG_X ? 1 : -1) * (rand() < 0.5 ? 1 : -1) : g.x < 160 ? 1 : -1; g.t = 0; g.len = 2; if (g.post) g.x = g.home; }
       newOrder();
+      D.st.sh++;
     };
     const startOutro = () => {
+      if (phase === 'escape' || phase === 'finale') finishCutscene();
+      menu = false;
       setPhase('outro');
       bellT = 1.4;
       sfx('coin');
       digging = false; digHoldKey = false; digHoldPtr = false;
-      const needCover = segs > 0 || prog > 0.05 || tileOpen > 0 || Math.abs(pr.x - CROUCH_X) < 4;
+      const needCover = sw > 0 || tileOpen > 0 || Math.abs(pr.x - CROUCH_X) < 4;
       pr.st = needCover ? 'cover' : 'back';
       pr.tx = needCover ? CROUCH_X : SMITH_X;
       pr.spd = 80; pr.t = 0;
-      guardGo(240 + rand() * 40, 30, 'ipause');
+      for (let i = 0; i < guards.length; i++) { const g = guards[i]; g.drunk = 0; if (g.state === 'salute') g.state = 'ipause'; guardGo(g, g.post ? g.home : Math.max(g.min, Math.min(g.max, 240 + rand() * 40)), 30, 'ipause'); }
+      persist();
     };
     const handleMode = (m) => {
       if (m === 'play') {
@@ -485,18 +757,160 @@ export default {
         else if (phase === 'outro') startIntro();
         else if (phase === 'wait' && (sawOver || pt > 5)) startIntro();
       } else if (m === 'idle') {
-        if (phase === 'intro' || phase === 'play' || phase === 'end' || phase === 'wait') startOutro();
+        if (phase === 'intro' || phase === 'play' || phase === 'end' || phase === 'wait' || phase === 'escape' || phase === 'finale') startOutro();
       } else if (m === 'over') {
         if (phase === 'wait') sawOver = true;
       }
     };
 
-    // ---- обновление по фазам ----
+    // конец смены: поймали (win=false) или отработал/сбежал (win=true)
+    const finish = (win, why) => {
+      if (phase !== 'play' && phase !== 'escape' && phase !== 'finale') return;
+      endWin = win;
+      menu = false;
+      setPhase('end');
+      digging = false;
+      if (win && why !== 'escape') { D.fav += 10; runFav += 10; task('clean', 1); }
+      scoreV += Math.round(runDig * 2);
+      lastScore = Math.floor(scoreV);
+      if (lastScore > D.st.best) D.st.best = lastScore;
+      if (!win) D.st.cg++;
+      persist();
+      sfx(win ? 'win' : 'lose');
+      if (win) { bellT = 1.4; const g = guards[0]; if (g && why !== 'escape') guardGo(g, Math.min(g.max, CRATE_X + 16), 30, 'stand'); }
+      else { sw = 1; pr.x = CROUCH_X; pr.tx = CROUCH_X; pr.pose = 'handsup'; const g = guards[0]; if (g) { g.state = 'grab'; g.t = 0; g.drunk = 0; } }
+      if (why === 'escape') pt = 0.6;
+    };
+
+    const caught = (by) => {
+      seenBy = by;
+      // охрана засыпает часть хода
+      const need = curNeed();
+      const loss = Math.min(D.dug, Math.max(authorMode ? 2 : 15, need * 0.03));
+      D.dug -= loss;
+      caughtLoss = loss;
+      if (loss >= need * 0.005) pop(DIG_X, FLOOR - 40, '-' + Math.max(1, Math.round((loss / need) * 100)) + '%', '#ff7070');
+      msg(by === 1 ? 'ЗВЕРЬ ПОДНЯЛ ШУМ!' : by === 2 ? 'ДУХ ТЕБЯ ЗАМЕТИЛ!' : by === 3 ? 'РУНА ВСПЫХНУЛА!' : 'ПОЙМАН!', '#ff7070');
+      sfx('hit');
+      finish(false, 'caught');
+    };
+
+    // ---------- побег: подкоп готов ----------
+    const startEscape = () => {
+      menu = false;
+      digging = false;
+      crawlPal = S.pal;
+      crawlFrom = sceneP;
+      escWasFree = isFree();
+      escArrived = false;
+      setPhase('escape');
+      sfx('win');
+      // фиксируем прогресс сразу (если игрок уйдёт посреди сценки — ничего не теряется)
+      const from = Math.min(10, D.cur);
+      scoreV += 500;
+      D.dug = 0;
+      lastSeg = 0;
+      if (escWasFree) {
+        D.st.free++; D.fav += 100; runFav += 100;
+        escToP = 10;
+      } else {
+        // недостающие артефакты этой тюрьмы находятся в ползке
+        for (let i = 0; i < ARTEFACTS.length; i++) if (ARTEFACTS[i].p === from && !hasArt(D.alb, i)) { D.alb = addArt(D.alb, i); }
+        D.st.esc++;
+        D.fav += 40; runFav += 40;
+        D.cur = from + 1;
+        escToP = Math.min(10, D.cur);
+        if (from < 10 && REWARD_AT[from]) for (const id of REWARD_AT[from]) grant(id);
+        if (from === 10) pendingFinal = true;
+      }
+      task('clean', 1);
+      persist();
+    };
+    // досрочный выход из сценки — довести мир до итогового состояния
+    function finishCutscene() {
+      if (phase === 'escape' && !escArrived) { escArrived = true; setScene(escToP); }
+      if (pendingFinal) giveFinal();
+      if (sceneP === 10 && isFree()) { S.kokkOnBalcony = false; KK.on = true; }
+      pr.pose = 'forge'; pr.st = 'back'; pr.x = SMITH_X; pr.tx = SMITH_X;
+      sw = 0; tileOpen = 0;
+    }
+    function giveFinal() {
+      if (!pendingFinal) return;
+      pendingFinal = false;
+      finaleGiven = true;
+      for (const id of REWARD_AT[10]) grant(id);
+    }
+    const updEscape = (dt) => {
+      if (pt < ESC_DROP) {
+        sw = 1; tileOpen = 1;
+        pr.x = CROUCH_X; pr.pose = pt < 0.45 ? 'crouch' : 'gone';
+        if (pt > 0.4 && !fl1) { fl1 = true; spark(DIG_X + 5, FLOOR - 2, 10, '#8a6440', 60, 1.2); sfx('step'); }
+      } else if (pt < ESC_CRAWL) {
+        pr.pose = 'gone';
+        if (Math.floor(pt * 3) !== Math.floor((pt - dt) * 3)) sfx('step');
+      } else {
+        if (!escArrived) {
+          escArrived = true;
+          setScene(escToP);
+          bannerP = escToP; bannerT = 2.4;
+          sw = 0; tileOpen = 0;
+          // выбирается из лаза у новой наковальни
+          pr.x = SMITH_X; pr.tx = SMITH_X; pr.pose = 'front'; pr.face = 1;
+          for (const g of guards) { g.state = 'ipause'; g.t = 0; g.len = 3; }
+          if (escToP === 10 && pendingFinal) { setPhase('finale'); startFinale(); return; }
+        }
+        pr.pose = pt > ESC_CRAWL + 0.8 && pt < ESC_CRAWL + 1.4 ? 'front' : 'front';
+        pr.wink = pt > ESC_CRAWL + 1 && pt < ESC_CRAWL + 1.4 ? 1 : 0;
+        for (let i = 0; i < guards.length; i++) updGuardIdle(guards[i], dt, i);
+        if (pt >= ESC_END) finish(true, 'escape');
+      }
+    };
+
+    // ---------- финал: Кокк вручает плащ ----------
+    let finLine = -1;
+    function startFinale() {
+      S.kokkOnBalcony = false;
+      KK.on = true; KK.x = 312; KK.tx = 196; KK.reach = 0; KK.wave = 0; KK.t = 0;
+      pr.x = SMITH_X; pr.tx = SMITH_X; pr.pose = 'front'; pr.face = 1;
+      for (const g of guards) { g.state = 'salute'; g.t = 0; g.moving = false; g.dir = g.x < 160 ? 1 : -1; }
+      finLine = -1;
+      bannerT = 0;
+      msg('ПОСЛЕДНИЙ ЗАЛ', '#ffd34a');
+    }
+    const updFinale = (dt) => {
+      updKokkFloor(dt);
+      pr.pose = pt > FINALE_AT[3] ? 'cheer' : 'front';
+      pr.face = 1;
+      let li = -1;
+      for (let i = 0; i < FINALE_AT.length; i++) if (pt >= FINALE_AT[i]) li = i;
+      if (li !== finLine) { finLine = li; if (li >= 0) sfx('click'); }
+      KK.reach = pt > FINALE_AT[2] && pt < FINALE_AT[3] + 0.4 ? -1 : 0;
+      KK.wave = pt > FINALE_AT[0] && pt < FINALE_AT[0] + 1.4 ? 1 : 0;
+      if (pt > FINALE_AT[3] && !finaleGiven) { giveFinal(); sfx('win'); spark(SMITH_X, FLOOR - 30, 16, '#ffd34a', 80); }
+      if (pt >= FIN_END) finish(true, 'escape');
+    };
+
+    // ---------- автор: пропуск уровней ----------
+    function authorSkip(dir) {
+      if (!authorMode || phase !== 'play') return;
+      if (dir > 0) { D.dug = curNeed(); msg('(АВТОР) ПОДКОП ГОТОВ', '#c8a0ff'); }
+      else {
+        if (D.cur <= 1) return;
+        D.cur = Math.min(10, D.cur - 1);
+        if (D.cur === 10 && sceneP === 10) D.cur = 9;
+        D.dug = 0;
+        setScene(Math.min(10, D.cur));
+        bannerP = sceneP; bannerT = 2.4;
+        resetRun(); newOrder();
+        for (const g of guards) { g.state = g.post ? 'stand' : 'walk'; g.t = 0; }
+        msg('(АВТОР) ТЮРЬМА ' + D.cur, '#c8a0ff');
+        persist();
+      }
+    }
+
+    // ---------- обновление по фазам ----------
     const updIntro = (dt) => {
-      updateGuardIdle(dt);
-      // остатки прошлого лаза засыпаются
-      tunA = Math.max(0, tunA - dt * 2.5);
-      pileA = Math.max(0, pileA - dt * 2.5);
+      for (let i = 0; i < guards.length; i++) updGuardIdle(guards[i], dt, i);
       tileOpen = Math.max(0, tileOpen - dt * 3);
       const there = prMove(dt);
       if (!there) pr.pose = 'walk';
@@ -508,80 +922,128 @@ export default {
     };
 
     const updPlay = (dt) => {
+      if (menu) return; // книга открыта — смена стоит
       time += dt;
-      if (time >= SHIFT) { finish(); return; }
+      wardClock += dt;
+      saveT += dt;
+      dayT += dt;
+      if (dayT > 30) { dayT = 0; checkDay(); }
+      if (time >= SHIFT) { finish(true, 'shift'); return; }
       if (hitCd > 0) hitCd -= dt;
       if (lastQT > 0) lastQT -= dt;
+      if (cloakT > 0) cloakT -= dt;
+      if (flaskT > 0) flaskT -= dt;
+      if (stunT > 0) stunT -= dt;
+      const hz = S.def.hazards;
       // ковка
-      if (orderGap > 0) {
-        orderGap -= dt;
-        if (orderGap <= 0) newOrder();
-      } else if (order) {
-        const sp = order.o.speed * (1 + time / 200);
+      if (orderGap > 0) { orderGap -= dt; if (orderGap <= 0) newOrder(); }
+      else if (order) {
+        const sp = order.o.speed * (1 + time / 200) * (1 + 0.04 * (sceneP - 1));
         marker += mdir * sp * dt;
         if (marker > 1) { marker = 2 - marker; mdir = -1; }
         if (marker < 0) { marker = -marker; mdir = 1; }
         order.pat -= dt;
-        if (order.pat <= 0) {
-          pop(40, 60, 'x', '#ff7070');
-          sfx('lose');
-          combo = 0;
-          orderGap = 0.8;
+        if (order.pat <= 0) { pop(40, 74, 'x', '#ff7070'); sfx('lose'); combo = 0; orderGap = 0.8; }
+      }
+      // перемещение между наковальней и лазом
+      const want = (digHoldKey || digHoldPtr) && faintT <= 0;
+      const swT = hz.slip ? 0.5 : 0.12;
+      sw = want ? Math.min(1, sw + dt / swT) : Math.max(0, sw - dt / swT);
+      tileOpen = sw > 0 ? 1 : 0;
+      digging = want && sw >= 1 && stunT <= 0;
+      if (faintT > 0) { faintT -= dt; digging = false; }
+      if (D.dug > 0) pileA = 1;
+      // жара
+      if (hz.heat) {
+        if (digging && flaskT <= 0) heat += dt / 24; else heat = Math.max(0, heat - dt / 14);
+        if (heat >= 1) { heat = 0.6; faintT = 3; digHoldKey = false; digHoldPtr = false; msg('ЖАРА! ОТДЫШИСЬ', '#ffb060'); sfx('hit'); }
+      }
+      // обвалы
+      if (hz.quake) {
+        quakeT -= dt;
+        if (quakeT <= 0 && quakeWarn <= 0) { quakeWarn = 1.6; S.shake = 2.2; sfx('hit'); }
+        if (quakeWarn > 0) {
+          quakeWarn -= dt;
+          if (quakeWarn <= 0) {
+            quakeT = 35 + rand() * 30;
+            if (sw > 0.5) {
+              if (D.it[4] > 0) { D.it[4]--; msg('ПОДПОРКА ВЫДЕРЖАЛА', '#e0c080'); task('item', 1); }
+              else { const l = Math.min(D.dug, curNeed() * 0.015); D.dug -= l; stunT = 1.5; msg('ОБВАЛ! ХОД ЗАСЫПАЛО', '#ff9a80'); spark(DIG_X + 20, TUN_Y, 12, '#8a6440', 40, 1.2); }
+            }
+          }
         }
       }
-      // подкоп
-      const want = (digHoldKey || digHoldPtr) && guard.state !== 'alert';
-      digging = want;
-      pr.x = digging || (guard.state === 'alert' && guard.t < 0.4 && pr.x === CROUCH_X) ? CROUCH_X : SMITH_X;
-      pr.tx = pr.x;
-      tileOpen = digging ? 1 : 0;
-      if (segs > 0 || prog > 0.1) pileA = 1;
+      // копание
       if (digging) {
-        prog += dt / segTime();
+        const v = dt * toolMul();
+        D.dug += v;
+        runDig += dt;
+        D.st.dig += dt;
+        task('dig', dt);
         digSnd -= dt;
         if (digSnd <= 0) { sfx('step'); digSnd = 0.35; spark(DIG_X + 4, FLOOR - 2, 2, '#8a6440', 40, 1.2); }
-        if (prog >= 1) {
-          prog = 0;
-          segs++;
-          const bonus = 100 + 25 * (segs - 1);
-          scoreV += bonus;
-          pop(DIG_X - 10, FLOOR - 36, '+' + bonus, '#ffd34a');
-          sfx('win');
+        const need = curNeed();
+        const seg = Math.floor(D.dug / (need / SEGS));
+        if (seg > lastSeg) {
+          lastSeg = seg;
+          scoreV += 60;
+          pop(DIG_X - 10, FLOOR - 36, '+60', '#ffd34a');
+          sfx('coin');
+          task('seg', 1);
+          // находка в земле
+          if (!isFree() && rand() < 0.16) {
+            for (let i = 0; i < ARTEFACTS.length; i++) {
+              if (ARTEFACTS[i].p === sceneP && !hasArt(D.alb, i)) { D.alb = addArt(D.alb, i); msg('НАХОДКА: ' + ARTEFACTS[i].name.toUpperCase(), '#ffd34a'); sfx('win'); break; }
+            }
+          }
+          persist();
         }
+        if (D.dug >= need) { startEscape(); return; }
       }
-      updateGuardPlay(dt);
-      if (digging && looksAtDig()) {
-        seenT += dt;
-        if (seenT > 0.22) caught();
-      } else seenT = Math.max(0, seenT - dt * 2);
+      if (saveT > 30) persist();
+      // охрана
+      for (let i = 0; i < guards.length; i++) updGuardPlay(guards[i], dt);
+      for (let i = 0; i < beasts.length; i++) updBeast(beasts[i], dt, true);
+      for (let i = 0; i < seers.length; i++) updSeer(seers[i], dt, true);
+      // кто видит
+      const exposed = sw > 0.02;
+      let see = -1;
+      if (exposed) {
+        for (let i = 0; i < guards.length; i++) if (sees(guards[i])) { see = 0; break; }
+        if (see < 0) for (let i = 0; i < seers.length; i++) {
+          const s = seers[i];
+          if (s.rad <= 0 || s.st === 'sleep') continue;
+          if ((s.kind === 'wisp' || s.kind === 'ghost') && cloakT > 0) continue;
+          if (Math.hypot(s.x - (DIG_X + 5), s.y - (FLOOR - 10)) < s.rad) { see = 2; break; }
+        }
+        if (see < 0 && cloakT <= 0 && digging) for (let i = 0; i < wards.length; i++) if (wardActive(wards[i])) { see = 3; break; }
+      }
+      if (see >= 0) { seenT += dt; if (seenT > (see === 3 ? 0.12 : see === 2 ? 0.3 : 0.22)) { caught(see); return; } }
+      else seenT = Math.max(0, seenT - dt * 2);
+      // звери чуют копание
+      for (let i = 0; i < beasts.length; i++) {
+        const b = beasts[i];
+        if (b.st === 'chew' || b.sub || b.st === 'sleep') { b.warn = 0; continue; }
+        if (digging && Math.abs(b.x - (DIG_X + 5)) < b.rad) {
+          if (b.st !== 'warn') { b.st = 'warn'; b.t = 0; b.dir = b.x < DIG_X ? 1 : -1; sfx('hit'); }
+          b.warn += dt;
+          if (b.warn > 0.85) { caught(1); return; }
+        } else if (b.warn > 0) { b.warn = Math.max(0, b.warn - dt); if (b.warn <= 0 && b.st === 'warn') { b.st = 'sniff'; b.t = 0; b.len = 0.6; } }
+      }
     };
 
-    const caught = () => {
-      lives--;
-      seenT = 0;
-      prog *= 0.4;
-      combo = 0;
-      guard.state = 'alert';
-      guard.t = 0;
-      digHoldKey = false; // надо отпустить и нажать заново
-      digHoldPtr = false;
-      sfx('hit');
-      pop(DIG_X, FLOOR - 40, '-1', '#ff7070');
-      if (lives <= 0) finish();
-    };
-
-    // поймали / смена кончилась: стражник подходит, потом карточка результата
     const updEndWait = (dt) => {
-      const g = guard;
-      g.t += dt;
-      g.moving = false;
+      for (let i = 1; i < guards.length; i++) updGuardIdle(guards[i], dt, i);
+      const g = guards[0];
       if (endWin) {
-        if (g.state === 'iwalk') updateGuardIdle(dt);
-        else { g.state = 'stand'; g.dir = -1; }
-        pr.pose = 'front'; pr.wink = 0;
+        if (g) { if (g.state === 'iwalk' || g.state === 'ipause' || g.state === 'yawn' || g.state === 'doze' || g.state === 'salute') updGuardIdle(g, dt, 0); else { g.state = 'stand'; g.dir = -1; g.t += dt; } }
+        pr.pose = finaleGiven && sceneP === 10 && KK.on ? 'cheer' : 'front'; pr.wink = 0;
+        sw = Math.max(0, sw - dt * 6); tileOpen = 0;
         if (Math.abs(pr.x - SMITH_X) > 0.5) { pr.tx = SMITH_X; pr.spd = 50; if (!prMove(dt)) pr.pose = 'walk'; }
-      } else {
-        // стражник быстро подходит и встаёт рядом
+        updKokkFloor(dt);
+      } else if (g) {
+        g.t += dt;
+        g.moving = false;
         const tx = pr.x + 18;
         const d = tx - g.x;
         if (Math.abs(d) > 1) { g.dir = d > 0 ? 1 : -1; g.x += g.dir * Math.min(Math.abs(d), 70 * dt); g.moving = true; }
@@ -597,63 +1059,26 @@ export default {
     };
 
     const updOutro = (dt) => {
-      updateGuardIdle(dt);
+      for (let i = 0; i < guards.length; i++) updGuardIdle(guards[i], dt, i);
+      updKokkFloor(dt);
       pr.t += dt;
+      sw = Math.max(0, sw - dt * 4);
       if (pr.st === 'cover') {
         if (prMove(dt)) {
           pr.pose = 'crouch';
-          // задвигает плитку и прячет землю
           tileOpen = Math.max(0, tileOpen - dt * 2);
-          pileA = Math.max(0, pileA - dt * 2);
           if (!fl1) { fl1 = true; pr.t = 0; }
           if (pr.t > 0.7 && tileOpen <= 0) { pr.st = 'back'; pr.tx = SMITH_X; pr.spd = 70; sfx('step'); }
         } else pr.pose = 'walk';
       } else if (pr.st === 'back') {
         pr.pose = 'walk';
         if (prMove(dt)) { pr.st = 'forge'; pr.face = 1; pr.hitT = 0.4; pr.t = 0; }
-      } else {
-        pr.pose = 'forge';
-      }
-      tunA = Math.max(0, tunA - dt * 1.2);
-      if (tunA <= 0) { segs = 0; prog = 0; }
+      } else pr.pose = 'forge';
       if ((pt >= OUTRO_T && pr.st === 'forge') || pt >= OUTRO_MAX) {
         setPhase('idle');
         if (pr.st !== 'forge') { pr.st = 'back'; pr.tx = SMITH_X; pr.spd = 60; }
-        tileOpen = 0; pileA = 0; tunA = 0; segs = 0; prog = 0;
+        tileOpen = 0;
         tGlance = 8 + rand() * 8;
-      }
-    };
-
-    // ---- мелкая жизнь: крыса, капель ----
-    const updLife = (dt) => {
-      if (phase === 'idle' || phase === 'outro') {
-        tRat -= dt;
-        if (tRat <= 0 && !rat.on) { tRat = 16 + rand() * 18; rat.on = true; rat.x = 306; rat.dir = -1; rat.st = 0; rat.t = 0; rat.tx = 236 + rand() * 40; }
-      }
-      if (rat.on) {
-        rat.t += dt;
-        if (rat.st === 0) { rat.x -= 34 * dt; if (rat.x <= rat.tx) { rat.st = 1; rat.t = 0; } }
-        else if (rat.st === 1) { if (rat.t > 1.2 + (rat.tx % 1)) { rat.st = 2; rat.dir = 1; } }
-        else { rat.x += 44 * dt; if (rat.x > 308) rat.on = false; }
-      }
-      tDrop -= dt;
-      if (tDrop <= 0) {
-        tDrop = 2.5 + rand() * 4;
-        for (let i = 0; i < drops.length; i++) {
-          const d = drops[i];
-          if (d.on) continue;
-          d.on = true; d.x = 120 + Math.floor(rand() * 170); d.y = 1; d.vy = 0; d.t = 0;
-          break;
-        }
-      }
-      for (let i = 0; i < drops.length; i++) {
-        const d = drops[i];
-        if (!d.on) continue;
-        d.t += dt;
-        if (d.t < 0.8) continue; // набухает
-        d.vy += 260 * dt;
-        d.y += d.vy * dt;
-        if (d.y >= FLOOR) { d.on = false; spark(d.x, FLOOR - 1, 2, '#8aa0c0', 18, 0.6); }
       }
     };
 
@@ -669,18 +1094,32 @@ export default {
       for (let i = 0; i < pops.length; i++) {
         const p = pops[i];
         if (!p.on) continue;
-        p.life -= dt * 0.9;
-        p.y -= dt * 14;
+        p.life -= dt * 0.9; p.y -= dt * 14;
         if (p.life <= 0) p.on = false;
       }
+      for (let i = 0; i < msgs.length; i++) if (msgs[i].on) { msgs[i].t -= dt; if (msgs[i].t <= 0) msgs[i].on = false; }
+      if (bannerT > 0 && !menu) bannerT -= dt;
       if (swing > 0) swing -= dt;
       if (bellT > 0) bellT -= dt;
-      if (phase === 'idle') { updateGuardIdle(dt); updPrisonerIdle(dt); }
-      else if (phase === 'intro') updIntro(dt);
+      const idleLike = phase === 'idle' || phase === 'outro' || phase === 'intro';
+      updateScene(S, dt, clock, rand, idleLike);
+      if (phase !== 'play') wardClock += dt * 0.5;
+      if (phase === 'idle') {
+        for (let i = 0; i < guards.length; i++) updGuardIdle(guards[i], dt, i);
+        updPrisonerIdle(dt);
+        updKokkFloor(dt);
+        // в покое звери просто бродят, а в 7-й с потолка иногда сыплется пыль
+        if (S.def.hazards.quake && rand() < dt * 0.04) { S.shake = 0.8; spark(120 + rand() * 180, 22, 5, '#8a7a6a', 10, 0.8); }
+      } else if (phase === 'intro') updIntro(dt);
       else if (phase === 'play') updPlay(dt);
       else if (phase === 'end' || phase === 'wait') updEndWait(dt);
+      else if (phase === 'escape') updEscape(dt);
+      else if (phase === 'finale') updFinale(dt);
       else updOutro(dt);
-      updLife(dt);
+      if (phase !== 'play') {
+        for (let i = 0; i < beasts.length; i++) updBeast(beasts[i], dt, false);
+        for (let i = 0; i < seers.length; i++) updSeer(seers[i], dt, false);
+      } else if (menu) { /* стоп */ }
       const inGame = phase === 'play' || phase === 'end' || phase === 'wait';
       const hudT = inGame || (phase === 'intro' && pt > 0.9) ? 1 : 0;
       hudA += (hudT - hudA) * Math.min(1, dt * 4);
@@ -690,332 +1129,179 @@ export default {
       dimA += (dimT - dimA) * Math.min(1, dt * 3);
     };
 
-    // ---- рисование ----
-    // статичная часть фона рисуется один раз в отдельный холст (если он доступен)
-    let bg = null;
-    try {
-      if (typeof OffscreenCanvas !== 'undefined') bg = new OffscreenCanvas(W, H);
-      else if (typeof document !== 'undefined') { bg = document.createElement('canvas'); bg.width = W; bg.height = H; }
-    } catch (e) { bg = null; }
-    let bgReady = false;
+    // ---------- рисование ----------
     const drawRoom = () => {
       if (bg && !bgReady) {
         const bctx = bg.getContext('2d');
-        if (bctx) { drawStatic(bctx); bgReady = true; } else bg = null;
+        if (bctx) { drawStatic(bctx, S); bgReady = true; } else bg = null;
       }
       if (bgReady) ctx.drawImage(bg, 0, 0);
-      else drawStatic(ctx);
-      drawLive();
-    };
-    const drawStatic = (ctx) => {
-      // стена
-      ctx.fillStyle = '#3a3640';
-      ctx.fillRect(0, 0, W, FLOOR);
-      ctx.fillStyle = '#2a2730';
-      for (let y = 0; y < FLOOR; y += 9) ctx.fillRect(0, y, W, 1);
-      for (let row = 0; row * 9 < FLOOR; row++) {
-        const off = row & 1 ? 9 : 0;
-        for (let x = -off; x < W; x += 18) ctx.fillRect(x, row * 9, 1, 9);
-      }
-      for (let i = 0; i < bricks.length; i += 5) {
-        ctx.fillStyle = bricks[i + 4] ? '#43404a' : '#322f38';
-        ctx.fillRect(bricks[i], bricks[i + 1], bricks[i + 2], bricks[i + 3]);
-      }
-      // окно с решёткой (стекло и луч рисуются вживую — день/ночь)
-      ctx.fillStyle = '#1a1a2c'; ctx.fillRect(236, 16, 30, 22);
-      ctx.fillStyle = '#2a2428'; ctx.fillRect(18, 40, 46, 10); ctx.fillRect(28, 0, 26, 40);
-      // крюк колокола
-      ctx.fillStyle = '#4a4248'; ctx.fillRect(186, 6, 14, 2); ctx.fillRect(192, 8, 2, 3);
-      // крысиная нора
-      ctx.fillStyle = '#16121a'; ctx.fillRect(302, FLOOR - 5, 8, 5); ctx.fillRect(303, FLOOR - 6, 6, 1);
-      // пол и земля в разрезе
-      ctx.fillStyle = '#4a4450'; ctx.fillRect(0, FLOOR, W, 4);
-      ctx.fillStyle = '#5c5662';
-      for (let x = 0; x < W; x += 16) ctx.fillRect(x, FLOOR, 15, 1);
-      ctx.fillStyle = '#3e2c20'; ctx.fillRect(0, FLOOR + 4, W, H - FLOOR - 4);
-      ctx.fillStyle = '#4a3626';
-      for (let i = 0; i < stones.length; i += 3) ctx.fillRect(stones[i], stones[i + 1], stones[i + 2], 2);
-    };
-    const drawLive = () => {
-      // окно: днём голубое небо и тёплый луч, ночью луна
-      ctx.fillStyle = PANE[Math.round(dark * 7)]; ctx.fillRect(238, 18, 26, 18);
-      if (dark > 0.5) { ctx.fillStyle = '#e8ecf4'; ctx.fillRect(255, 21, 4, 4); }
-      else { ctx.fillStyle = '#e8f0ff'; ctx.fillRect(242, 24, 7, 2); ctx.fillRect(244, 23, 3, 1); }
-      ctx.fillStyle = '#5a5866';
-      for (let x = 241; x < 264; x += 6) ctx.fillRect(x, 16, 2, 22);
-      ctx.fillStyle = dark > 0.5 ? pickA(MOONBEAM, 0.85) : pickA(SUNBEAM, 1 - dark);
-      for (let i = 0; i < 6; i++) ctx.fillRect(232 - i * 6, 38 + i * 18, 34 + i * 4, 18);
-      // колокол
-      const bs = bellT > 0 ? Math.round(Math.sin(clock * 22) * 2) : 0;
-      ctx.fillStyle = '#c8a040'; ctx.fillRect(189 + bs, 11, 8, 6); ctx.fillRect(188 + bs, 16, 10, 2);
-      ctx.fillStyle = '#e8c860'; ctx.fillRect(190 + bs, 11, 2, 5);
-      ctx.fillStyle = '#6a5020'; ctx.fillRect(192 + bs * 2, 18, 2, 2);
-      if (bellT > 0 && ((clock * 8) | 0) & 1) {
-        ctx.fillStyle = '#ffe8a0';
-        ctx.fillRect(181, 10, 3, 1); ctx.fillRect(180, 14, 3, 1); ctx.fillRect(202, 10, 3, 1); ctx.fillRect(203, 14, 3, 1);
-      }
-      // горн слева
-      const fl = 0.75 + 0.25 * Math.sin(clock * 11) * Math.sin(clock * 4.3);
-      ctx.fillStyle = pickA(FORGE1, (0.12 * fl + 0.05) / 0.17);
-      ctx.fillRect(0, 70, 96, FLOOR - 70);
-      ctx.fillStyle = pickA(FORGE2, fl);
-      ctx.fillRect(10, 90, 70, FLOOR - 90);
-      ctx.fillStyle = '#4a4248'; ctx.fillRect(16, 112, 50, FLOOR - 112);
-      ctx.fillStyle = '#5a5258'; ctx.fillRect(16, 112, 50, 3);
-      ctx.fillStyle = '#1c1416'; ctx.fillRect(22, 118, 38, 14);
-      ctx.fillStyle = fl > 0.8 ? '#ffb040' : '#ff8a30'; ctx.fillRect(24, 124, 34, 8);
-      ctx.fillStyle = '#ffe080'; ctx.fillRect(28 + Math.round(fl * 6), 126, 4, 3); ctx.fillRect(44 - Math.round(fl * 4), 125, 5, 3);
-      ctx.fillStyle = '#c04020'; ctx.fillRect(24, 130, 34, 2);
-      // факел у окна
-      const tf = 0.7 + 0.3 * Math.sin(clock * 13 + 2);
-      ctx.fillStyle = pickA(TORCH, tf); ctx.fillRect(196, 40, 34, 40);
-      ctx.fillStyle = '#4a3020'; ctx.fillRect(212, 58, 2, 10);
-      ctx.fillStyle = '#ffb040'; ctx.fillRect(211, 54, 4, 4);
-      ctx.fillStyle = '#ffe080'; ctx.fillRect(212, 53 - Math.round(tf), 2, 2);
-      // ящик готовых изделий
-      ctx.fillStyle = '#5a3c22'; ctx.fillRect(CRATE_X, FLOOR - 16, 26, 16);
-      ctx.fillStyle = '#7a5430'; ctx.fillRect(CRATE_X, FLOOR - 16, 26, 2); ctx.fillRect(CRATE_X, FLOOR - 9, 26, 1);
-      ctx.fillStyle = '#9aa4b2';
-      for (let i = 0; i < crateN; i++) ctx.fillRect(CRATE_X + 3 + i * 3, FLOOR - 19 - (i & 1), 2, 3);
-      // капель
-      ctx.fillStyle = '#8aa0c0';
-      for (let i = 0; i < drops.length; i++) {
-        const d = drops[i];
-        if (!d.on) continue;
-        if (d.t < 0.8) ctx.fillRect(d.x, 0, 1, 1 + (d.t > 0.4 ? 1 : 0));
-        else ctx.fillRect(d.x, Math.round(d.y), 1, 2);
-      }
-      // крыса
-      if (rat.on) {
-        const x = Math.round(rat.x), y = FLOOR;
-        const sn = rat.st === 1 && ((clock * 6) | 0) & 1;
-        ctx.fillStyle = '#5a5258'; ctx.fillRect(x - 3, y - 3, 7, 3);
-        ctx.fillStyle = '#6a6268'; ctx.fillRect(x - 2, y - 4, 4, 1);
-        const hx = rat.dir < 0 ? x - 5 : x + 4;
-        ctx.fillRect(hx, y - 3 + (sn ? 1 : 0), 2, 2);
-        ctx.fillStyle = '#c89aa0'; ctx.fillRect(rat.dir < 0 ? x + 4 : x - 7, y - 1, 3, 1); // хвост
-        ctx.fillStyle = '#1a1418'; ctx.fillRect(hx + (rat.dir < 0 ? 0 : 1), y - 3, 1, 1);
-      }
+      else drawStatic(ctx, S);
+      drawBack(ctx, S, clock, dark, bellT, crateN);
     };
 
+    const tunnelFrac = () => (variant ? 0 : Math.max(0, Math.min(1, D.dug / curNeed())));
     const drawTunnel = () => {
-      // вертикальный лаз под тайником + горизонтальные сегменты влево
-      if (tunA > 0.01 && (segs > 0 || prog > 0)) {
-        if (tunA < 1) ctx.globalAlpha = tunA;
+      const f = tunnelFrac();
+      const P = S.pal;
+      if (f > 0) {
+        const len = f * TUN_LEN;
         const top = FLOOR + 4;
-        const ty = FLOOR + 16;
-        const shaft = segs > 0 ? 1 : prog;
-        if (shaft > 0) {
-          ctx.fillStyle = '#140c0c';
-          ctx.fillRect(DIG_X, top, 10, Math.max(1, Math.round((ty + 10 - top) * shaft)));
+        const sh = Math.min(len, SHAFT_LEN);
+        ctx.fillStyle = P.tun;
+        ctx.fillRect(DIG_X, top, 10, Math.max(1, Math.round(sh)));
+        if (len > SHAFT_LEN) {
+          const w = Math.round(len - SHAFT_LEN);
+          ctx.fillRect(DIG_X + 10, TUN_Y, w, TUN_H);
+          ctx.fillStyle = P.beam;
+          for (let xx = DIG_X + 34; xx < DIG_X + 10 + w; xx += 24) { ctx.fillRect(xx, TUN_Y - 1, 2, TUN_H + 2); ctx.fillRect(xx - 2, TUN_Y - 1, 6, 2); }
+          // свеча в конце хода
+          if (phase === 'play' || phase === 'idle') { ctx.fillStyle = (Math.floor(clock * 5) & 1) ? '#ffd060' : '#ffb040'; ctx.fillRect(DIG_X + 8 + w, TUN_Y + TUN_H - 4, 1, 2); }
         }
-        const full = segs > 0 ? segs - 1 : 0;
-        let x = DIG_X;
-        ctx.fillStyle = '#140c0c';
-        for (let i = 0; i < full && x > -30; i++) { ctx.fillRect(x - 30, ty, 30, 10); x -= 30; }
-        if (segs > 0) {
-          const w = Math.round(30 * prog);
-          ctx.fillRect(x - w, ty, w, 10);
-          // крепь
-          ctx.fillStyle = '#6a4a2c';
-          for (let xx = DIG_X - 30; xx > x - w; xx -= 30) { ctx.fillRect(xx, ty - 1, 2, 12); ctx.fillRect(xx, ty - 1, 6, 2); }
-          drawIcon(ctx, 'shovel', DIG_X + 14, ty + 1, 1);
-          drawText(ctx, 'x', DIG_X + 23, ty + 2, '#ffd34a', 1);
-          drawInt(ctx, segs, DIG_X + 27, ty + 2, '#ffd34a', 1);
-        }
-        ctx.globalAlpha = 1;
       }
-      // плитка-тайник (сдвигается вбок)
-      ctx.fillStyle = '#5c5662';
+      // обвал: камни сыплются в ход
+      if (quakeWarn > 0 && phase === 'play') {
+        ctx.fillStyle = '#8a7a6a';
+        for (let i = 0; i < 6; i++) ctx.fillRect(DIG_X + 20 + i * 14 + Math.round(Math.sin(clock * 20 + i) * 2), TUN_Y + ((clock * 30 + i * 5) % TUN_H), 2, 2);
+      }
+      // плитка-тайник
+      ctx.fillStyle = P.floor2;
       if (tileOpen > 0.02) {
-        ctx.fillStyle = '#140c0c'; ctx.fillRect(DIG_X - 1, FLOOR, 12, 2);
-        ctx.fillStyle = '#5c5662'; ctx.fillRect(DIG_X - 1 - Math.round(13 * tileOpen), FLOOR - 2 * (tileOpen > 0.5 ? 1 : 0), 12, tileOpen > 0.5 ? 3 : 2);
+        ctx.fillStyle = P.tun; ctx.fillRect(DIG_X - 1, FLOOR, 12, 2);
+        ctx.fillStyle = P.floor2; ctx.fillRect(DIG_X - 1 - Math.round(13 * tileOpen), FLOOR - 2 * (tileOpen > 0.5 ? 1 : 0), 12, tileOpen > 0.5 ? 3 : 2);
       } else ctx.fillRect(DIG_X - 1, FLOOR, 12, 2);
-      // кучка земли (спрятана под мешком)
-      if (pileA > 0.01) {
-        if (pileA < 1) ctx.globalAlpha = pileA;
+      if (pileA > 0.01 && (phase === 'play' || phase === 'end' || phase === 'wait')) {
         ctx.fillStyle = '#b8a070'; ctx.fillRect(DIG_X + 14, FLOOR - 6, 10, 6);
         ctx.fillStyle = '#9a8458'; ctx.fillRect(DIG_X + 15, FLOOR - 7, 8, 1); ctx.fillRect(DIG_X + 18, FLOOR - 8, 2, 1);
-        ctx.globalAlpha = 1;
       }
     };
 
-    const drawCone = () => {
+    const drawCones = () => {
       if (coneA < 0.02) return;
       ctx.globalAlpha = coneA;
-      const g = guard;
-      const ex = Math.round(g.x) + g.dir * 4;
-      const ey = FLOOR - 22;
-      const alarm = seenT > 0 && digging;
-      ctx.fillStyle = alarm ? 'rgba(255,60,50,0.26)' : g.state === 'alert' ? 'rgba(255,90,60,0.18)' : 'rgba(255,220,120,0.16)';
-      for (let d = 0; d < VIS; d += 3) {
-        const hh = 3 + Math.round(d * 0.32);
-        const x = g.dir > 0 ? ex + d : ex - d - 3;
-        ctx.fillRect(x, ey - (hh >> 2), 3, hh);
+      const alarm = seenT > 0 && sw > 0;
+      for (let gi = 0; gi < guards.length; gi++) {
+        const g = guards[gi];
+        if (g.state === 'drunk' || g.state === 'doze' || g.state === 'salute' || g.drunk > 0) continue;
+        const big = g.look === 'golem';
+        const ex = Math.round(g.x) + g.dir * (big ? 6 : 4);
+        const ey = g.y - (big ? 40 : 22);
+        const fill = alarm && seenBy === 0 ? CONE_A : CONE_N;
+        const edge = alarm && seenBy === 0 ? CONE_EA : CONE_E;
+        for (let d = 0; d < g.vis; d += 3) {
+          const x = g.dir > 0 ? ex + d : ex - d - 3;
+          let hh, yt;
+          if (g.ledge) { // взгляд сверху — конус уходит вниз к полу
+            const k = d / g.vis;
+            yt = ey + Math.round(k * (FLOOR - ey - 30)); hh = 6 + Math.round(k * 32);
+          } else { hh = 3 + Math.round(d * 0.32); yt = ey - (hh >> 2); }
+          ctx.fillStyle = fill; ctx.fillRect(x, yt, 3, hh);
+          if ((d % 6) === 0) { ctx.fillStyle = edge; ctx.fillRect(x, yt, 3, 1); ctx.fillRect(x, yt + hh - 1, 3, 1); }
+        }
       }
-      // пунктирная кромка конуса
-      ctx.fillStyle = alarm ? 'rgba(255,90,80,0.55)' : 'rgba(255,230,150,0.35)';
-      for (let d = 0; d < VIS; d += 6) {
-        const hh = 3 + Math.round(d * 0.32);
-        const x = g.dir > 0 ? ex + d : ex - d - 3;
-        ctx.fillRect(x, ey - (hh >> 2), 3, 1);
-        ctx.fillRect(x, ey - (hh >> 2) + hh - 1, 3, 1);
+      // кольца духов
+      for (let i = 0; i < seers.length; i++) {
+        const s = seers[i];
+        if (s.rad <= 0) continue;
+        const magic = s.kind !== 'parrot';
+        const off = s.st === 'sleep' || (magic && cloakT > 0);
+        ctx.fillStyle = off ? 'rgba(160,160,200,0.18)' : seenBy === 2 && alarm ? 'rgba(255,90,80,0.6)' : magic ? 'rgba(170,220,255,0.4)' : 'rgba(255,220,120,0.4)';
+        for (let a = 0; a < 20; a++) {
+          const an = a * 0.314 + clock * 0.4;
+          ctx.fillRect(Math.round(s.x + Math.cos(an) * s.rad), Math.round(s.y + Math.sin(an) * s.rad * 0.8), 2, 1);
+        }
+      }
+      // нюх зверей
+      for (let i = 0; i < beasts.length; i++) {
+        const b = beasts[i];
+        if (b.sub || b.st === 'chew' || b.st === 'sleep') continue;
+        ctx.fillStyle = b.st === 'warn' ? 'rgba(255,90,80,0.55)' : 'rgba(255,200,140,0.28)';
+        for (let x = -b.rad; x <= b.rad; x += 4) ctx.fillRect(Math.round(b.x + x), FLOOR + 1, 2, 1);
       }
       ctx.globalAlpha = 1;
     };
 
-    const drawZ = (x, y) => { ctx.fillRect(x, y, 3, 1); ctx.fillRect(x + 1, y + 1, 1, 1); ctx.fillRect(x, y + 2, 3, 1); };
-
-    const drawGuard = () => {
-      const g = guard;
-      const x = Math.round(g.x);
-      const u = U;
-      const bend = g.state === 'collect' && g.t > 0.4 && g.t < 1.4 ? 2 * u : 0;
-      const doze = g.state === 'doze';
-      const y = FLOOR;
-      const yb = y + bend; // верх тела опускается, когда наклоняется
-      const step = g.moving ? Math.floor(clock * 6) & 1 : 0;
-      const d = g.dir;
-      ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(x - 6, y - 1, 13, 2);
-      ctx.fillStyle = '#2a2228';
-      ctx.fillRect(x - u + (step ? u : 0), y - 4 * u, u, 4 * u);
-      ctx.fillRect(x + u - (step ? u : 0), y - 4 * u, u, 4 * u);
-      ctx.fillStyle = '#7a2a2e'; ctx.fillRect(x - 2 * u, yb - 11 * u, 5 * u, 8 * u - bend);
-      ctx.fillStyle = '#9aa4b2'; ctx.fillRect(x - 2 * u, yb - 11 * u, 5 * u, 2 * u); // наплечник
-      ctx.fillStyle = '#5a1e22'; ctx.fillRect(x - 2 * u, yb - 6 * u, 5 * u, u);
-      ctx.fillStyle = '#c8a040'; ctx.fillRect(x, yb - 6 * u, u, u);
-      // голова и шлем
-      const hy = yb + (doze ? u : 0);
-      ctx.fillStyle = '#d8b08a'; ctx.fillRect(x - u, hy - 15 * u, 4 * u, 4 * u);
-      ctx.fillStyle = '#2a1e1e';
-      if (doze) ctx.fillRect(d > 0 ? x + u : x - u, hy - 13 * u, 2 * u, 1);
-      else ctx.fillRect(d > 0 ? x + 2 * u : x - u, hy - 14 * u, u, u);
-      if (g.state === 'yawn' && g.t > 0.3 && g.t < 1.9) { ctx.fillStyle = '#5a1e22'; ctx.fillRect(d > 0 ? x + u : x, hy - 12 * u, u, u + 1); }
-      ctx.fillStyle = '#8a94a2'; ctx.fillRect(x - 2 * u, hy - 16 * u, 6 * u, 2 * u);
-      ctx.fillStyle = '#b8c2ce'; ctx.fillRect(x - u, hy - 17 * u, 4 * u, u);
-      // рука с фонарём (зевает — потягивается свободной рукой)
-      if (g.state === 'yawn' && g.t > 0.3 && g.t < 1.9) {
-        ctx.fillStyle = '#7a2a2e'; ctx.fillRect(d > 0 ? x - 2 * u : x + 3 * u, yb - 15 * u, u, 4 * u);
-        ctx.fillStyle = '#d8b08a'; ctx.fillRect(d > 0 ? x - 2 * u : x + 3 * u, yb - 16 * u, u, u);
-      }
-      const lx = d > 0 ? x + 3 * u : x - 3 * u;
-      ctx.fillStyle = '#7a2a2e'; ctx.fillRect(d > 0 ? x + 3 * u : x - 2 * u, yb - 10 * u, u, 3 * u);
-      ctx.fillStyle = '#3a3036'; ctx.fillRect(lx - u, yb - 8 * u, 3 * u, u);
-      const lf = 0.8 + 0.2 * Math.sin(clock * 10);
-      ctx.fillStyle = pickA(LANT, lf); ctx.fillRect(lx - 6 * u, yb - 13 * u, 13 * u, 11 * u);
-      ctx.fillStyle = '#ffd060'; ctx.fillRect(lx - u + 1, yb - 7 * u, 2 * u, 2 * u);
-      ctx.fillStyle = '#3a3036'; ctx.fillRect(lx - u, yb - 5 * u, 3 * u, u);
-      // копьё (у пойманного постукивает древком)
-      const tap = g.state === 'grab' && phase === 'wait' && (((clock * 3) | 0) & 1) ? u : 0;
-      ctx.fillStyle = '#6a4a2c'; ctx.fillRect(d > 0 ? x - 3 * u : x + 4 * u, y - 20 * u - tap, u, 19 * u);
-      ctx.fillStyle = '#c8d0dc'; ctx.fillRect(d > 0 ? x - 3 * u : x + 4 * u, y - 22 * u - tap, u, 2 * u);
-      // значки
-      if (g.state === 'suspect' || g.stir > 0) drawText(ctx, '?', x - 1, y - 52, '#ffe08a', 2);
-      else if ((g.state === 'alert' || (g.state === 'grab' && phase === 'end')) && (Math.floor(clock * 8) & 1)) drawText(ctx, '!', x, y - 52, '#ff5050', 2);
-      else if (doze) {
-        ctx.fillStyle = '#d8d8f0';
-        const zt = (clock * 0.7) % 1;
-        drawZ(x + 6 + Math.round(zt * 4), y - 38 - Math.round(zt * 10));
-        drawZ(x + 10 + Math.round(((zt + 0.5) % 1) * 4), y - 38 - Math.round(((zt + 0.5) % 1) * 10));
+    const drawWards = () => {
+      for (let i = 0; i < wards.length; i++) {
+        const w = wards[i];
+        const c = wardPhase(w);
+        const charge = Math.max(0, (c - (w.per - 2.6)) / 1.7);
+        const act = c > w.per - 0.9;
+        const k = act ? 1 : Math.min(1, 0.15 + charge * 0.6);
+        const x = Math.round(w.x);
+        ctx.fillStyle = pickA(WARDG, cloakT > 0 && phase === 'play' ? k * 0.3 : k);
+        ctx.fillRect(x - 12, FLOOR - 2, 25, 3);
+        if (act) ctx.fillRect(x - 6, 20, 13, FLOOR - 22);
+        ctx.fillStyle = act ? '#f0d0ff' : '#8a6ac0';
+        ctx.fillRect(x - 9, FLOOR, 3, 1); ctx.fillRect(x - 1, FLOOR - 1, 3, 1); ctx.fillRect(x + 7, FLOOR, 3, 1);
+        if (act && phase === 'play' && cloakT <= 0) { ctx.fillStyle = 'rgba(220,170,255,0.18)'; ctx.fillRect(0, FLOOR - 4, W, 8); }
       }
     };
 
     const drawAnvil = () => {
       const x = ANVIL_X;
       const y = FLOOR;
-      ctx.fillStyle = '#4a3020'; ctx.fillRect(x - 8, y - 10, 18, 10); // пень
+      ctx.fillStyle = '#4a3020'; ctx.fillRect(x - 8, y - 10, 18, 10);
       ctx.fillStyle = '#5c3c26'; ctx.fillRect(x - 8, y - 10, 18, 2);
       ctx.fillStyle = '#2e3038'; ctx.fillRect(x - 4, y - 16, 10, 6);
       ctx.fillStyle = '#3e4250'; ctx.fillRect(x - 9, y - 22, 22, 6); ctx.fillRect(x - 14, y - 21, 5, 3);
       ctx.fillStyle = '#5a6070'; ctx.fillRect(x - 9, y - 22, 22, 1);
-      // заготовка
-      let ic = null, heat = 0;
+      let ic = null, heatC = 0;
       if (phase === 'play' || phase === 'end' || phase === 'wait') {
-        if (order && orderGap <= 0) { ic = order.o.icon; heat = 1 - order.hits.length / 3; }
-      } else if (pr.st !== 'tocrate') { ic = pr.icon; heat = 1 - pr.hits / pr.need; }
+        if (order && orderGap <= 0) { ic = order.o.icon; heatC = 1 - order.hits.length / 3; }
+      } else if (pr.st !== 'tocrate') { ic = pr.icon; heatC = 1 - pr.hits / pr.need; }
       if (ic) {
-        ctx.fillStyle = heat > 0.5 ? '#ffb040' : heat > 0.1 ? '#e07030' : '#b0b8c4';
+        ctx.fillStyle = heatC > 0.5 ? '#ffb040' : heatC > 0.1 ? '#e07030' : '#b0b8c4';
         if (ic === 'sword') ctx.fillRect(x - 6, y - 24, 16, 2);
         else if (ic === 'pickaxe') { ctx.fillRect(x - 4, y - 24, 12, 2); ctx.fillRect(x - 5, y - 25, 2, 1); ctx.fillRect(x + 7, y - 25, 2, 1); }
         else { ctx.fillRect(x - 2, y - 24, 8, 2); ctx.fillRect(x - 3, y - 25, 2, 1); ctx.fillRect(x + 5, y - 25, 2, 1); }
       }
     };
 
-    const ROBE = '#c8c4b8', STRIPE = '#5a5660', SKIN = '#e8be96', HAIR = '#3a2a1e';
-    const drawPrisoner = () => {
-      const u = U;
-      const y = FLOOR;
-      const inGame = phase === 'play';
-      const pose = inGame ? (pr.x === CROUCH_X ? 'crouch' : 'forge') : pr.pose;
-      const x0 = inGame ? (pose === 'crouch' ? CROUCH_X : SMITH_X) : Math.round(pr.x);
-      if (pose === 'crouch') {
-        // присел у тайника
-        const x = x0;
-        const dig = (digging || pr.st === 'peek' || pr.st === 'cover') ? Math.floor(clock * 6) & 1 : 0;
-        ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(x - 6, y - 1, 13, 2);
-        ctx.fillStyle = ROBE; ctx.fillRect(x - 2 * u, y - 7 * u, 6 * u, 5 * u);
-        ctx.fillStyle = STRIPE; ctx.fillRect(x - 2 * u, y - 6 * u, 6 * u, u); ctx.fillRect(x - 2 * u, y - 4 * u, 6 * u, u);
-        ctx.fillStyle = '#2a2228'; ctx.fillRect(x - 2 * u, y - 2 * u, 2 * u, 2 * u); ctx.fillRect(x + 2 * u, y - 2 * u, 2 * u, 2 * u);
-        ctx.fillStyle = SKIN; ctx.fillRect(x - 3 * u, y - 10 * u, 4 * u, 4 * u);
-        ctx.fillStyle = HAIR; ctx.fillRect(x - 3 * u, y - 10 * u, 4 * u, u);
-        ctx.fillStyle = '#2a1e1e'; ctx.fillRect(x - 3 * u, y - 8 * u, u, u);
-        if (inGame || pr.st === 'cover') {
-          // лопата
-          ctx.fillStyle = '#7a4e2a'; ctx.fillRect(x - 4 * u, y - (8 - dig) * u, u, 6 * u);
-          ctx.fillStyle = '#9aa4b2'; ctx.fillRect(x - 5 * u, y - (3 - dig) * u, 3 * u, 2 * u);
-        } else {
-          ctx.fillStyle = SKIN; ctx.fillRect(x - 4 * u, y - (4 - dig) * u, u, 2 * u);
-        }
-        if (inGame && seenT > 0) drawIcon(ctx, 'eye', x - 7, y - 34, 2);
-        return;
+    const drawPr = () => {
+      const play = phase === 'play';
+      let pose = pr.pose;
+      let x = pr.x;
+      if (play) {
+        x = SMITH_X + (CROUCH_X - SMITH_X) * sw;
+        pose = faintT > 0 ? 'faint' : sw >= 1 ? 'crouch' : sw > 0 ? (S.def.hazards.slip ? 'slide' : 'walk') : 'forge';
+        if (pose === 'faint') x = CROUCH_X + 8;
+      } else if ((phase === 'end' || phase === 'wait') && !endWin) { pose = 'handsup'; }
+      prq.x = x; prq.pose = pose; prq.face = play ? (sw > 0 ? -1 : 1) : pr.face; prq.wink = pr.wink;
+      prq.dig = play ? digging : pr.st === 'peek' || pr.st === 'cover';
+      prq.shovel = play || pr.st === 'cover' || phase === 'escape';
+      prq.swing = swing;
+      prq.sheep = pose === 'handsup' && phase === 'wait' && ((clock * 0.5) % 2) < 0.8;
+      prq.cape = !variant && isFree() && !(phase === 'finale' && pt <= FINALE_AT[3]) && !(phase === 'escape' && crawlFrom === 10 && !escWasFree);
+      drawPrisoner(ctx, prq, clock);
+      if (play && seenT > 0) drawIcon(ctx, 'eye', x - 7, FLOOR - 34, 2);
+      // жара
+      if (play && S.def.hazards.heat && heat > 0.05) {
+        ctx.fillStyle = '#2a1a0c'; ctx.fillRect(x - 10, FLOOR - 44, 22, 3);
+        ctx.fillStyle = heat > 0.75 ? ((Math.floor(clock * 8) & 1) ? '#ff5030' : '#ffb060') : '#ff9a40';
+        ctx.fillRect(x - 10, FLOOR - 44, Math.round(22 * Math.min(1, heat)), 3);
+        drawIco(ctx, 'sun', x - 19, FLOOR - 46, 1);
       }
-      const x = x0;
-      const moving = pose === 'walk' || pose === 'carry';
-      const st = moving ? ((clock * 8) | 0) & 1 : 0;
-      const face = pose === 'forge' ? 1 : pr.face;
-      ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(x - 6, y - 1, 13, 2);
-      ctx.fillStyle = '#2a2228'; ctx.fillRect(x - u + (st ? u : 0), y - 3 * u, u, 3 * u); ctx.fillRect(x + u - (st ? u : 0), y - 3 * u, u, 3 * u);
-      ctx.fillStyle = ROBE; ctx.fillRect(x - 2 * u, y - 10 * u, 5 * u, 7 * u);
-      ctx.fillStyle = STRIPE;
-      for (let i = 0; i < 3; i++) ctx.fillRect(x - 2 * u, y - (9 - i * 2) * u, 5 * u, u);
-      const sheep = pose === 'handsup' && phase === 'wait' && ((clock * 0.5) % 2) < 0.8 ? u : 0; // виновато опускает голову
-      ctx.fillStyle = SKIN; ctx.fillRect(x - u, y - 14 * u + sheep, 4 * u, 4 * u);
-      ctx.fillStyle = HAIR;
-      ctx.fillRect(x - u, y - 14 * u + sheep, 4 * u, u);
-      if (pose === 'front') {
-        ctx.fillStyle = '#2a1e1e';
-        ctx.fillRect(x, y - 12 * u, u, u);
-        if (pr.wink) ctx.fillRect(x + 2 * u - 1, y - 12 * u + 1, u + 1, 1); else ctx.fillRect(x + 2 * u - 1, y - 12 * u, u, u);
-        ctx.fillStyle = '#a8644a'; ctx.fillRect(x, y - 11 * u + 1, 3 * u - 1, 1);
-      } else {
-        ctx.fillRect(face > 0 ? x - u : x + 2 * u, y - 13 * u + sheep, u, u);
-        ctx.fillStyle = '#2a1e1e'; ctx.fillRect(face > 0 ? x + 2 * u : x - u, y - 13 * u + sheep, u, u);
+      if (play && cloakT > 0) { ctx.fillStyle = 'rgba(160,110,230,0.25)'; ctx.fillRect(x - 9, FLOOR - 32, 19, 32); }
+    };
+
+    const drawActors = () => {
+      drawWards();
+      for (let i = 0; i < seers.length; i++) if (seers[i].kind === 'bat') drawSeer(ctx, seers[i], clock, false);
+      for (let i = 0; i < beasts.length; i++) drawBeast(ctx, beasts[i], clock);
+      for (let i = 0; i < guards.length; i++) {
+        const g = guards[i];
+        drawGuard(ctx, g, clock, g.state === 'grab' && phase === 'wait' && (((clock * 3) | 0) & 1));
+        const hx = Math.round(g.x) - 1, hy = g.y - (g.look === 'golem' ? 62 : 52);
+        if (phase === 'play' && g.state === 'suspect') drawText(ctx, '?', hx, hy, '#ffe08a', 2);
+        else if (g.stir > 0) drawText(ctx, '?', hx, hy, '#ffe08a', 2);
+        else if (g.state === 'grab' && phase === 'end' && (Math.floor(clock * 8) & 1)) drawText(ctx, '!', hx + 1, hy, '#ff5050', 2);
       }
-      // руки
-      ctx.fillStyle = SKIN;
-      if (pose === 'forge') {
-        if (swing > 0) {
-          ctx.fillRect(x + 3 * u, y - 9 * u, 3 * u, u);
-          ctx.fillStyle = '#7a4e2a'; ctx.fillRect(x + 6 * u, y - 10 * u, u, 3 * u);
-          ctx.fillStyle = '#7e8a9a'; ctx.fillRect(x + 6 * u - 2, y - 13 * u + 2, 3 * u, 3 * u - 2);
-        } else {
-          ctx.fillRect(x + 2 * u, y - 13 * u, u, 4 * u);
-          ctx.fillStyle = '#7a4e2a'; ctx.fillRect(x + 2 * u, y - 17 * u, u, 4 * u);
-          ctx.fillStyle = '#7e8a9a'; ctx.fillRect(x + u, y - 19 * u, 4 * u, 2 * u);
-        }
-      } else if (pose === 'handsup') {
-        ctx.fillRect(x - 3 * u, y - 16 * u, u, 5 * u); ctx.fillRect(x + 3 * u, y - 16 * u, u, 5 * u);
-      } else if (pose === 'carry') {
-        const hx = face > 0 ? x + 3 * u : x - 4 * u;
-        ctx.fillRect(hx, y - 9 * u, 2 * u, u);
-        ctx.fillStyle = '#9aa4b2'; ctx.fillRect(face > 0 ? hx + u : hx - u, y - 10 * u, 2 * u, u);
-      } else {
-        // опущенная рука с молотом
-        const hx = face > 0 ? x + 3 * u : x - 2 * u;
-        ctx.fillRect(hx, y - 9 * u, u, 3 * u);
-        ctx.fillStyle = '#7a4e2a'; ctx.fillRect(hx, y - 6 * u, u, 2 * u);
-        ctx.fillStyle = '#7e8a9a'; ctx.fillRect(hx - u, y - 4 * u, 3 * u, u);
-      }
+      for (let i = 0; i < beasts.length; i++) { const b = beasts[i]; if (b.st === 'warn' && phase === 'play' && (Math.floor(clock * 8) & 1)) drawText(ctx, '!', Math.round(b.x), FLOOR - 22, '#ff5050', 2); }
+      drawAnvil();
+      if (KK.on && kokk) drawKokk(ctx, kokk, KK.x, FLOOR, KK.walk, KK.reach, KK.wave > 0, clock);
+      drawPr();
+      for (let i = 0; i < seers.length; i++) if (seers[i].kind !== 'bat') drawSeer(ctx, seers[i], clock, cloakT > 0 && phase === 'play');
     };
 
     const drawBar = () => {
@@ -1032,17 +1318,14 @@ export default {
       ctx.fillStyle = '#c8a040'; ctx.fillRect(bx + Math.round(y0 * bw), by, Math.round((y1 - y0) * bw), bh);
       ctx.fillStyle = '#3ec060'; ctx.fillRect(bx + Math.round((zoneC - half) * bw), by, Math.round(half * 2 * bw), bh);
       ctx.fillStyle = '#7dffaa'; ctx.fillRect(bx + Math.round((zoneC - half) * bw), by, Math.round(half * 2 * bw), 1);
-      // маркер
       const mx = bx + Math.round(marker * bw);
-      ctx.fillStyle = '#ffffff'; ctx.fillRect(mx - 1, by - 3, 2, bh + 6);
+      ctx.fillStyle = sw > 0 ? '#8a8a8a' : '#ffffff'; ctx.fillRect(mx - 1, by - 3, 2, bh + 6);
       ctx.fillRect(mx - 2, by - 4, 4, 1); ctx.fillRect(mx - 2, by + bh + 3, 4, 1);
-      // вспышка оценки
       if (lastQT > 0) {
         ctx.fillStyle = lastQ === 2 ? 'rgba(125,255,170,0.5)' : lastQ === 1 ? 'rgba(255,224,138,0.45)' : 'rgba(255,90,90,0.45)';
         ctx.fillRect(bx - 2, by - 2, bw + 4, 1); ctx.fillRect(bx - 2, by + bh + 1, bw + 4, 1);
       }
       drawIcon(ctx, 'hammer', bx - 14, by, 1);
-      // три удара
       for (let i = 0; i < 3; i++) {
         const q = order.hits[i];
         ctx.fillStyle = q == null ? '#3a3036' : q === 2 ? '#3ec060' : q === 1 ? '#c8a040' : '#a03030';
@@ -1056,14 +1339,21 @@ export default {
       ctx.globalAlpha = hudA;
       ctx.save();
       ctx.translate(0, -slide);
-      // жизни
-      for (let i = 0; i < 3; i++) drawIcon(ctx, i < lives ? 'heart' : 'heartEmpty', 4 + i * 16, 4, 2);
+      // книга, милость, тюрьма
+      ctx.fillStyle = menu ? '#5a3a2a' : SHADE; ctx.fillRect(BOOK.x, BOOK.y, BOOK.w, BOOK.h);
+      drawIco(ctx, 'book', BOOK.x + 1, BOOK.y + 1, 2);
+      ctx.fillStyle = SHADE; ctx.fillRect(22, 3, 46 + Math.max(0, intWidth(D.fav, 1) - 12), 16);
+      drawIco(ctx, 'fav', 24, 4, 2);
+      drawInt(ctx, D.fav, 41, 6, '#ffd34a', 2);
+      const lab = isFree() ? 'СВОБОДА' : 'ТЮРЬМА ' + sceneP;
+      drawLabel(ctx, lab, 4, 22, '#c8b8a0', 1);
+      if (authorMode) { ctx.fillStyle = '#7a2ad0'; ctx.fillRect(labelWidth(lab, 1) + 7, 21, 7, 7); drawLabel(ctx, 'A', labelWidth(lab, 1) + 9, 22, '#ffffff', 1); }
       // часы
       const tl = phase === 'play' ? Math.ceil(timeLeft()) : phase === 'intro' ? SHIFT : Math.ceil(timeLeft());
       const mins = Math.floor(tl / 60), secs = tl % 60;
       const tw = intWidth(mins, 2) + 2 + textWidth(':', 2) + 2 + intWidth(secs, 2, 2) + 18;
       const tx = Math.round(W / 2 - tw / 2);
-      ctx.fillStyle = 'rgba(20,14,18,0.6)'; ctx.fillRect(tx - 3, 3, tw + 6, 16);
+      ctx.fillStyle = SHADE; ctx.fillRect(tx - 3, 3, tw + 6, 16);
       drawIcon(ctx, 'clock', tx, 4, 2);
       const tc = tl <= 10 && (Math.floor(clock * 4) & 1) ? '#ff7070' : '#f4ecdc';
       let cx = tx + 18;
@@ -1072,32 +1362,71 @@ export default {
       drawInt(ctx, secs, cx, 6, tc, 2, 2);
       // счёт
       const sc = Math.floor(scoreV);
-      const sw = intWidth(sc, 2);
-      ctx.fillStyle = 'rgba(20,14,18,0.6)'; ctx.fillRect(W - sw - 10, 3, sw + 7, 14);
-      drawInt(ctx, sc, W - sw - 5, 7, '#1a0e08', 2);
-      drawInt(ctx, sc, W - sw - 6, 6, '#fff2d0', 2);
+      const sw2 = intWidth(sc, 2);
+      ctx.fillStyle = SHADE; ctx.fillRect(W - sw2 - 10, 3, sw2 + 7, 14);
+      drawInt(ctx, sc, W - sw2 - 5, 7, '#1a0e08', 2);
+      drawInt(ctx, sc, W - sw2 - 6, 6, '#fff2d0', 2);
       const b = Math.max(best, sc);
       const bw = intWidth(b, 1);
       drawIcon(ctx, 'trophy', W - bw - 15, 19, 1);
       drawInt(ctx, b, W - bw - 5, 20, '#ffd34a', 1);
+      // задания дня
+      const t = D.dy.t;
+      for (let i = 0; i < t.length; i++) {
+        const q = t[i];
+        const y = 30 + i * 9;
+        const nm = DAILY[q.i].short;
+        const n = Math.floor(q.n), g = q.g;
+        const w = labelWidth(nm, 1) + intWidth(n, 1) + intWidth(g, 1) + 14;
+        ctx.fillStyle = SHADE; ctx.fillRect(W - w - 4, y - 1, w + 2, 8);
+        const col = q.done ? '#7dffaa' : '#d8c8a8';
+        let x = W - w - 2;
+        x += drawLabel(ctx, nm, x, y, col, 1) + 3;
+        x += drawInt(ctx, n, x, y, col, 1) + 1;
+        x += drawText(ctx, '/', x, y, col, 1) + 1;
+        drawInt(ctx, g, x, y, col, 1);
+        if (q.done) { ctx.fillStyle = '#7dffaa'; ctx.fillRect(W - w - 6, y + 2, 1, 1); }
+      }
       // заказ
       const o = order && phase !== 'intro' ? order.o : ORDERS[0];
-      ctx.fillStyle = '#d8c8a0'; ctx.fillRect(4, 24, 30, 34);
-      ctx.fillStyle = '#b8a47a'; ctx.fillRect(4, 56, 30, 2); ctx.fillRect(32, 24, 2, 34);
-      ctx.fillStyle = '#7a2a2a'; ctx.fillRect(17, 22, 4, 4);
-      drawIcon(ctx, o.icon, 9, 29, 3);
+      ctx.fillStyle = '#d8c8a0'; ctx.fillRect(4, 32, 30, 34);
+      ctx.fillStyle = '#b8a47a'; ctx.fillRect(4, 64, 30, 2); ctx.fillRect(32, 32, 2, 34);
+      ctx.fillStyle = '#7a2a2a'; ctx.fillRect(17, 30, 4, 4);
+      drawIcon(ctx, o.icon, 9, 37, 3);
       if (order && orderGap <= 0 && phase === 'play') {
         const k = Math.max(0, order.pat / order.max);
-        ctx.fillStyle = '#3a2a20'; ctx.fillRect(6, 52, 26, 3);
+        ctx.fillStyle = '#3a2a20'; ctx.fillRect(6, 60, 26, 3);
         ctx.fillStyle = k > 0.35 ? '#3ec060' : (Math.floor(clock * 6) & 1) ? '#ff5050' : '#c03030';
-        ctx.fillRect(6, 52, Math.round(26 * k), 3);
+        ctx.fillRect(6, 60, Math.round(26 * k), 3);
       }
-      if (combo >= 2 && phase === 'play') { const w = drawText(ctx, 'x', 38, 27, '#7dffaa', 1); drawInt(ctx, combo, 39 + w, 27, '#7dffaa', 1); }
+      if (combo >= 2 && phase === 'play') { const w = drawText(ctx, 'x', 38, 35, '#7dffaa', 1); drawInt(ctx, combo, 39 + w, 35, '#7dffaa', 1); }
+      if (cloakT > 0) { drawIco(ctx, 'cloak', 38, 44, 1); drawInt(ctx, Math.ceil(cloakT), 47, 45, '#c8a0ff', 1); }
       drawBar();
       ctx.restore();
-      // кнопка-лопата выезжает снизу
+      // низ: предметы, прогресс, лопата
       ctx.save();
       ctx.translate(0, slide * 2);
+      for (let i = 0; i < ITEMS.length; i++) {
+        const x = 4 + i * 18;
+        ctx.fillStyle = SHADE; ctx.fillRect(x, SLOT_Y, 16, 17);
+        drawIco(ctx, ITEMS[i].id, x + 1, SLOT_Y + 1, 2);
+        if (D.it[i] <= 0) { ctx.fillStyle = 'rgba(20,14,18,0.6)'; ctx.fillRect(x, SLOT_Y, 16, 17); }
+        drawInt(ctx, D.it[i], x + 12, SLOT_Y + 11, D.it[i] > 0 ? '#ffffff' : '#7a6a6a', 1);
+        drawInt(ctx, i + 1, x + 1, SLOT_Y + 11, '#a89878', 1);
+      }
+      const f = tunnelFrac();
+      const px0 = 100, pw = 166;
+      ctx.fillStyle = SHADE; ctx.fillRect(px0 - 2, 163, pw + 4, 15);
+      const pct = Math.floor(f * 100);
+      let lx = px0;
+      lx += drawLabel(ctx, isFree() ? 'ИСПЫТАНИЕ' : 'ПОДКОП', lx, 165, '#e8d8b0', 1) + 4;
+      lx += drawInt(ctx, pct, lx, 165, '#ffd34a', 1);
+      drawText(ctx, '%', lx + 1, 165, '#ffd34a', 1);
+      const tn = SHOVELS[D.tool].name.toUpperCase();
+      drawLabel(ctx, tn, px0 + pw - labelWidth(tn, 1), 165, '#a8b4c4', 1);
+      ctx.fillStyle = '#2a1e14'; ctx.fillRect(px0, 172, pw, 4);
+      ctx.fillStyle = '#ffd34a'; ctx.fillRect(px0, 172, Math.round(pw * f), 4);
+      ctx.fillStyle = '#5a4630'; for (let i = 1; i < SEGS; i++) ctx.fillRect(px0 + Math.round((pw * i) / SEGS), 172, 1, 4);
       const pressed = digging;
       ctx.fillStyle = pressed ? '#2a1e14' : '#1a120e';
       ctx.fillRect(BTN.x - 1, BTN.y - 1, BTN.w + 2, BTN.h + 2);
@@ -1106,10 +1435,99 @@ export default {
       ctx.fillStyle = pressed ? '#5a3c22' : '#a87c50';
       ctx.fillRect(BTN.x, BTN.y, BTN.w, 2);
       drawIcon(ctx, 'shovel', BTN.x + 11, BTN.y + 4 + (pressed ? 1 : 0), 3);
+      const segK = (D.dug % (curNeed() / SEGS)) / (curNeed() / SEGS);
       ctx.fillStyle = '#2a1e14'; ctx.fillRect(BTN.x + 3, BTN.y + BTN.h - 7, BTN.w - 6, 4);
-      ctx.fillStyle = '#ffd34a'; ctx.fillRect(BTN.x + 3, BTN.y + BTN.h - 7, Math.round((BTN.w - 6) * prog), 4);
+      ctx.fillStyle = '#ffd34a'; ctx.fillRect(BTN.x + 3, BTN.y + BTN.h - 7, Math.round((BTN.w - 6) * (variant ? 0 : segK)), 4);
       ctx.restore();
       ctx.globalAlpha = 1;
+    };
+
+    const drawMenu = () => {
+      ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#e8d8b0'; ctx.fillRect(MB.x - 2, MB.y - 2, MB.w + 4, MB.h + 4);
+      ctx.fillStyle = '#2a1e18'; ctx.fillRect(MB.x, MB.y, MB.w, MB.h);
+      for (let i = 0; i < 3; i++) {
+        const x = MB.x + 8 + i * 78;
+        ctx.fillStyle = i === page ? '#8a3a2a' : '#3a2a22'; ctx.fillRect(x, MB.y + 4, 72, 11);
+        drawLabel(ctx, PAGE_NAMES[i], x + 36 - (labelWidth(PAGE_NAMES[i], 1) >> 1), MB.y + 7, i === page ? '#fff2d0' : '#a89878', 1);
+      }
+      const x0 = MB.x + 10;
+      if (page === 0) {
+        // лопата
+        for (let r = 0; r < shopRows(); r++) {
+          const y = MB.y + 24 + r * 16;
+          if (r === sel) { ctx.fillStyle = '#4a3428'; ctx.fillRect(MB.x + 4, y - 2, MB.w - 8, 15); }
+          let name, cost, have, hint;
+          if (r === 0) {
+            const nx = D.tool + 1;
+            drawIcon(ctx, 'shovel', x0, y, 1);
+            name = nx < SHOVELS.length ? 'ЛОПАТА: ' + SHOVELS[nx].name.toUpperCase() : 'ЛОПАТА: ' + SHOVELS[D.tool].name.toUpperCase();
+            cost = nx < SHOVELS.length ? SHOVELS[nx].cost : 0;
+            have = -1;
+            hint = 'X' + (nx < SHOVELS.length ? SHOVELS[nx].mul : SHOVELS[D.tool].mul).toFixed(2) + ' К СКОРОСТИ';
+          } else {
+            const it = ITEMS[r - 1];
+            drawIco(ctx, it.id, x0, y, 1);
+            name = it.name.toUpperCase(); cost = it.cost; have = D.it[r - 1]; hint = it.hint.toUpperCase();
+          }
+          drawLabel(ctx, name, x0 + 12, y, '#fff2d0', 1);
+          drawLabel(ctx, hint, x0 + 12, y + 7, '#9a8a78', 1);
+          if (have >= 0) { drawInt(ctx, have, MB.x + MB.w - 64, y + 2, '#c8b8a0', 1); }
+          if (cost > 0) {
+            const cw = intWidth(cost, 1);
+            drawIco(ctx, 'fav', MB.x + MB.w - cw - 22, y, 1);
+            drawInt(ctx, cost, MB.x + MB.w - cw - 12, y + 1, D.fav >= cost ? '#ffd34a' : '#8a6a4a', 1);
+          } else if (r === 0) drawIco(ctx, 'check', MB.x + MB.w - 20, y, 1);
+        }
+      } else if (page === 1) {
+        const n = albumCount(D.alb);
+        for (let i = 0; i < ARTEFACTS.length; i++) {
+          const c = i % 10, r = Math.floor(i / 10);
+          const a = ARTEFACTS[Math.floor(i / 10) + (i % 10) * 3];
+          const ai = Math.floor(i / 10) + (i % 10) * 3;
+          const x = MB.x + 10 + c * 22, y = MB.y + 26 + r * 22;
+          ctx.fillStyle = i === sel ? '#5a4030' : '#3a2a22'; ctx.fillRect(x, y, 20, 20);
+          drawArt(ctx, a.shape, a.c, x + 3, y + 3, 2, hasArt(D.alb, ai) ? null : '#1a1210');
+        }
+        const ai = Math.floor(sel / 10) + (sel % 10) * 3;
+        const a = ARTEFACTS[ai];
+        const known = hasArt(D.alb, ai);
+        drawLabel(ctx, known ? a.name.toUpperCase() : '???', x0, MB.y + 98, known ? '#ffd34a' : '#7a6a5a', 1);
+        drawLabel(ctx, 'ТЮРЬМА ' + a.p + ' · ' + PRISONS[a.p].short.toUpperCase(), x0, MB.y + 106, '#9a8a78', 1);
+        drawLabel(ctx, 'НАЙДЕНО', x0, MB.y + 120, '#c8b8a0', 1);
+        drawInt(ctx, n, x0 + 40, MB.y + 120, '#ffd34a', 1);
+        drawText(ctx, '/30', x0 + 41 + intWidth(n, 1), MB.y + 120, '#ffd34a', 1);
+      } else {
+        drawLabel(ctx, 'ЗАДАНИЯ ДНЯ', x0, MB.y + 22, '#fff2d0', 1);
+        const t = D.dy.t;
+        for (let i = 0; i < t.length; i++) {
+          const q = t[i];
+          const d = DAILY[q.i];
+          const y = MB.y + 32 + i * 10;
+          drawLabel(ctx, d.short, x0, y, q.done ? '#7dffaa' : '#d8c8a8', 1);
+          ctx.fillStyle = '#3a2a22'; ctx.fillRect(x0 + 34, y + 1, 80, 3);
+          ctx.fillStyle = q.done ? '#7dffaa' : '#ffd34a'; ctx.fillRect(x0 + 34, y + 1, Math.round(80 * Math.min(1, q.n / q.g)), 3);
+          drawInt(ctx, Math.floor(q.n), x0 + 120, y, '#c8b8a0', 1);
+          drawText(ctx, '/', x0 + 121 + intWidth(Math.floor(q.n), 1), y, '#c8b8a0', 1);
+          drawInt(ctx, q.g, x0 + 125 + intWidth(Math.floor(q.n), 1), y, '#c8b8a0', 1);
+          drawIco(ctx, 'fav', x0 + 168, y - 1, 1);
+          drawInt(ctx, d.fav, x0 + 177, y, '#ffd34a', 1);
+        }
+        // карта тюрем
+        drawLabel(ctx, 'ПУТЬ К СВОБОДЕ', x0, MB.y + 72, '#fff2d0', 1);
+        for (let i = 1; i <= 10; i++) {
+          const x = x0 + (i - 1) * 22, y = MB.y + 82;
+          const done = D.cur > i, here = D.cur === i;
+          ctx.fillStyle = done ? '#3a6a3a' : here ? '#8a6a2a' : '#3a2a22'; ctx.fillRect(x, y, 18, 18);
+          if (here && (Math.floor(clock * 2) & 1)) { ctx.fillStyle = '#ffd34a'; ctx.fillRect(x, y + 17, 18, 1); }
+          drawInt(ctx, i, x + 9 - (intWidth(i, 1) >> 1), y + 3, done ? '#c8ffc8' : '#e8d8b0', 1);
+          if (done) drawIco(ctx, 'check', x + 6, y + 10, 1);
+          else if (REWARD_AT[i]) { ctx.fillStyle = '#ffd34a'; ctx.fillRect(x + 8, y + 12, 2, 2); }
+        }
+        drawLabel(ctx, isFree() ? 'ТЫ СВОБОДЕН · ИСПЫТАНИЙ ' + D.st.free : PRISONS[Math.min(10, D.cur)].name.toUpperCase(), x0, MB.y + 106, '#ffd34a', 1);
+        drawLabel(ctx, 'ПОБЕГОВ ' + D.st.esc + ' · ПОЙМАН ' + D.st.cg, x0, MB.y + 116, '#9a8a78', 1);
+      }
+      drawLabel(ctx, '< > СТРАНИЦЫ · ENTER КУПИТЬ · TAB ЗАКРЫТЬ', MB.x + 8, MB.y + MB.h - 9, '#7a6a5a', 1);
     };
 
     const drawPops = () => {
@@ -1120,27 +1538,129 @@ export default {
         drawText(ctx, p.s, Math.round(p.x - w / 2) + 1, Math.round(p.y) + 1, '#1a0e08', 2);
         drawText(ctx, p.s, Math.round(p.x - w / 2), Math.round(p.y), p.c, 2);
       }
+      let y = 84;
+      for (let i = 0; i < msgs.length; i++) {
+        const m = msgs[i];
+        if (!m.on) continue;
+        const x = Math.round(W / 2 - m.w / 2);
+        ctx.fillStyle = 'rgba(16,12,18,0.75)'; ctx.fillRect(x - 4, y - 2, m.w + 8, 9);
+        drawLabel(ctx, m.s, x, y, m.c, 1);
+        y += 11;
+      }
+    };
+
+    // ползок по подкопу — во весь экран
+    const drawCrawl = () => {
+      const k = pt - ESC_DROP;
+      const P = crawlPal || S.pal;
+      ctx.fillStyle = P.earth; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = P.earth2;
+      const sc = Math.round(k * 70);
+      for (let i = 0; i < 40; i++) { const x = ((i * 53 - sc) % (W + 40) + W + 40) % (W + 40) - 20; ctx.fillRect(x, (i * 37) % H, 4 + (i % 4) * 2, 3); }
+      ctx.fillStyle = P.tun; ctx.fillRect(0, 76, W, 34);
+      ctx.fillStyle = P.beam;
+      for (let x = ((-sc) % 60 + 60) % 60; x < W; x += 60) { ctx.fillRect(x, 72, 4, 42); ctx.fillRect(x - 3, 72, 10, 4); }
+      // корни и находки
+      ctx.fillStyle = '#6a5a3a';
+      for (let i = 0; i < 6; i++) { const x = ((i * 71 - sc * 1.2) % (W + 30) + W + 30) % (W + 30) - 15; ctx.fillRect(x, 66 + (i % 2) * 2, 1, 10); ctx.fillRect(x + 1, 70, 3, 1); }
+      // ползущий беглец
+      const bx = 150 + Math.round(Math.sin(k * 3) * 4), by = 100;
+      const st = Math.floor(k * 8) & 1;
+      ctx.fillStyle = '#2a2228'; ctx.fillRect(bx - 18, by - 2 - st, 8, 3); ctx.fillRect(bx - 18, by + 2 + st - 2, 8, 2);
+      ctx.fillStyle = '#c8c4b8'; ctx.fillRect(bx - 10, by - 6, 18, 8);
+      ctx.fillStyle = '#5a5660'; ctx.fillRect(bx - 6, by - 6, 2, 8); ctx.fillRect(bx, by - 6, 2, 8);
+      ctx.fillStyle = '#e8be96'; ctx.fillRect(bx + 8, by - 9, 8, 8); ctx.fillRect(bx + 10 + st * 3, by + 1, 4, 2);
+      ctx.fillStyle = '#3a2a1e'; ctx.fillRect(bx + 8, by - 9, 8, 2);
+      ctx.fillStyle = '#2a1e1e'; ctx.fillRect(bx + 13, by - 6, 2, 2);
+      // свеча в зубах
+      ctx.fillStyle = (Math.floor(clock * 6) & 1) ? '#ffd060' : '#ffb040'; ctx.fillRect(bx + 18, by - 6, 2, 3);
+      ctx.fillStyle = pickA(WHITE, 0.08); ctx.fillRect(bx + 4, by - 20, 40, 34);
+      // пыль
+      ctx.fillStyle = '#8a7a5a';
+      for (let i = 0; i < 8; i++) ctx.fillRect(((i * 41 - sc * 2) % W + W) % W, 78 + ((i * 13 + Math.floor(k * 10)) % 30), 1, 1);
+      // затемнение входа/выхода
+      const a = k < 0.4 ? 1 - k / 0.4 : k > ESC_CRAWL - ESC_DROP - 0.5 ? (k - (ESC_CRAWL - ESC_DROP - 0.5)) / 0.5 : 0;
+      if (a > 0) { ctx.fillStyle = pickA(BLACK, a); ctx.fillRect(0, 0, W, H); }
+      drawLabel(ctx, 'ПОЛЗЁШЬ ПО ПОДКОПУ...', W / 2 - (labelWidth('ПОЛЗЁШЬ ПО ПОДКОПУ...', 1) >> 1), 130, '#e8d8b0', 1);
+    };
+
+    const drawBanner = () => {
+      if (bannerT <= 0 || variant) return;
+      const a = Math.min(1, bannerT / 0.5, (2.4 - bannerT) / 0.3 + 0.01);
+      const def = PRISONS[bannerP];
+      if (!def) return;
+      ctx.globalAlpha = Math.max(0, Math.min(1, a));
+      const t1 = (isFree() && bannerP === 10 ? 'СВОБОДА' : 'ТЮРЬМА ' + bannerP);
+      const t2 = def.name.toUpperCase();
+      const w1 = labelWidth(t1, 2), w2 = labelWidth(t2, 1);
+      const w = Math.max(w1, w2) + 16;
+      ctx.fillStyle = PANEL; ctx.fillRect(Math.round(W / 2 - w / 2), 92, w, 28);
+      ctx.fillStyle = '#c8a040'; ctx.fillRect(Math.round(W / 2 - w / 2), 92, w, 1); ctx.fillRect(Math.round(W / 2 - w / 2), 119, w, 1);
+      drawLabel(ctx, t1, Math.round(W / 2 - w1 / 2), 96, '#ffd34a', 2);
+      drawLabel(ctx, t2, Math.round(W / 2 - w2 / 2), 110, '#e8d8b0', 1);
+      ctx.globalAlpha = 1;
+    };
+
+    const drawSpeech = () => {
+      if (phase !== 'finale' || finLine < 0 || !KK.on) return;
+      const s = FINALE_LINES[finLine];
+      const w = labelWidth(s, 1) + 10;
+      const x = Math.max(4, Math.min(W - w - 4, Math.round(KK.x - w + 20)));
+      const y = FLOOR - 58;
+      ctx.fillStyle = '#1a1418'; ctx.fillRect(x - 1, y - 1, w + 2, 13);
+      ctx.fillStyle = '#fff8e8'; ctx.fillRect(x, y, w, 11);
+      ctx.fillRect(Math.round(KK.x) - 2, y + 11, 4, 2); ctx.fillRect(Math.round(KK.x) - 1, y + 13, 2, 2);
+      drawLabel(ctx, s, x + 5, y + 3, '#2a1a10', 1);
+      // плащ летит от Кокка к беглецу
+      if (pt > FINALE_AT[2] + 0.4 && pt < FINALE_AT[3]) {
+        const k = (pt - FINALE_AT[2] - 0.4) / (FINALE_AT[3] - FINALE_AT[2] - 0.4);
+        const cx = KK.x - 14 + (SMITH_X - KK.x + 14) * k, cy = FLOOR - 26 - Math.sin(k * Math.PI) * 14;
+        drawIco(ctx, 'cape', cx - 7, cy - 7, 2);
+      }
     };
 
     const draw = () => {
+      const sway = S.sway || 0;
+      const sh = S.shake > 0 ? Math.round(Math.sin(clock * 50) * 1.5) : 0;
+      const ox = Math.round(sway) + sh;
+      if (ox) { ctx.save(); ctx.translate(ox, 0); }
       drawRoom();
       drawTunnel();
-      drawCone();
-      drawGuard();
-      drawAnvil();
-      drawPrisoner();
+      drawCones();
+      drawActors();
       for (let i = 0; i < parts.length; i++) {
         const p = parts[i];
         if (!p.on) continue;
         ctx.fillStyle = p.c;
         ctx.fillRect(Math.round(p.x), Math.round(p.y), 1, 1);
       }
+      drawFront(ctx, S, clock, dark);
+      if (ox) ctx.restore();
       if (dimA > 0.01) { ctx.fillStyle = pickA(DIM, dimA); ctx.fillRect(0, 0, W, H); }
+      if (phase === 'escape' && pt >= ESC_DROP && pt < ESC_CRAWL) drawCrawl();
+      else if (phase === 'escape' && pt >= ESC_CRAWL && pt < ESC_CRAWL + 0.6) { ctx.fillStyle = pickA(BLACK, 1 - (pt - ESC_CRAWL) / 0.6); ctx.fillRect(0, 0, W, H); }
       drawHUD();
+      drawSpeech();
+      drawBanner();
       drawPops();
+      if (menu) drawMenu();
     };
 
-    // ---- цикл ----
+    // отладочный доступ для автотестов (хост его не передаёт)
+    if (typeof api._probe === 'function') {
+      try {
+        api._probe({
+          get D() { return D; }, get real() { return real; }, get auth() { return auth; }, get authorMode() { return authorMode; },
+          guards, beasts, seers, wards, sees, wardActive, curNeed, wardPhase,
+          get sw() { return sw; }, get phase() { return phase; }, get sceneP() { return sceneP; }, get cloak() { return cloakT; },
+          get heat() { return heat; }, get quake() { return quakeWarn; }, get digging() { return digging; }, get time() { return time; },
+          get marker() { return marker; }, get zoneC() { return zoneC; }, get zoneW() { return zoneW(); }, get order() { return order; }, get orderGap() { return orderGap; },
+          get menu() { return menu; }, get faint() { return faintT; }, get kk() { return KK; }, get free() { return isFree(); }
+        });
+      } catch (e) { /* тесты */ }
+    }
+
+    // ---------- цикл ----------
     let raf = 0;
     let last = performance.now();
     let alive = true;
@@ -1162,7 +1682,6 @@ export default {
         stillT = 0;
         draw();
       } else {
-        // пауза или «без анимаций» — неподвижный кадр, перерисовываем изредка
         if (!paused && m === 'play') handleMode(m);
         stillT -= dt;
         if (stillT <= 0) { stillT = 0.5; draw(); }
@@ -1174,6 +1693,7 @@ export default {
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
+      if (!variant && (phase === 'play' || phase === 'end' || phase === 'wait')) persist();
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
