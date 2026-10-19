@@ -3,6 +3,7 @@ import { useApp } from '../lib/app.jsx';
 import Icon from './Icon.jsx';
 import { SCENES } from './SceneHost.jsx';
 import * as music from '../lib/music.js';
+import { weekInfo, currentEvent } from '../games/events.js';
 
 // Нижняя полоска главного экрана: фон (◀ имя ▶, случайный), музыка (нота + громкость), «Играть» — фон превращается в игру.
 // Музыка по настройкам; молчит, пока запущен Minecraft.
@@ -52,6 +53,11 @@ export default function FunBar({ sceneId, scenes, onScene, onPlay, onRewards }) 
         </button>
         <button className={'fun-btn' + (pick ? ' on' : '')} title={t('Другие игры')} onClick={() => setPick(!pick)}>▾</button>
       </div>
+ {(() => { const w = weekInfo(); const g = SCENES.find((x) => x.id === w.game); const ev = currentEvent(); return (
+        <div className="fun-group fun-week" title={t('Событие месяца') + ': ' + ev.name + ' — ' + ev.desc}>
+          <button className="fun-btn on" onClick={() => onPlay(w.game)} title={t('Турнир недели среди всех игроков сборки')}>🏆 {g ? t(g.game.title) : ''} · {w.daysLeft} {t('дн')}</button>
+          <span className="fun-ev">✦ {ev.name}</span>
+        </div>); })()}
       <button className="fun-group fun-rw" title={t('Награды мини-игр')} onClick={onRewards}><Icon name="crown" size={12} /> {t('Награды')}</button>
       {pick && (
         <div className="fun-games">

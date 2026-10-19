@@ -155,6 +155,10 @@ handle('skin:current', () => extras.currentSkin(store.get().gameDir));
 handle('skin:apply', (data) => extras.applySkin(store.get().gameDir, data));
 handle('skin:clear', () => extras.clearSkin(store.get().gameDir));
 handle('wardrobe:list', () => extras.listWardrobe(store.get().gameDir));
+handle('wardrobe:capes', () => extras.listCapes(store.get().gameDir));
+handle('wardrobe:saveCape', (data) => extras.saveCape(store.get().gameDir, data));
+handle('wardrobe:removeCape', (id) => extras.removeCape(store.get().gameDir, id));
+handle('wardrobe:wearCape', (cape) => extras.applyCape(store.get().gameDir, cape || null));
 handle('wardrobe:save', (data) => extras.saveToWardrobe(store.get().gameDir, data));
 handle('wardrobe:remove', (id) => extras.removeFromWardrobe(store.get().gameDir, id));
 handle('editor:list', (kind) => extras.editorList(kind));
@@ -419,6 +423,14 @@ handle('games:reward', async (id) => {
   const p = profile();
   if (p.rewards[id]) return false;
   p.rewards[id] = Date.now();
+  setProfile(p);
+  return true;
+});
+// автор: забрать все награды разом (для проверки), прогресс в играх при этом не меняется
+handle('games:grantAll', async (ids) => {
+  if (!store.get().authorMode || !store.getSecret('githubToken')) throw new Error('Только для автора сборки');
+  const p = profile();
+  for (const id of ids || []) if (!p.rewards[id]) p.rewards[id] = Date.now();
   setProfile(p);
   return true;
 });

@@ -5,6 +5,7 @@
 export const AUTHOR_NICK = 'kokkas'; // аккаунт автора на Ely.by (скин «Kokk 2.0», ely.by/skins/s4749321) — рисуется в финале «Побега»
 
 export const GAME_NAMES = {
+  events: 'События месяца', weekly: 'Турнир недели',
   prison: 'Побег', fishing: 'Рыбалка', defense: 'Защита деревни', runner: 'Побег от зомби', fair: 'Ярмарочный тир', mine: 'Вагонетка'
 };
 
@@ -47,7 +48,23 @@ export const REWARDS = [
   { id: 'mine_theme_gems', game: 'mine', kind: 'theme', name: 'Тема «Самоцветы»', theme: 'gems', how: 'Собери все руды и камни в альбом' },
   { id: 'mine_music_deep', game: 'mine', kind: 'music', name: 'Трек «Глубина»', track: 'deep', how: 'Доберись до лавовых глубин' },
   { id: 'mine_title_king', game: 'mine', kind: 'title', name: 'Король руды', how: 'Добудь руды на 100 000' },
-  { id: 'mine_cape_miner', game: 'mine', kind: 'cape', name: 'Плащ шахтёра', cape: 'miner', how: 'Пройди все глубины до конца' }
+  { id: 'mine_cape_miner', game: 'mine', kind: 'cape', name: 'Плащ шахтёра', cape: 'miner', how: 'Пройди все глубины до конца' },
+  // ---- события месяца: значок за испытание события (в любой из игр) ----
+  { id: 'ev_yule', game: 'events', kind: 'badge', name: 'Святки', icon: 'snow', color: '#cfe8ff', how: 'Испытание января' },
+  { id: 'ev_maslenitsa', game: 'events', kind: 'badge', name: 'Масленица', icon: 'sun', color: '#ffcf5a', how: 'Испытание февраля' },
+  { id: 'ev_thaw', game: 'events', kind: 'badge', name: 'Оттепель', icon: 'drop', color: '#7ad0ff', how: 'Испытание марта' },
+  { id: 'ev_jest', game: 'events', kind: 'badge', name: 'Шутник', icon: 'star', color: '#ff8ad8', how: 'Испытание апреля' },
+  { id: 'ev_bloom', game: 'events', kind: 'badge', name: 'Цветение', icon: 'flower', color: '#ffa0c8', how: 'Испытание мая' },
+  { id: 'ev_kupala', game: 'events', kind: 'badge', name: 'Купала', icon: 'fire', color: '#ff9a3a', how: 'Испытание июня' },
+  { id: 'ev_storm', game: 'events', kind: 'badge', name: 'Гроза', icon: 'bolt', color: '#e8e070', how: 'Испытание июля' },
+  { id: 'ev_starfall', game: 'events', kind: 'badge', name: 'Звездопад', icon: 'star', color: '#c8b0ff', how: 'Испытание августа' },
+  { id: 'ev_harvest', game: 'events', kind: 'badge', name: 'Урожай', icon: 'leaf', color: '#e0b040', how: 'Испытание сентября' },
+  { id: 'ev_pumpkin', game: 'events', kind: 'badge', name: 'Ночь тыкв', icon: 'pumpkin', color: '#ff8a2a', how: 'Испытание октября' },
+  { id: 'ev_fog', game: 'events', kind: 'badge', name: 'Туманы', icon: 'drop', color: '#b8c4c8', how: 'Испытание ноября' },
+  { id: 'ev_newyear', game: 'events', kind: 'badge', name: 'Новый год', icon: 'snow', color: '#7affc0', how: 'Испытание декабря' },
+  // ---- турнир недели ----
+  { id: 'week_champion', game: 'weekly', kind: 'badge', name: 'Чемпион недели', icon: 'crown', color: '#ffd34a', how: 'Займи 1-е место в турнире недели' },
+  { id: 'week_podium', game: 'weekly', kind: 'title', name: 'Призёр турнира', how: 'Займи место в тройке турнира недели' }
 ];
 
 export const rewardById = (id) => REWARDS.find((r) => r.id === id) || null;
@@ -62,7 +79,17 @@ const BADGE_PIX = {
   shield: ['#######', '#OOOOO#', '#O###O#', '#O###O#', '.#O#O#.', '..#O#..', '...#...'],
   boot: ['..###..', '..#O#..', '..#O#..', '..#O#..', '.#OO###', '#OOOOO#', '#######'],
   target: ['.#####.', '#OOOOO#', '#O###O#', '#O#O#O#', '#O###O#', '#OOOOO#', '.#####.'],
-  pick: ['.#####.', '#.....#', '...#...', '...#...', '...#...', '...#...', '...#...']
+  pick: ['.#####.', '#.....#', '...#...', '...#...', '...#...', '...#...', '...#...'],
+  snow: ['#..#..#', '.#.#.#.', '..###..', '#######', '..###..', '.#.#.#.', '#..#..#'],
+  sun: ['#..#..#', '.#####.', '.#OOO#.', '##OOO##', '.#OOO#.', '.#####.', '#..#..#'],
+  drop: ['...#...', '..###..', '.#####.', '.##O##.', '#######', '.#####.', '..###..'],
+  star: ['...#...', '...#...', '#######', '.#####.', '..###..', '.##.##.', '.#...#.'],
+  flower: ['.#.#.#.', '#######', '.##O##.', '#######', '.#.#.#.', '...#...', '..###..'],
+  fire: ['...#...', '..##...', '..###..', '.##O##.', '.#OOO#.', '#OOOOO#', '.#####.'],
+  bolt: ['....##.', '...##..', '..##...', '.#####.', '...##..', '..##...', '.##....'],
+  leaf: ['....###', '..#####', '.###O##', '.##O###', '.#O####', '.O#####', 'O......'],
+  pumpkin: ['...#...', '.#####.', '#O#O#O#', '#######', '#O###O#', '#.OOO.#', '.#####.'],
+  crown: ['.......', '#..#..#', '##.#.##', '#######', '#O#O#O#', '#######', '.......']
 };
 export function badgeSvg(r, size = 14) {
   const pix = BADGE_PIX[r.icon] || BADGE_PIX.target;
@@ -74,42 +101,8 @@ export function badgeSvg(r, size = 14) {
   return `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 7 7" width="${size}" height="${size}" shape-rendering="crispEdges">${rects}</svg>`)}`;
 }
 
-// Плащи: текстура 64×32 (развёртка плаща Minecraft: перед 10×16 с отступом 1,1). Рисуется кодом, своё оформление.
-const CAPES = {
-  runaway: { base: '#3a3a44', edge: '#ffd34a', draw: (p) => { p.stripes('#2a2a33', 2); p.emblem('key', '#ffd34a'); } },
-  fisher: { base: '#2f6f9a', edge: '#d8f0ff', draw: (p) => { p.waves('#5ab0e0'); p.emblem('fish', '#ffe08a'); } },
-  defender: { base: '#6b2a20', edge: '#c9b48a', draw: (p) => { p.stripes('#5a2018', 3); p.emblem('shield', '#c9b48a'); } },
-  runner: { base: '#c46a2a', edge: '#ffe0b0', draw: (p) => { p.chevrons('#e08a40'); p.emblem('boot', '#ffe0b0'); } },
-  archer: { base: '#2d5a2a', edge: '#e0c070', draw: (p) => { p.stripes('#254a22', 2); p.emblem('target', '#e05050'); } },
-  miner: { base: '#2a2a30', edge: '#8fd0ff', draw: (p) => { p.gems(['#8fd0ff', '#55dd77', '#ffd34a', '#e05050']); p.emblem('pick', '#c0c8d0'); } }
-};
-export function capeDataUrl(id) {
-  const def = CAPES[id];
-  if (!def || typeof document === 'undefined') return null;
-  const c = document.createElement('canvas');
-  c.width = 64; c.height = 32;
-  const g = c.getContext('2d');
-  // вся развёртка плаща: x 0..22, y 0..17 (верх, бока, перед 1..11, зад 12..22)
-  g.fillStyle = def.base; g.fillRect(0, 0, 22, 17);
-  const FX = 1, FY = 1, FW = 10, FH = 16; // перед (то, что видно сзади игрока)
-  const BX = 12; // зад
-  const both = (fn) => { fn(FX); fn(BX); };
-  const p = {
-    stripes: (col, w) => both((x0) => { g.fillStyle = col; for (let y = FY; y < FY + FH; y += w * 2) g.fillRect(x0, y, FW, w); }),
-    waves: (col) => both((x0) => { g.fillStyle = col; for (let y = FY + 3; y < FY + FH; y += 4) for (let x = 0; x < FW; x++) g.fillRect(x0 + x, y + ((x >> 1) % 2), 1, 1); }),
-    chevrons: (col) => both((x0) => { g.fillStyle = col; for (let y = FY + 2; y < FY + FH; y += 5) for (let x = 0; x < FW; x++) g.fillRect(x0 + x, y + Math.abs(x - 4.5) * 0.6, 1, 1); }),
-    gems: (cols) => both((x0) => { let k = 0; for (let y = FY + 2; y < FY + FH; y += 3) for (let x = (y % 2); x < FW; x += 3) { g.fillStyle = cols[k++ % cols.length]; g.fillRect(x0 + x, y, 1, 1); } }),
-    emblem: (icon, col) => {
-      const pix = BADGE_PIX[icon] || BADGE_PIX.target;
-      pix.forEach((row, y) => [...row].forEach((ch, x) => { if (ch !== '.') { g.fillStyle = ch === 'O' ? '#ffffff' : col; g.fillRect(FX + 1 + x + 1, FY + 4 + y, 1, 1); } }));
-    }
-  };
-  def.draw(p);
-  // кайма
-  g.fillStyle = def.edge;
-  both((x0) => { g.fillRect(x0, FY + FH - 1, FW, 1); g.fillRect(x0, FY, 1, FH); g.fillRect(x0 + FW - 1, FY, 1, FH); });
-  return c.toDataURL('image/png');
-}
+// Плащи — в capes.js (рисуются кодом)
+export { capeDataUrl } from './capes.js';
 
 // Темы лаунчера: переопределяют акцентные цвета
 export const THEMES = {

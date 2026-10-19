@@ -5,6 +5,7 @@ import * as music from '../lib/music.js';
 import { call } from '../lib/api.js';
 import { REWARDS, AUTHOR_NICK } from '../games/rewards.js';
 import { KOKK_SKIN } from '../games/kokkSkin.js';
+import { currentEvent, weekInfo, levelOf, xpFor } from '../games/events.js';
 
 // Фоны лаунчера: деревня + каждая мини-игра в спокойном режиме (жизнь идёт своим чередом)
 // + фоны-награды (отдельные сцены из игр, только спокойная жизнь).
@@ -50,10 +51,10 @@ export function darkness(h) {
 }
 
 // Живая игра-фон: один экземпляр на сцену, режим меняется на лету (idle | play | over).
-function LiveGame({ game, variant, mode, paused, animations, hourOverride, best, onOver, profile, author, nick, onSave, onReward }) {
+function LiveGame({ game, variant, mode, paused, animations, hourOverride, best, onOver, profile, author, nick, onSave, onReward, onXp }) {
   const ref = useRef(null);
   const live = useRef({});
-  live.current = { mode: variant ? 'idle' : mode, paused, animations, hourOverride, best, onOver, profile, author, nick, onSave, onReward };
+  live.current = { mode: variant ? 'idle' : mode, paused, animations, hourOverride, best, onOver, profile, author, nick, onSave, onReward, onXp };
   useEffect(() => {
     const canvas = ref.current;
     let destroy = null;
@@ -83,7 +84,16 @@ function LiveGame({ game, variant, mode, paused, animations, hourOverride, best,
       authorNick: AUTHOR_NICK,
       variant: variant || 0,
       day: today,
-      skin: loadSkin
+      skin: loadSkin,
+      // событие месяца, турнир недели, мастерство
+      event: () => currentEvent(),
+      week: () => { const w = weekInfo(); return { ...w, isThisGame: w.game === game.id }; },
+      xp: (n) => { if (!variant && !live.current.author && live.current.onXp) live.current.onXp(game.id, n); },
+      mastery: () => {
+        const xp = (live.current.profile && live.current.profile.mastery && live.current.profile.mastery[game.id]) || 0;
+        const level = levelOf(xp);
+        return { xp, level, next: xpFor(level + 1), prev: xpFor(level) };
+      }
     };
     try { destroy = game.mount(canvas, api); } catch (e) { console.error('game mount', game.id, e); }
     return () => { try { destroy && destroy(); } catch (_) {} };

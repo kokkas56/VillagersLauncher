@@ -6,7 +6,7 @@ import { REWARDS, GAME_NAMES, KIND_NAMES, badgeSvg, capeDataUrl } from '../games
 
 // Все награды мини-игр: что уже получено (и что надето), что ещё закрыто и как это получить.
 export default function RewardsModal({ profile, onClose, onScene }) {
-  const { t, account, toast } = useApp();
+  const { t, account, toast, settings } = useApp();
   const [busy, setBusy] = useState(null);
   const got = profile.rewards || {};
   const equip = profile.equip || {};
@@ -37,6 +37,12 @@ export default function RewardsModal({ profile, onClose, onScene }) {
   const games = Object.keys(GAME_NAMES);
   return (
     <Modal title={t('Награды мини-игр') + ` · ${have}/${total}`} onClose={onClose} wide>
+      {settings && settings.authorMode && have < total && (
+        <div className="hint-box small row">
+          <span className="grow">{t('Режим автора: можно забрать все награды разом, чтобы проверить их. Очки и прогресс в играх не меняются.')}</span>
+          <button className="btn sm primary" onClick={async () => { try { await call('games:grantAll', REWARDS.map((r) => r.id)); toast(t('Все награды получены'), 'ok'); } catch (e) { toast(e.message, 'error'); } }}>{t('Получить все')}</button>
+        </div>
+      )}
       {!account && <div className="hint-box small">{t('Войди в аккаунт: награды и прогресс привязываются к нику и переносятся на другой компьютер.')}</div>}
       <div className="rewards">
         {games.map((g) => (

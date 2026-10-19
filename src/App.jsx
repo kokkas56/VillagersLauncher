@@ -3,6 +3,7 @@ import { useApp } from './lib/app.jsx';
 import { call, on } from './lib/api.js';
 import SceneHost, { SCENES, scenesFor, sceneById } from './components/SceneHost.jsx';
 import { rewardById, THEMES } from './games/rewards.js';
+import { weekInfo } from './games/events.js';
 import RewardsModal from './components/RewardsModal.jsx';
 import { Badge } from './components/Badge.jsx';
 import { useMusic } from './components/FunBar.jsx';
@@ -64,6 +65,25 @@ export default function App() {
     setProfile((p) => ({ ...p, games: { ...p.games, [game]: { t: Date.now(), d: data } } }));
     call('games:save', { game, data }).catch(() => {});
   }, []);
+  // турнир недели: место в прошлой неделе → значок/титул (проверяем по общей таблице)
+  useEffect(() => {
+    if (!account) return undefined;
+    const check = (b) => {
+      const w = weekInfo();
+      const list = (b && b['wk_' + w.prevKey]) || [];
+      const i = list.findIndex((r) => r.nick === account.name);
+      if (i === 0) onReward('week_champion');
+      if (i >= 0 && i < 3) onReward('week_podium');
+    };
+    call('games:board').then(check).catch(() => {});
+    return on('scores', check);
+    // eslint-disable-next-line
+  }, [account && account.name]);
+  const onXp = useCallback(async (game, amount) => {
+    let r = null;
+    try { r = await call('games:xp', { game, amount }); } catch (_) {}
+    if (r && r.up) app.toast(t('Мастерство') + ': ' + t('уровень') + ' ' + r.level, 'ok', 5000);
+  }, []);
   const onReward = useCallback(async (id) => {
     let granted = false;
     try { granted = await call('games:reward', id); } catch (_) {}
@@ -78,10 +98,12 @@ export default function App() {
     setGmode('over');
     const sc = Math.max(0, Math.floor(score || 0));
     let r = { best: sc, isBest: true };
-    try { r = await call('games:submit', { game: scene.game ? scene.game.id : scene.id, score: sc }); } catch (_) {}
+    const gid = scene.game ? scene.game.id : scene.id;
+    const wk = weekInfo();
+    try { r = await call('games:submit', { game: gid, score: sc, week: wk.game === gid && !settings.authorMode ? wk.key : null }); } catch (_) {}
     app.refreshSettings && app.refreshSettings();
     setGresult({ score: sc, ...r });
-  }, [scene.id, scene.game]);
+  }, [scene.id, scene.game, settings && settings.authorMode]);
   const playGame = (id) => { if (id && id.includes('@')) id = id.split('@')[0];
      if (id && id !== sceneId) setSceneOverride(id); setGresult(null); setGmode('play'); };
   const chooseScene = (id) => { setSceneOverride(null); app.saveSettings({ bgScene: id }); };
@@ -115,7 +137,7 @@ export default function App() {
 
   return (
     <div className={'app' + (settings.animations === false ? ' no-anim' : '') + (playing ? ' playing' : '')} style={profile.equip.theme && THEMES[profile.equip.theme] ? THEMES[profile.equip.theme] : undefined}>
-      <SceneHost scene={scene} profile={profile} author={!!settings.authorMode} nick={account ? account.name : null} onSave={onGameSave} onReward={onReward} mode={editor ? 'idle' : gmode} best={(settings.gameBest || {})[scene.game ? scene.game.id : ''] || 0} onOver={onGameOver} paused={gameState.state === 'running' || !!editor} animations={settings.animations !== false} hourOverride={settings.theme === 'day' ? 12 : settings.theme === 'night' ? 23 : settings.theme === 'evening' ? 19.2 : null} />
+      <SceneHost scene={scene} profile={profile} author={!!settings.authorMode} nick={account ? account.name : null} onSave={onGameSave} onReward={onReward} onXp={onXp} mode={editor ? 'idle' : gmode} best={(settings.gameBest || {})[scene.game ? scene.game.id : ''] || 0} onOver={onGameOver} paused={gameState.state === 'running' || !!editor} animations={settings.animations !== false} hourOverride={settings.theme === 'day' ? 12 : settings.theme === 'night' ? 23 : settings.theme === 'evening' ? 19.2 : null} />
       <TitleBar />
       {rewardsOpen && <RewardsModal profile={profile} onScene={chooseScene} onClose={() => setRewardsOpen(false)} />}
       {playing && scene.game && !editor && <GameOverlay game={scene.game} mode={gmode} result={gresult} onExit={exitGame} onRetry={() => { setGresult(null); setGmode('play'); }} />}
