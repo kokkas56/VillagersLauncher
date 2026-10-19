@@ -18,6 +18,10 @@ import {
   UPGRADES, villageLevel, wallMax, archerCount, arrowDmg, arrowCd, fenceCount, spikeDps, clickDmg, bellHeal, ckptOf
 } from './defense/data.js';
 import { createProgress, upgradePrice } from './defense/progress.js';
+import { createMeta } from './defense/meta.js';
+import { seasonOf, eventGoal, EV_CHANCE } from './defense/season.js';
+import { GAME_NAMES, rewardById } from './rewards.js';
+const rewardName = (id) => { const r = rewardById(id); return r ? r.name : id; };
 
 const W = 320;
 const H = 180;
@@ -73,6 +77,7 @@ function drawSprite(ctx, sp, x, y, s = 1) {
 const FLAG = sprite({ a: '#7a4e2a', b: '#e04848', c: '#ff8a8a' }, ['abbb.', 'acbbb', 'abbb.', 'a....', 'a....', 'a....']);
 const NEXT = sprite({ a: '#ffffff' }, ['a...a....', 'aa..aa...', 'aaa.aaa..', 'aaaaaaaa.', 'aaa.aaa..', 'aa..aa...', 'a...a....']);
 const BOOK = sprite({ a: '#8a4a2a', b: '#e8dcc0', c: '#5a2a18' }, ['aaaaaaa', 'abbcbba', 'abbcbba', 'abbcbba', 'abbcbba', 'aaaaaaa']);
+const EVICON = sprite({ a: '#c8a0ff', b: '#ffffff', c: '#7a50c0' }, ['..a..', '.aba.', 'aabaa', '.cac.', 'c...c']);
 const CHECK = sprite({ a: '#60e070' }, ['....a', '...a.', 'a.a..', '.a...']);
 const LOCK = sprite({ a: '#8a8070', b: '#5a5048' }, ['.aa.', 'a..a', 'bbbb', 'bbbb']);
 const UPG_ICON = [
@@ -142,11 +147,13 @@ const CRATE0 = [168, 120, 70], CRATE1 = [110, 76, 44];
 const SPEAR = [200, 206, 216];
 const BELL = [200, 160, 60];
 const BANNER = [190, 50, 50];
+const RGB_RB = [[255, 96, 96], [255, 176, 80], [255, 232, 96], [112, 224, 112], [96, 168, 255], [160, 112, 240]];
 
 // окна лавки / альбома
 const CARD_Y = 72, CARD_W = 36, CARD_H = 76;
 const cardX = (i) => 12 + i * 37;
 const BOOK_X = 80, BOOK_Y = 14;
+const EVB_X = BOOK_X + 14; // кнопка «событие месяца»
 const AX = 12, AY = 22, AW = 296, AH = 140;
 const START_X = AX + AW - 70, START_Y = AY + AH - 21;
 
@@ -155,7 +162,7 @@ export default {
   title: 'Защита деревни',
   sceneTitle: 'Нашествие',
   desc: 'Бесконечные волны зомби с рубежами, боссы, улучшения деревни, альбом и задания дня.',
-  controls: 'Мышь: клик по зомби · в лавке: клик / 1–8, Пробел — следующая волна · Tab — альбом',
+  controls: 'Мышь: клик по зомби · в лавке: клик / 1–8, Пробел — следующая волна · Tab — альбом · E — событие',
   mount(canvas, api) {
     canvas.width = W;
     canvas.height = H;
@@ -184,6 +191,19 @@ export default {
     const P = createProgress(api);
     P.load();
     const UP = () => P.p.up;
+    // ---------- событие месяца, мастерство, турнир ----------
+    const MT = createMeta(api, { getP: () => P.p, push: P.push, isAuthor: () => P.author, variant, mul: () => P.mul(), goal: eventGoal });
+    let SEA = seasonOf(MT.id);
+    let bonus = 1; // множитель изумрудов от мастерства
+    const applyMeta = () => {
+      const was = SEA;
+      SEA = seasonOf(MT.id);
+      bonus = MT.coinMul();
+      if (!variant) { MT.chal(); MT.checkReward(true); }
+      return was !== SEA;
+    };
+    applyMeta();
+    P.onDaily = () => MT.addXp(15);
 
     // ---------- мир ----------
     const stars = [];
@@ -202,7 +222,7 @@ export default {
 
     // пулы
     const zombies = [];
-    for (let i = 0; i < 64; i++) zombies.push({ zz: 1, on: false, isZ: true, type: 'normal', T: TYPES.normal, mode: 'play', x: 0.5, y: 0.5, hp: 0.5, max: 0.5, spd: 0.5, flash: 0.5, kb: 0.5, atk: false, phase: 0.5, dir: 1, hx: 0.5, hs: 0.5, give: 0.5, act: 0.5, act2: 0.5, hop: 0.5, ghost: false, stopX: 0.5, summon: false });
+    for (let i = 0; i < 64; i++) zombies.push({ zz: 1, on: false, isZ: true, type: 'normal', T: TYPES.normal, mode: 'play', x: 0.5, y: 0.5, hp: 0.5, max: 0.5, spd: 0.5, flash: 0.5, kb: 0.5, atk: false, phase: 0.5, dir: 1, hx: 0.5, hs: 0.5, give: 0.5, act: 0.5, act2: 0.5, hop: 0.5, ghost: false, stopX: 0.5, summon: false, ev: false });
     const parts = [];
     for (let i = 0; i < 140; i++) parts.push({ dp: 1, on: false, gem: false, x: 0.5, y: 0.5, vx: 0.5, vy: 0.5, life: 0.5, c: '#fff' });
     const arrows = [];
@@ -249,8 +269,27 @@ export default {
       ssT: 12 + rand() * 20, ssX: 0, ssY: 0, ssA: -1,
       smokeT: 0, lit: [true, true, false, true], litT: 4,
       doorT: [0, 0], introTp: 1.6, introOg: true, hordeN: 0, ev: 0,
-      panel: null, sel: 0, toast: null, toastT: 0, spikeT: 0
+      panel: null, sel: 0, toast: null, toastT: 0, spikeT: 0,
+      evT: 60, rainOn: 0, rainT: 20, flash: 0, boltT: 3, boltX: 100, metA: -1, metX: 0, metY: 0
     };
+    // ---------- украшения события месяца (пулы — без выделений в кадре) ----------
+    const fall = [];
+    for (let i = 0; i < 40; i++) fall.push({ ef: 1, x: rand() * W, y: rand() * H, v: 8 + rand() * 10, p: rand() * 6, c: i % 3 });
+    const drops = [];
+    for (let i = 0; i < 46; i++) drops.push({ eq: 1, x: rand() * W, y: rand() * H, v: 110 + rand() * 60, gy: GROUND + rand() * (H - GROUND) });
+    const birds = [];
+    for (let i = 0; i < 5; i++) birds.push({ eb: 1, x: rand() * W, y: 10 + rand() * 50, v: 10 + rand() * 8, p: rand() * 6 });
+    const fogs = [];
+    for (let i = 0; i < 5; i++) fogs.push({ eg: 1, x: rand() * W, y: 128 + i * 9, w: 80 + rand() * 90, v: 2 + rand() * 3 });
+    const wisps = [];
+    for (let i = 0; i < 5; i++) wisps.push({ ew: 1, x: 20 + rand() * 200, y: 140 + rand() * 28, p: rand() * 6 });
+    const initDecor = () => {
+      for (let i = 0; i < birds.length; i++) { const b = birds[i]; b.x = rand() * W; b.y = 8 + rand() * 50; }
+      g.rainOn = SEA.rain ? 1 : 0; g.rainT = 30 + rand() * 40; g.metA = -1;
+    };
+
+    initDecor();
+
     const score = () => g.kills + g.wave * 20;
     const priceHeal = () => 10 + g.wave * 3;
     const healAmt = () => Math.round(g.maxHp * 0.2);
@@ -288,7 +327,7 @@ export default {
       z.hp = T.hp; z.max = T.hp;
       z.spd = T.spd * (0.9 + rand() * 0.2);
       z.flash = 0; z.kb = 0; z.atk = false; z.phase = rand() * 6; z.dir = 1; z.give = 999; z.hx = x; z.hs = 0;
-      z.act = 1 + rand() * 2; z.act2 = 2 + rand() * 2; z.hop = 0; z.ghost = false; z.stopX = 140 + rand() * 50; z.summon = false;
+      z.act = 1 + rand() * 2; z.act2 = 2 + rand() * 2; z.hop = 0; z.ghost = false; z.stopX = 140 + rand() * 50; z.summon = false; z.ev = false;
     };
 
     const startWave = () => {
@@ -327,7 +366,14 @@ export default {
       z.spd = TYPES[type].spd * g.spdMul * (0.9 + rand() * 0.2);
       return z;
     };
-    const spawn = () => spawnAs(pickType(), -12 - rand() * 6, LANE_TOP + Math.floor(rand() * LANE_H));
+    // особый зомби события месяца (идёт в испытание)
+    const makeEv = (z) => { z.ev = true; z.hp = z.max = z.max * (SEA.hp || 1.15); z.spd *= SEA.spd || 1; };
+    const spawn = () => {
+      const ev = !variant && rand() < (P.author ? 0.4 : EV_CHANCE);
+      const z = spawnAs(ev ? 'normal' : pickType(), -12 - rand() * 6, LANE_TOP + Math.floor(rand() * LANE_H));
+      if (z && ev) makeEv(z);
+      return z;
+    };
     const spawnBoss = (id) => {
       const z = spawnAs(id, -24, LANE_TOP + 10 + Math.floor(rand() * 8));
       if (!z) return;
@@ -350,8 +396,10 @@ export default {
       if (z.type === 'bomber') explode(z, false);
       if (g.phase === 'play') {
         g.kills++;
-        const gems = Math.max(1, Math.round(T.gem * gemMul(g.wave))) * P.mul();
+        const gems = (Math.max(1, Math.round(T.gem * gemMul(g.wave) * bonus)) + (z.ev ? 2 : 0)) * P.mul();
         P.kill(z.type, sword, gems);
+        MT.addXp(0.3 * (1 + g.wave / 10) + (z.ev ? 2 : 0) + (T.boss ? 10 + g.wave / 2 : 0));
+        if (z.ev) MT.count(P.mul());
         if (P.author) { P.p.kills += AUTH_KILL_EXTRA; }
         const n = Math.min(6, T.gem);
         for (let i = 0; i < n; i++) addPart(z.x + 1, cy, (rand() - 0.5) * 40, -30 - rand() * 20, 1.4, '#2fd36a', true);
@@ -479,9 +527,9 @@ export default {
       return PT;
     };
     const inR = (p, x, y, w, h) => p.x >= x && p.x < x + w && p.y >= y && p.y < y + h;
-    const togglePanel = () => {
+    const togglePanel = (name = 'album') => {
       if (g.phase !== 'play') return;
-      g.panel = g.panel ? null : 'album';
+      g.panel = g.panel === name ? null : g.panel && name === 'album' ? null : name;
       api.sfx('click');
     };
     const onPointerDown = (e) => {
@@ -490,6 +538,8 @@ export default {
       if (api.paused && api.paused()) return;
       const p = toLocal(e);
       if (inR(p, BOOK_X - 1, BOOK_Y - 1, 13, 12)) { togglePanel(); return; }
+      if (inR(p, EVB_X - 1, BOOK_Y - 1, 13, 12)) { togglePanel('event'); return; }
+      if (g.panel === 'event') { g.panel = null; api.sfx('click'); return; }
       if (g.panel) {
         if (inR(p, AX + AW - 12, AY + 2, 10, 10) || !inR(p, AX, AY, AW, AH)) { g.panel = null; api.sfx('click'); return; }
         for (let i = 0; i < TYPE_IDS.length; i++) if (inR(p, AX + 6 + (i % 6) * 48, AY + 15 + Math.floor(i / 6) * 52, 46, 50)) { g.sel = i; api.sfx('click'); return; }
@@ -519,6 +569,7 @@ export default {
       if (g.phase !== 'play') return;
       const c = e.code;
       if (c === 'Tab' || c === 'KeyI') { e.preventDefault(); if (!e.repeat) togglePanel(); return; }
+      if (c === 'KeyE') { e.preventDefault(); if (!e.repeat) togglePanel('event'); return; }
       if (P.author && (c === 'BracketRight' || c === 'BracketLeft')) {
         e.preventDefault();
         if (!e.repeat) authorSkip(c === 'BracketRight' ? 1 : -1);
@@ -788,7 +839,7 @@ export default {
       g.mode = 'play';
       g.bell = 0;
       g.panel = null;
-      if (from === 'idle') P.load();
+      if (from === 'idle') { P.load(); MT.refresh(); if (applyMeta()) initDecor(); }
       for (let i12 = 0; i12 < actors.length; i12++) { const a = actors[i12];
         a.partner = null;
         a.carry = 0;
@@ -839,6 +890,7 @@ export default {
       g.gdmg = 0;
       g.gbroken = false;
       g.boss = null;
+      bonus = MT.coinMul();
       if (P.checkDay()) P.save();
       startWave();
       g.toSpawn = Math.max(0, g.toSpawn - g.hordeN);
@@ -855,6 +907,7 @@ export default {
 
     const startOutro = () => {
       if (g.phase === 'play') P.endRun(score(), g.cleared);
+      MT.flush();
       g.phase = 'outro';
       g.pt = 0;
       g.ev = 0;
@@ -1074,13 +1127,15 @@ export default {
         for (let i = 0; i < bolts.length; i++) bolts[i].on = false;
         for (let i18 = 0; i18 < zombies.length; i18++) { const z = zombies[i18]; if (z.on) { z.mode = 'stand'; z.give = 1 + rand() * 2; z.hx = z.x; z.ghost = false; z.hop = 0; } }
         P.endRun(score(), g.cleared);
+        MT.flush();
         return;
       }
       g.gdmg = 1 - g.hp / g.maxHp;
       updateGuards(dt, true);
       if (g.toSpawn <= 0 && alive === 0 && !g.bossDue) {
-        const bonus = (2 + (g.wave >> 1)) * P.mul();
-        P.addGems(bonus);
+        const wb = Math.round((2 + (g.wave >> 1)) * bonus) * P.mul();
+        P.addGems(wb);
+        MT.addXp(3 + g.wave / 4);
         g.hp = Math.min(g.maxHp, g.hp + g.maxHp * bellHeal(UP()));
         g.cleared++;
         P.waveCleared(g.wave, g.perfect);
@@ -1147,6 +1202,9 @@ export default {
     };
 
     const updateIdle = (dt) => {
+      // смена месяца, пока висит фон
+      g.evT -= dt;
+      if (g.evT <= 0) { g.evT = 60; MT.refreshEvent(); if (applyMeta()) initDecor(); }
       if (!sentry.on && g.pt > 2) { sentry.on = true; sentry.x = OFF_R; sentry.timer = 290; sentry.state = 'pace'; sentry.delay = 2; }
       g.lone -= dt;
       if (g.lone <= 0) {
@@ -1156,7 +1214,9 @@ export default {
         if (!any && g.og > 0.9) {
           const z = zFree();
           const r = rand();
-          zInit(z, r < 0.12 ? 'big' : r < 0.3 ? 'fast' : r < 0.4 && P.p.bestW >= 6 ? 'armor' : 'normal', -12, LANE_TOP + 3 + Math.floor(rand() * (LANE_H - 6)), 'walk');
+          const ev = rand() < 0.45;
+          zInit(z, ev ? 'normal' : r < 0.12 ? 'big' : r < 0.3 ? 'fast' : r < 0.4 && P.p.bestW >= 6 ? 'armor' : 'normal', -12, LANE_TOP + 3 + Math.floor(rand() * (LANE_H - 6)), 'walk');
+          z.ev = ev;
           z.spd *= 0.6;
           z.give = rand() < 0.3 ? 6 + rand() * 8 : 999;
         }
@@ -1180,9 +1240,51 @@ export default {
         if (sl.on) { sl.life -= dt; if (sl.life <= 0) sl.on = false; }
       }
     };
+    // ---------- украшения события: движение ----------
+    const updateDecor = (dt) => {
+      const id = MT.id;
+      if (SEA.fall) {
+        const snow = SEA.fall === 'snow';
+        const n = snow ? fall.length : 22;
+        for (let i = 0; i < n; i++) {
+          const f = fall[i];
+          f.y += f.v * (snow ? 1 : 0.8) * dt;
+          f.x += (Math.sin(g.t * (snow ? 1.2 : 2.2) + f.p) * (snow ? 6 : 12) - (snow ? 2 : 7)) * dt;
+          if (f.y > H + 2 || f.x < -4) { f.y = -2 - rand() * 10; f.x = rand() * (W + 20); }
+        }
+      }
+      if (id === 'storm') {
+        g.rainT -= dt;
+        if (g.rainT <= 0) { g.rainOn = g.rainOn ? 0 : 1; g.rainT = g.rainOn ? 40 + rand() * 50 : 50 + rand() * 70; }
+        if (g.rainOn) {
+          for (let i = 0; i < drops.length; i++) { const d = drops[i];
+            d.y += d.v * dt; d.x -= d.v * 0.2 * dt;
+            if (d.y > d.gy) { d.y = -4 - rand() * 30; d.x = rand() * (W + 30); }
+          }
+          g.boltT -= dt;
+          if (g.boltT <= 0) { g.boltT = 5 + rand() * 9; g.flash = 0.3; g.boltX = 20 + Math.floor(rand() * 220); }
+        }
+      }
+      if (g.flash > 0) g.flash -= dt;
+      if (id === 'thaw' || id === 'pumpkin') {
+        for (let i = 0; i < birds.length; i++) { const b = birds[i]; b.x += b.v * dt; if (b.x > W + 10) { b.x = -10 - rand() * 80; b.y = 8 + rand() * 50; } }
+      }
+      if (id === 'fog') for (let i = 0; i < fogs.length; i++) { const f = fogs[i]; f.x += f.v * dt; if (f.x > W + 20) f.x = -f.w - 20; }
+      if (id === 'starfall') {
+        // большой метеор за холмами
+        if (g.metA >= 0) { g.metA += dt; if (g.metA > 1.6) g.metA = -1; }
+        else if (rand() < dt * 0.02) { g.metA = 0; g.metX = 60 + rand() * 160; g.metY = 6 + rand() * 12; }
+        // частые падающие звёзды — и в фоне, и в игре
+        if (g.phase !== 'idle') g.ssT -= dt;
+        if (g.ssT <= 0 && g.dark > 0.3) { g.ssT = 2 + rand() * 4; g.ssA = 0; g.ssX = 120 + rand() * 190; g.ssY = 6 + rand() * 34; }
+      }
+    };
+
     const update = (dt) => {
       g.t += dt;
       g.pt += dt;
+      updateDecor(dt);
+      MT.tick(dt, g.phase === 'play' && !g.panel);
       if (g.banner > 0) g.banner -= dt;
       if (g.shake > 0) g.shake -= dt;
       if (g.hurtSnd > 0) g.hurtSnd -= dt;
@@ -1323,7 +1425,7 @@ export default {
       const T = z.T;
       const s = T.s;
       ZX = Math.round(z.x);
-      ZD = z.dir;
+      ZD = z.ev && SEA.acc === 'jester' && z.mode !== 'scared' && z.mode !== 'flee' ? -z.dir : z.dir; // шут ходит задом наперёд
       const y = Math.round(z.y - z.hop);
       shFl = z.flash > 0;
       shK = dark * 0.45;
@@ -1462,6 +1564,7 @@ export default {
           ctx.fillStyle = zc(IRON);
           zr(12 * s - 2, y0 + 5 * s, 2, 2 * s);
         }
+        if (z.ev && s === 1) drawAcc(z, y);
       }
       ctx.globalAlpha = ga;
       if (!silh && z.hp < z.max && z.mode === 'play' && !z.T.boss) {
@@ -1651,6 +1754,382 @@ export default {
       }
     };
 
+    // ---------- украшения события: отрисовка ----------
+    const EVC = {
+      white: [240, 244, 250], snowG: [226, 234, 244], straw: [230, 196, 90], strawD: [170, 130, 50], red: [210, 56, 56], green: [60, 140, 60],
+      dgreen: [40, 84, 44], yellow: [255, 220, 70], pink: [255, 160, 205], grey: [150, 156, 168], orange: [240, 130, 40], mud: [96, 68, 40],
+      brown: [120, 80, 44], horn: [230, 220, 190], blue: [90, 140, 230], puddle: [120, 150, 180], fir: [40, 120, 70], leafY: [210, 160, 50], leafO: [200, 110, 40]
+    };
+    const RAINBOW = ['#ff6060', '#ffb050', '#ffe860', '#70e070', '#60a8ff', '#a070f0'];
+    const flame = (x, y, k) => {
+      const f = 0.7 + 0.3 * Math.sin(g.t * 11 + x) * Math.sin(g.t * 4.3 + y);
+      ctx.fillStyle = rgbStr(255, 150 + 60 * f, 50);
+      ctx.fillRect(x - 1, y - 2, 3, 2);
+      ctx.fillStyle = rgbStr(255, 230, 120);
+      ctx.fillRect(x, y - 3 - (f > 0.85 ? 1 : 0), 1, 2);
+      ctx.fillStyle = rgbStr(255, 170, 70, 0.04 + 0.08 * k * f);
+      ctx.fillRect(x - 3, y - 6, 7, 7);
+    };
+    const lantern = (x, y, dark) => {
+      ctx.fillStyle = rgbMix(EVC.orange, NIGHTC, dark * 0.3);
+      ctx.fillRect(x, y - 4, 6, 4);
+      ctx.fillRect(x + 1, y - 5, 4, 1);
+      ctx.fillStyle = '#4a7a2a';
+      ctx.fillRect(x + 2, y - 6, 1, 1);
+      const f = 0.75 + 0.25 * Math.sin(g.t * 9 + x);
+      ctx.fillStyle = rgbStr(255, 230 * f, 90);
+      ctx.fillRect(x + 1, y - 3, 1, 1);
+      ctx.fillRect(x + 4, y - 3, 1, 1);
+      ctx.fillRect(x + 1, y - 1, 4, 1);
+      ctx.fillStyle = rgbStr(255, 160, 60, 0.02 + 0.07 * dark * f);
+      ctx.fillRect(x - 2, y - 7, 10, 9);
+    };
+    // небо: молния, метеор, птицы и мыши
+    const drawSkyDeco = (dark) => {
+      const id = MT.id;
+      if (id === 'storm' && g.flash > 0.12) {
+        ctx.fillStyle = '#fffbe0';
+        let x = g.boltX;
+        for (let i = 0; i < 8; i++) {
+          const y0 = 4 + i * 13;
+          const nx = x + Math.round(Math.sin(g.boltX * 0.37 + i * 2.1) * 4);
+          ctx.fillRect(Math.min(x, nx), y0, Math.abs(nx - x) + 1, 1);
+          ctx.fillRect(nx, y0, 1, 13);
+          x = nx;
+        }
+      }
+      if (id === 'starfall' && g.metA >= 0) {
+        const k = Math.min(1, g.metA / 1.1);
+        const x = g.metX - k * 50, y = g.metY + k * 90;
+        if (y < 118) {
+          for (let i = 0; i < 12; i++) {
+            ctx.fillStyle = rgbStr(255, 220 - i * 10, 160 - i * 8, 1 - i / 12);
+            ctx.fillRect(Math.round(x + i * 2.2), Math.round(y - i * 4), i === 0 ? 2 : 1, 2);
+          }
+        } else {
+          const a = Math.max(0, 1 - (g.metA - 1.1) / 0.5);
+          ctx.fillStyle = rgbStr(255, 200, 140, 0.3 * a);
+          ctx.fillRect(Math.round(x) - 10, 104, 22, 14);
+          ctx.fillStyle = rgbStr(255, 230, 190, 0.5 * a);
+          ctx.fillRect(Math.round(x) - 4, 110, 10, 8);
+        }
+      }
+      if (id === 'thaw' || (id === 'pumpkin' && dark > 0.35)) {
+        const bat = id === 'pumpkin';
+        ctx.fillStyle = bat ? rgbStr(26, 16, 30, clamp((dark - 0.35) * 3, 0, 1)) : rgbMix([30, 30, 34], NIGHTC, dark * 0.3);
+        for (let i = 0; i < birds.length; i++) { const b = birds[i];
+          if (b.x < -4 || b.x > W + 4) continue;
+          const x = Math.round(b.x), y = Math.round(b.y + Math.sin(g.t * 2 + b.p) * 3);
+          const up = Math.floor(g.t * (bat ? 12 : 6) + b.p) % 2;
+          ctx.fillRect(x, y, 2, 1);
+          ctx.fillRect(x - 2, y - up, 2, 1);
+          ctx.fillRect(x + 2, y - up, 2, 1);
+          if (bat) { ctx.fillRect(x - 3, y + 1 - up * 2, 1, 1); ctx.fillRect(x + 4, y + 1 - up * 2, 1, 1); }
+        }
+      }
+    };
+    // холмы и деревья: снег, цвет, жёлтая листва
+    const drawHillDeco = (dark) => {
+      const id = MT.id;
+      if (SEA.snow || id === 'thaw') {
+        ctx.fillStyle = rgbMix(EVC.white, NIGHTC, dark * 0.55);
+        const st = id === 'thaw' ? 5 : 1;
+        for (let i = 0; i < hills.length; i += st) ctx.fillRect(i * 4, hills[i], id === 'thaw' ? 3 : 4, id === 'thaw' ? 1 : 2);
+        if (id !== 'thaw') for (let i = 0; i < trees.length; i++) { const tr = trees[i]; ctx.fillRect(tr.x + 1, GROUND - 5 - tr.h, tr.w - 2, 1); ctx.fillRect(tr.x, GROUND - 3 - tr.h, tr.w, 1); }
+      } else if (id === 'bloom') {
+        for (let i = 0; i < trees.length; i++) { const tr = trees[i];
+          for (let k = 0; k < tr.w; k += 2) {
+            ctx.fillStyle = rgbMix(k % 4 ? EVC.pink : EVC.white, NIGHTC, dark * 0.5);
+            ctx.fillRect(tr.x + k, GROUND - 3 - tr.h + ((k * 3 + i) % tr.h), 1, 1);
+          }
+        }
+      } else if (id === 'harvest') {
+        for (let i = 0; i < trees.length; i++) { const tr = trees[i];
+          ctx.fillStyle = rgbMix(i % 2 ? EVC.leafY : EVC.leafO, NIGHTC, dark * 0.6);
+          ctx.fillRect(tr.x, GROUND - 3 - tr.h, tr.w, tr.h);
+          ctx.fillRect(tr.x + 1, GROUND - 5 - tr.h, tr.w - 2, 2);
+        }
+      }
+    };
+    // поле (под зомби): снег на траве, лужи, снопы, чучело, костёр, ёлка, снеговик
+    const drawFieldDeco = (dark) => {
+      const id = MT.id;
+      if (SEA.snow) {
+        ctx.fillStyle = rgbMix(EVC.snowG, NIGHTC, dark * 0.6, id === 'maslenitsa' ? 0.3 : 0.5);
+        ctx.fillRect(-2, GROUND, W + 4, LANE_TOP + 4 - GROUND);
+        ctx.fillRect(-2, LANE_TOP + LANE_H - 2, W + 4, H - LANE_TOP - LANE_H + 2);
+      }
+      if (id === 'thaw' || (id === 'storm' && g.rainOn)) {
+        for (let i = 0; i < 6; i++) {
+          const x = 14 + i * 38 + (i % 2) * 9, y = LANE_TOP + 8 + (i % 3) * 6;
+          ctx.fillStyle = rgbMix(EVC.puddle, NIGHTC, dark * 0.6, 0.75);
+          ctx.fillRect(x, y, 9 + (i % 3) * 3, 2);
+          ctx.fillStyle = rgbStr(220, 236, 250, 0.35 + 0.15 * Math.sin(g.t * 2 + i));
+          ctx.fillRect(x + 2, y, 3, 1);
+        }
+      }
+      if (id === 'harvest') {
+        for (let k = 0; k < 5; k++) {
+          const x = 14 + k * 40, y = GROUND + 5;
+          ctx.fillStyle = rgbMix(EVC.straw, NIGHTC, dark * 0.6);
+          ctx.fillRect(x, y - 4, 6, 4);
+          ctx.fillRect(x + 1, y - 7, 4, 3);
+          ctx.fillRect(x + 2, y - 9, 2, 2);
+          ctx.fillStyle = rgbMix(EVC.strawD, NIGHTC, dark * 0.6);
+          ctx.fillRect(x, y - 3, 6, 1);
+        }
+      } else if (id === 'maslenitsa') {
+        const x = 186, y = GROUND + 4;
+        ctx.fillStyle = rgbMix(EVC.brown, NIGHTC, dark * 0.6);
+        ctx.fillRect(x, y - 24, 1, 24);
+        ctx.fillRect(x - 5, y - 19, 11, 1);
+        ctx.fillStyle = rgbMix(EVC.straw, NIGHTC, dark * 0.6);
+        ctx.fillRect(x - 2, y - 18, 5, 8);
+        ctx.fillRect(x - 4, y - 11, 9, 4);
+        ctx.fillStyle = rgbMix([240, 210, 170], NIGHTC, dark * 0.6);
+        ctx.fillRect(x - 1, y - 23, 3, 4);
+        ctx.fillStyle = rgbMix(EVC.red, NIGHTC, dark * 0.5);
+        ctx.fillRect(x - 2, y - 24, 5, 1);
+        ctx.fillRect(x - 2, y - 15, 5, 1);
+        if (dark > 0.5) { flame(x - 3, y, dark); flame(x + 3, y, dark); flame(x, y - 1, dark); }
+      } else if (id === 'kupala') {
+        const x = 196, y = GROUND + 5;
+        ctx.fillStyle = rgbMix(EVC.brown, NIGHTC, dark * 0.5);
+        ctx.fillRect(x - 5, y - 1, 11, 2);
+        ctx.fillRect(x - 3, y - 2, 7, 1);
+        flame(x, y - 2, 0.4 + dark);
+        flame(x - 3, y - 1, 0.3 + dark * 0.6);
+        flame(x + 3, y - 1, 0.3 + dark * 0.6);
+        // венки на воротах
+        ctx.fillStyle = rgbMix(EVC.green, NIGHTC, dark * 0.5);
+        ctx.fillRect(OUTER_X - 7, OG_TOP - 9, 5, 1);
+        ctx.fillRect(OUTER_X - 8, OG_TOP - 8, 1, 3);
+        ctx.fillRect(OUTER_X - 2, OG_TOP - 8, 1, 3);
+        ctx.fillRect(OUTER_X - 7, OG_TOP - 5, 5, 1);
+        ctx.fillStyle = rgbMix(EVC.yellow, NIGHTC, dark * 0.5);
+        ctx.fillRect(OUTER_X - 6, OG_TOP - 9, 1, 1);
+        ctx.fillStyle = rgbMix(EVC.red, NIGHTC, dark * 0.5);
+        ctx.fillRect(OUTER_X - 3, OG_TOP - 5, 1, 1);
+      } else if (id === 'yule') {
+        // снеговик у огорода
+        const x = 206, y = GROUND + 6;
+        ctx.fillStyle = rgbMix(EVC.white, NIGHTC, dark * 0.5);
+        ctx.fillRect(x - 3, y - 5, 7, 5);
+        ctx.fillRect(x - 2, y - 9, 5, 4);
+        ctx.fillRect(x - 1, y - 12, 3, 3);
+        ctx.fillStyle = rgbMix(EVC.orange, NIGHTC, dark * 0.5);
+        ctx.fillRect(x + 2, y - 11, 2, 1);
+        ctx.fillStyle = rgbMix([40, 40, 44], NIGHTC, dark * 0.3);
+        ctx.fillRect(x, y - 11, 1, 1);
+        ctx.fillRect(x - 1, y - 14, 3, 2);
+        ctx.fillRect(x - 2, y - 12, 5, 1);
+      } else if (id === 'newyear') {
+        // ёлка у частокола с гирляндой
+        const x = 232, y = GROUND + 4;
+        ctx.fillStyle = rgbMix(EVC.brown, NIGHTC, dark * 0.5);
+        ctx.fillRect(x, y - 2, 2, 2);
+        ctx.fillStyle = rgbMix(EVC.fir, NIGHTC, dark * 0.5);
+        for (let r = 0; r < 20; r++) { const w = 1 + (r % 7) + Math.floor(r / 7) * 2; ctx.fillRect(x + 1 - (w >> 1), y - 22 + r, w, 1); }
+        ctx.fillStyle = '#ffe060';
+        ctx.fillRect(x, y - 24, 2, 2);
+        for (let i = 0; i < 9; i++) {
+          ctx.fillStyle = RAINBOW[(i + Math.floor(g.t * 3)) % 6];
+          ctx.fillRect(x - 4 + ((i * 3) % 10), y - 19 + i * 2, 1, 1);
+        }
+      } else if (id === 'pumpkin') {
+        lantern(OUTER_X - 8, OG_TOP - 6, dark);
+        for (let i = 0; i < garden.length; i += 3) {
+          const p = garden[i];
+          const f = 0.7 + 0.3 * Math.sin(g.t * 7 + i);
+          ctx.fillStyle = rgbStr(255, 220 * f, 80);
+          ctx.fillRect(p.x + 1, p.y - 1, 1, 1);
+          ctx.fillStyle = rgbStr(255, 160, 60, 0.1 * dark);
+          ctx.fillRect(p.x - 2, p.y - 4, 7, 7);
+        }
+      } else if (id === 'bloom') {
+        for (let i = 0; i < tufts.length; i += 2) { const tf = tufts[i];
+          ctx.fillStyle = rgbMix(i % 6 === 0 ? EVC.yellow : i % 4 === 0 ? EVC.white : EVC.pink, NIGHTC, dark * 0.5);
+          ctx.fillRect(tf.x, tf.y - 1, 1, 1);
+        }
+      }
+      if (id === 'fog' || id === 'kupala') {
+        // болотные огоньки / купальские светлячки (всегда, не только ночью)
+        for (let i = 0; i < wisps.length; i++) { const w = wisps[i];
+          const b = 0.5 + 0.5 * Math.sin(g.t * 1.7 + w.p * 3);
+          const x = Math.round(w.x + Math.sin(g.t * 0.4 + w.p) * 14), y = Math.round(w.y + Math.sin(g.t * 0.9 + w.p) * 4);
+          if (id === 'fog') ctx.fillStyle = rgbStr(120, 255, 210, (0.3 + 0.5 * dark) * b);
+          else ctx.fillStyle = rgbStr(255, 240, 120, (0.2 + 0.6 * dark) * b);
+          ctx.fillRect(x, y, 1, 1);
+          ctx.fillStyle = id === 'fog' ? rgbStr(120, 255, 210, 0.12 * b) : rgbStr(255, 240, 120, 0.1 * b);
+          ctx.fillRect(x - 2, y - 2, 5, 5);
+        }
+      }
+    };
+    // деревня: снег на крышах, гирлянды, флажки шутов, тыквы на частоколе, звезда колядников
+    const drawVillageDeco = (dark) => {
+      const id = MT.id;
+      const roofTop = (h) => GROUND + 4 - (h === 0 ? 28 : 36) - Math.floor((h === 0 ? 26 : 28) / 2.4) + 1;
+      if (SEA.snow) {
+        ctx.fillStyle = rgbMix(EVC.white, NIGHTC, dark * 0.5);
+        for (let h = 0; h < 2; h++) {
+          const hx = h === 0 ? 262 : 292, hw = h === 0 ? 26 : 28, top = roofTop(h);
+          ctx.fillRect(hx + (hw >> 1) - 3, top - 1, 8, 1);
+          ctx.fillRect(hx - 3, GROUND + 4 - (h === 0 ? 28 : 36), hw + 6, 1);
+        }
+        for (let x = WALL_X; x < WALL_X + 10; x += 3) ctx.fillRect(x, 98, 2, 1);
+        ctx.fillRect(254, PLATFORM_Y - 1, 66, 1);
+      }
+      if (id === 'newyear') {
+        for (let h = 0; h < 2; h++) {
+          const hx = h === 0 ? 262 : 292, hw = h === 0 ? 26 : 28, base = GROUND + 4 - (h === 0 ? 28 : 36);
+          for (let x = hx - 2; x < hx + hw + 3; x += 3) {
+            ctx.fillStyle = RAINBOW[((x >> 1) + Math.floor(g.t * 2)) % 6];
+            ctx.fillRect(x, base + 1 + ((x >> 1) % 2), 1, 1);
+          }
+        }
+      } else if (id === 'jest') {
+        for (let x = 250; x < 318; x += 2) {
+          const t = (x - 250) / 68;
+          const y = 96 + Math.round(Math.sin(t * Math.PI) * 6);
+          ctx.fillStyle = 'rgba(240,240,240,0.55)';
+          ctx.fillRect(x, y, 2, 1);
+          if ((x - 250) % 6 === 0) {
+            ctx.fillStyle = rgbMix(RGB_RB[((x - 250) / 6) % 6], NIGHTC, dark * 0.5);
+            ctx.fillRect(x, y + 1, 3, 1);
+            ctx.fillRect(x + 1, y + 2, 1, 1);
+          }
+        }
+      } else if (id === 'pumpkin') {
+        lantern(WALL_X + 2, 98, dark);
+        lantern(258, PLATFORM_Y, dark);
+      } else if (id === 'yule') {
+        // звезда колядников на шесте у колокола
+        const x = 300, y = PLATFORM_Y - 20;
+        ctx.fillStyle = rgbMix(EVC.brown, NIGHTC, dark * 0.5);
+        ctx.fillRect(x, y, 1, 20);
+        const r = Math.floor(g.t * 2) % 2;
+        ctx.fillStyle = RAINBOW[Math.floor(g.t * 1.5) % 6];
+        ctx.fillRect(x - 3, y - 3 + r, 7, 1);
+        ctx.fillRect(x - r, y - 6, 1 + r * 2, 7);
+        ctx.fillStyle = '#fff6c0';
+        ctx.fillRect(x - 1, y - 4, 3, 3);
+        ctx.fillStyle = rgbStr(255, 240, 160, 0.12 * dark);
+        ctx.fillRect(x - 7, y - 10, 15, 15);
+      } else if (id === 'thaw') {
+        // грачи на частоколе
+        ctx.fillStyle = rgbMix([24, 24, 30], NIGHTC, dark * 0.3);
+        for (let i = 0; i < 2; i++) {
+          const x = WALL_X + 1 + i * 6, hop = Math.floor(g.t * 0.7 + i * 3) % 5 === 0 ? 1 : 0;
+          ctx.fillRect(x, 95 - hop, 3, 2);
+          ctx.fillRect(x + (i ? -1 : 3), 94 - hop, 1, 1);
+        }
+      }
+      // флажок мастерства на столбе колокола: каждые 5 уровней — новый цвет, с 20-го колокол золотой
+      if (MT.lvl >= 5 && !variant) {
+        ctx.fillStyle = rgbMix(RGB_RB[Math.min(5, Math.floor(MT.lvl / 5) - 1)], NIGHTC, dark * 0.5);
+        const fl = Math.floor(g.t * 3) % 2;
+        ctx.fillRect(317, PLATFORM_Y - 16, 4 - fl, 2);
+        ctx.fillRect(317, PLATFORM_Y - 14, 3 + fl, 1);
+      }
+    };
+    // туман над полем (перед зомби) и падающее сверху, вспышка молнии
+    const drawFogDeco = (dark) => {
+      if (MT.id !== 'fog') return;
+      for (let i = 0; i < fogs.length; i++) { const f = fogs[i];
+        ctx.fillStyle = rgbMix([220, 226, 230], NIGHTC, dark * 0.5, 0.2);
+        ctx.fillRect(Math.round(f.x), Math.round(f.y), Math.round(f.w), 5);
+        ctx.fillRect(Math.round(f.x) + 10, Math.round(f.y) - 2, Math.round(f.w) - 20, 2);
+      }
+    };
+    const drawOverDeco = () => {
+      if (SEA.fall) {
+        const snow = SEA.fall === 'snow';
+        const n = snow ? fall.length : 22;
+        const cols = SEA.fcol;
+        for (let i = 0; i < n; i++) { const f = fall[i];
+          ctx.fillStyle = cols[f.c % cols.length];
+          ctx.fillRect(Math.round(f.x), Math.round(f.y), snow ? (i % 5 === 0 ? 2 : 1) : 2, 1);
+        }
+      }
+      if (MT.id === 'storm' && g.rainOn) {
+        ctx.fillStyle = 'rgba(200,220,240,0.4)';
+        for (let i = 0; i < drops.length; i++) { const d = drops[i]; ctx.fillRect(Math.round(d.x), Math.round(d.y), 1, 3); }
+      }
+      if (g.flash > 0) {
+        ctx.fillStyle = rgbStr(255, 255, 240, clamp(g.flash, 0, 0.3) * 0.8);
+        ctx.fillRect(0, 0, W, H);
+      }
+    };
+    // аксессуар особого зомби события (обычный зомби, s = 1)
+    const drawAcc = (z, y) => {
+      const y0 = y - 12;
+      const blink = Math.floor(g.t * 4 + z.phase) % 2;
+      switch (SEA.acc) {
+        case 'goat':
+          ctx.fillStyle = zc(EVC.brown); zr(-1, y0, 4, 3);
+          ctx.fillStyle = zc(EVC.horn); zr(-1, y0 - 2, 1, 2); zr(2, y0 - 2, 1, 2); zr(-2, y0 - 3, 1, 1); zr(3, y0 - 3, 1, 1); zr(2, y0 + 3, 1, 2);
+          ctx.fillStyle = silh ? '#120c08' : '#ffe060'; zr(2, y0 + 1, 1, 1);
+          ctx.fillStyle = zc(EVC.red); zr(-2, y0 + 4, 1, 4); zr(3, y0 + 4, 1, 3);
+          break;
+        case 'effigy':
+          ctx.fillStyle = zc(EVC.brown); zr(4, y0 - 8, 1, 16);
+          ctx.fillStyle = zc(EVC.straw); zr(3, y0 - 12, 3, 5); zr(2, y0 - 8, 5, 2);
+          ctx.fillStyle = zc([240, 210, 170]); zr(3, y0 - 15, 3, 3);
+          ctx.fillStyle = zc(EVC.red); zr(3, y0 - 16, 3, 1); zr(3, y0 - 11, 3, 1);
+          break;
+        case 'mud':
+          ctx.fillStyle = zc(EVC.mud); zr(-2, y0 + 8, 5, 3); zr(0, y0 + 5, 2, 1); zr(-1, y0 + 2, 1, 1); zr(-1, y0 - 1, 3, 1);
+          zr(1, y0 + 11 + blink, 1, 1);
+          break;
+        case 'jester':
+          ctx.fillStyle = zc(EVC.red); zr(-1, y0 - 1, 2, 1); zr(-2, y0 - 2, 2, 1); zr(-2, y0 + 4, 2, 1); zr(2, y0 + 4, 1, 1);
+          ctx.fillStyle = zc(EVC.green); zr(1, y0 - 1, 2, 1); zr(3, y0 - 2, 2, 1); zr(0, y0 + 4, 2, 1);
+          ctx.fillStyle = silh ? '#120c08' : '#ffe060'; zr(-3, y0 - 3 + blink, 1, 1); zr(5, y0 - 2 - blink, 1, 1);
+          break;
+        case 'flower':
+          ctx.fillStyle = zc(EVC.green); zr(1, y0 - 2, 1, 2);
+          ctx.fillStyle = zc(EVC.pink); zr(0, y0 - 4, 3, 1); zr(1, y0 - 5, 1, 3);
+          ctx.fillStyle = zc(EVC.yellow); zr(1, y0 - 4, 1, 1);
+          if (!silh) { ctx.fillStyle = '#ffd040'; ctx.fillRect(ZX + Math.round(Math.sin(g.t * 3 + z.phase) * 6), y0 - 3 + Math.round(Math.cos(g.t * 5 + z.phase) * 2), 1, 1); }
+          break;
+        case 'wreath':
+          ctx.fillStyle = zc(EVC.green); zr(-2, y0 - 1, 6, 1); zr(-2, y0, 1, 1); zr(3, y0, 1, 1);
+          ctx.fillStyle = zc(EVC.red); zr(-1, y0 - 2, 1, 1);
+          ctx.fillStyle = zc(EVC.yellow); zr(1, y0 - 2, 1, 1);
+          ctx.fillStyle = zc(EVC.blue); zr(3, y0 - 2, 1, 1);
+          break;
+        case 'rod':
+          ctx.fillStyle = zc(EVC.grey); zr(-1, y0 - 1, 4, 1); zr(1, y0 - 5, 1, 4);
+          if (blink && !silh) { ctx.fillStyle = '#fff070'; zr(0, y0 - 6, 3, 1); zr(1, y0 - 7, 1, 3); }
+          break;
+        case 'star':
+          ctx.fillStyle = zc([95, 138, 78]); zr(2, y0 - 2, 1, 6);
+          if (!silh) {
+            ctx.fillStyle = '#f0e8ff'; zr(1, y0 - 5, 3, 1); zr(2, y0 - 6, 1, 3);
+            ctx.fillStyle = rgbStr(200, 176, 255, 0.25 + 0.15 * blink); zr(-1, y0 - 9, 7, 7);
+          }
+          break;
+        case 'scare':
+          ctx.fillStyle = zc(EVC.straw); zr(-3, y0 - 1, 8, 1); zr(-1, y0 - 3, 4, 2); zr(5, y0 + 5, 1, 2); zr(-2, y0 + 11, 1, 1);
+          ctx.fillStyle = zc(EVC.leafO); zr(-1, y0 + 6, 2, 2);
+          break;
+        case 'pumpkin':
+          ctx.fillStyle = zc(EVC.orange); zr(-2, y0 - 1, 6, 5);
+          ctx.fillStyle = zc(EVC.green); zr(0, y0 - 2, 1, 1);
+          ctx.fillStyle = silh ? '#120c08' : shFl ? '#ffffff' : '#ffe060'; zr(1, y0 + 1, 1, 1); zr(3, y0 + 1, 1, 1); zr(1, y0 + 3, 3, 1);
+          break;
+        case 'moss':
+          ctx.fillStyle = zc(EVC.dgreen); zr(-2, y0 + 4, 5, 2); zr(-2, y0 + 6, 1, 3); zr(2, y0 + 6, 1, 2); zr(-1, y0 - 1, 4, 1);
+          ctx.fillStyle = silh ? '#120c08' : '#80ffe0'; zr(2, y0 + 1, 1, 1);
+          break;
+        case 'santa':
+          ctx.fillStyle = zc(EVC.white); zr(-1, y0 - 1, 4, 1); zr(3, y0 - 3, 1, 1); zr(-1, y0 + 3, 4, 2); zr(0, y0 + 5, 2, 1);
+          ctx.fillStyle = zc(EVC.red); zr(0, y0 - 2, 3, 1); zr(1, y0 - 3, 2, 1);
+          break;
+        default: break;
+      }
+    };
+
     const draw = () => {
       const up = UP();
       const vl = villageLevel(up);
@@ -1690,6 +2169,7 @@ export default {
       ctx.fillStyle = rgbMix(MOOND0, MOOND1, dark);
       ctx.fillRect(mx + 3, my + 2, 3, 2);
       ctx.fillRect(mx + 6, my + 6, 2, 2);
+      drawSkyDeco(dark);
       ctx.fillStyle = rgbMix(HILL0, HILL1, dark);
       for (let i = 0; i < hills.length; i++) ctx.fillRect(i * 4, hills[i], 4, GROUND - hills[i]);
       const treeC = rgbMix(TREE0, TREE1, dark);
@@ -1701,6 +2181,7 @@ export default {
         ctx.fillRect(tr.x, GROUND - 3 - tr.h, tr.w, tr.h);
         ctx.fillRect(tr.x + 1, GROUND - 5 - tr.h, tr.w - 2, 2);
       }
+      drawHillDeco(dark);
       const gk = dark * 0.85;
       const gr = lerp(GRASS0[0], GRASS1[0], gk), gg = lerp(GRASS0[1], GRASS1[1], gk), gb = lerp(GRASS0[2], GRASS1[2], gk);
       ctx.fillStyle = rgbStr(gr, gg, gb);
@@ -1719,6 +2200,7 @@ export default {
         ctx.fillStyle = rgbMix(PUMPKIN, NIGHTC, dark * 0.5);
         ctx.fillRect(p.x, p.y - 1, 3, 2);
       }
+      drawFieldDeco(dark);
 
       // дома за частоколом
       const wallC = rgbMix(WALLC0, WALLC1, dark * 0.75);
@@ -1816,6 +2298,7 @@ export default {
           drawText(ctx, '!', Math.round(sentry.x), PLATFORM_Y - 22, '#ffe070');
         }
       }
+      drawVillageDeco(dark);
 
       // заборы и шипы (улучшение «Ловушки»)
       const nf = fenceCount(up);
@@ -1863,6 +2346,7 @@ export default {
         const e = order[i];
         if (e.isZ) drawZombie(e, dark); else drawActor(e, dark);
       }
+      drawFogDeco(dark);
 
       // частокол с воротами (каменное основание при прокачке)
       const sk = dark * 0.7;
@@ -1948,6 +2432,7 @@ export default {
         } else ctx.fillRect(Math.round(p.x), Math.round(p.y), 1, 1);
       }
       drawSlashes();
+      drawOverDeco();
       ctx.restore();
 
       if (g.hurtFlash > 0 && g.phase === 'play') {
@@ -1999,6 +2484,21 @@ export default {
       drawInt(ctx, pr.ckpt, 30, 16, '#cfe8ff');
       drawLabel(ctx, 'СЕЛО', 44, 16, '#c8b890');
       drawInt(ctx, villageLevel(up), 64, 16, '#ffe070');
+      // мастерство и турнир недели
+      if (!variant) {
+        box(2, 25, 74, 10, 0.45);
+        const mx = 4 + drawLabel(ctx, 'МАСТЕР', 4, 27, '#c8a0ff') + 3;
+        drawInt(ctx, MT.lvl, mx, 27, '#ffffff');
+        ctx.fillStyle = '#2a1414';
+        ctx.fillRect(4, 33, 70, 1);
+        ctx.fillStyle = '#c8a0ff';
+        ctx.fillRect(4, 33, Math.round(70 * MT.frac), 1);
+        if (MT.tourney) {
+          box(2, 37, 44, 10, 0.55);
+          drawIcon(ctx, 'trophy', 4, 38);
+          drawLabel(ctx, 'ТУРНИР', 13, 40, Math.floor(g.t * 1.5) % 2 ? '#ffd34a' : '#fff0b0');
+        }
+      }
 
       const sc = score();
       const scw = intWidth(sc, 2);
@@ -2056,11 +2556,28 @@ export default {
         }
       }
 
+      // событие месяца: особые зомби
+      const ch = pr.ev;
+      if (!variant && ch && !(g.phase === 'play' && g.mode === 'shop' && !g.panel)) {
+        const x0 = W - 104;
+        box(x0 - 2, 55, 104, 11, 0.5);
+        drawIcon(ctx, 'skull', x0, 57);
+        let x = x0 + 10;
+        if (ch.done) { drawSprite(ctx, CHECK, x, 58); x += 7; }
+        else {
+          x += drawInt(ctx, ch.n, x, 58, '#e8e2d4') + 1;
+          x += drawText(ctx, '/', x, 58, '#8a7a70') + 1;
+          x += drawInt(ctx, MT.goal(), x, 58, '#c8b890') + 4;
+        }
+        if (x + labelWidth(SEA.foe) < W - 2) drawLabel(ctx, SEA.foe, x, 58, ch.done ? '#60e070' : SEA.col);
+      }
       if (g.phase === 'play' && g.mode === 'shop' && !g.panel) drawShop();
-      // книга
+      // книга и событие
       if (g.phase === 'play') {
-        box(BOOK_X - 1, BOOK_Y - 1, 13, 11, g.panel ? 0.9 : 0.55);
+        box(BOOK_X - 1, BOOK_Y - 1, 13, 11, g.panel === 'album' ? 0.9 : 0.55);
         drawSprite(ctx, BOOK, BOOK_X + 2, BOOK_Y + 1);
+        box(EVB_X - 1, BOOK_Y - 1, 13, 11, g.panel === 'event' ? 0.9 : 0.55);
+        drawSprite(ctx, EVICON, EVB_X + 3, BOOK_Y + 2);
       }
       if (g.toast && g.toastT > 0) {
         const a = clamp(g.toastT * 3, 0, 1) * clamp((2.2 - g.toastT) * 5, 0, 1);
@@ -2071,7 +2588,8 @@ export default {
         drawLabel(ctx, g.toast.text, 160 - (tw >> 1), 169, g.toast.color);
         ctx.globalAlpha = ga;
       }
-      if (g.phase === 'play' && g.panel) drawAlbum();
+      if (g.phase === 'play' && g.panel === 'album') drawAlbum();
+      else if (g.phase === 'play' && g.panel === 'event') drawEventPanel();
     };
 
     const drawShop = () => {
@@ -2133,7 +2651,7 @@ export default {
       }
     };
 
-    const ALB_Z = { zz: 1, on: true, isZ: true, type: 'normal', T: TYPES.normal, mode: 'stand', x: 0, y: 0, hp: 1, max: 1, spd: 0, flash: 0, kb: 0, atk: false, phase: 0, dir: 1, hx: 0, hs: 0, give: 9, act: 1, act2: 1, hop: 0, ghost: false, stopX: 999, summon: false };
+    const ALB_Z = { zz: 1, on: true, isZ: true, type: 'normal', T: TYPES.normal, mode: 'stand', x: 0, y: 0, hp: 1, max: 1, spd: 0, flash: 0, kb: 0, atk: false, phase: 0, dir: 1, hx: 0, hs: 0, give: 9, act: 1, act2: 1, hop: 0, ghost: false, stopX: 999, summon: false, ev: false };
     const drawAlbum = () => {
       const pr = P.p;
       box(AX, AY, AW, AH, 0.92);
@@ -2193,13 +2711,95 @@ export default {
       drawInt(ctx, pr.bestW, x3, y + 8, '#ffb0a0');
     };
 
+    // ---------- панель события и мастерства ----------
+    const TX = { lvl: -1, id: '', done: -1, gems: '', ok: '', todo: '', what: '' };
+    const evTexts = (done) => {
+      if (TX.lvl === MT.lvl && TX.id === MT.id && TX.done === done) return;
+      TX.lvl = MT.lvl; TX.id = MT.id; TX.done = done;
+      const rw = rewardName('ev_' + MT.id);
+      TX.gems = '+' + MT.coinPct() + '% ИЗУМРУДОВ';
+      TX.ok = 'ВЫПОЛНЕНО! ЗНАЧОК «' + rw + '»';
+      TX.todo = 'НАГРАДА: ЗНАЧОК «' + rw + '»';
+      TX.what = 'ИСПЫТАНИЕ: ПОБЕДИ «' + SEA.foe + '»';
+    };
+    const drawEventPanel = () => {
+      const ev = MT.ev;
+      const ch = P.p.ev;
+      evTexts(ch && ch.done ? 1 : 0);
+      box(AX, AY, AW, AH, 0.92);
+      ctx.fillStyle = '#7a5530';
+      ctx.fillRect(AX, AY, AW, 1);
+      ctx.fillRect(AX, AY + AH - 1, AW, 1);
+      drawLabel(ctx, 'СОБЫТИЕ МЕСЯЦА', AX + 6, AY + 5, '#ffe070');
+      ctx.fillStyle = '#5a3a20';
+      ctx.fillRect(AX + AW - 12, AY + 3, 9, 8);
+      drawText(ctx, 'x', AX + AW - 10, AY + 4, '#ffffff');
+      const dl = Math.max(0, ev.daysLeft | 0);
+      let xr = AX + AW - 16 - labelWidth('ДН.');
+      drawLabel(ctx, 'ДН.', xr, AY + 5, '#8a7a70');
+      xr -= intWidth(dl) + 3;
+      drawInt(ctx, dl, xr, AY + 5, '#e8e2d4');
+      drawLabel(ctx, 'ЕЩЁ', xr - 4 - labelWidth('ЕЩЁ'), AY + 5, '#8a7a70');
+      drawLabel(ctx, ev.name, AX + 6, AY + 16, SEA.col, 2);
+      drawLabel(ctx, ev.desc, AX + 6, AY + 29, '#a89a88');
+      // особый зомби
+      ALB_Z.type = 'normal'; ALB_Z.T = TYPES.normal; ALB_Z.x = AX + 18; ALB_Z.y = AY + 60; ALB_Z.ev = true; ALB_Z.hp = ALB_Z.max = 1;
+      drawZombie(ALB_Z, 0.1);
+      ALB_Z.ev = false;
+      drawLabel(ctx, TX.what, AX + 40, AY + 40, '#c8b890');
+      const goal = MT.goal();
+      const n = ch ? ch.n : 0;
+      ctx.fillStyle = '#2a1414';
+      ctx.fillRect(AX + 40, AY + 49, 160, 5);
+      ctx.fillStyle = ch && ch.done ? '#60e070' : SEA.col;
+      ctx.fillRect(AX + 41, AY + 50, Math.round(158 * clamp(n / goal, 0, 1)), 3);
+      let x2 = AX + 206;
+      x2 += drawInt(ctx, n, x2, AY + 49, '#ffffff') + 1;
+      x2 += drawText(ctx, '/', x2, AY + 49, '#8a7a70') + 1;
+      drawInt(ctx, goal, x2, AY + 49, '#c8b890');
+      if (ch && ch.done) drawLabel(ctx, P.author ? 'ВЫПОЛНЕНО (АВТОР: БЕЗ НАГРАДЫ)' : TX.ok, AX + 40, AY + 59, '#60e070');
+      else drawLabel(ctx, TX.todo, AX + 40, AY + 59, '#8a7a70');
+      ctx.fillStyle = '#5a4030';
+      ctx.fillRect(AX + 6, AY + 70, AW - 12, 1);
+      // мастерство
+      const xm = AX + 6 + drawLabel(ctx, 'МАСТЕРСТВО', AX + 6, AY + 78, '#c8a0ff') + 6;
+      drawInt(ctx, MT.lvl, xm, AY + 75, '#ffffff', 2);
+      ctx.fillStyle = '#2a1414';
+      ctx.fillRect(AX + 110, AY + 78, 120, 4);
+      ctx.fillStyle = '#c8a0ff';
+      ctx.fillRect(AX + 111, AY + 79, Math.round(118 * MT.frac), 2);
+      const cur = Math.floor(MT.xp + MT.pend + MT.axp - MT.prevAt), need = MT.nextAt - MT.prevAt;
+      let x3 = AX + 236;
+      x3 += drawInt(ctx, Math.max(0, cur), x3, AY + 78, '#e8e2d4') + 1;
+      x3 += drawText(ctx, '/', x3, AY + 78, '#8a7a70') + 1;
+      drawInt(ctx, need, x3, AY + 78, '#8a7a70');
+      let x4 = AX + 6;
+      x4 += drawLabel(ctx, TX.gems, x4, AY + 91, MT.coinPct() ? '#8af0a8' : '#8a7a70') + 10;
+      drawLabel(ctx, MT.lvl >= 5 ? 'ФЛАЖОК НА КОЛОКОЛЕ (ЦВЕТ - КАЖДЫЕ 5 УР.)' : 'ФЛАЖОК НА КОЛОКОЛЕ - 5 УР.', x4, AY + 91, MT.lvl >= 5 ? '#ffd34a' : '#8a7a70');
+      drawLabel(ctx, '+1% ИЗУМРУДОВ ЗА КАЖДЫЕ 5 УРОВНЕЙ (ДО +20%), ОПЫТ - ЗА БОЙ', AX + 6, AY + 100, '#6a5a50');
+      ctx.fillStyle = '#5a4030';
+      ctx.fillRect(AX + 6, AY + 110, AW - 12, 1);
+      // турнир недели
+      const wk = MT.week;
+      drawIcon(ctx, 'trophy', AX + 6, AY + 116);
+      const x5 = AX + 16 + drawLabel(ctx, 'ТУРНИР НЕДЕЛИ:', AX + 16, AY + 118, '#ffd34a') + 4;
+      if (!wk) drawLabel(ctx, 'НЕТ СВЯЗИ', x5, AY + 118, '#8a7a70');
+      else if (MT.tourney) drawLabel(ctx, 'ЗАЩИТА! СЧЁТ ЗАБЕГА ИДЁТ В ТАБЛИЦУ', x5, AY + 118, '#fff0b0');
+      else drawLabel(ctx, GAME_NAMES[wk.game] || '?', x5, AY + 118, '#e8e2d4');
+      if (wk) {
+        let x6 = AX + 16 + drawLabel(ctx, 'ДО КОНЦА', AX + 16, AY + 128, '#8a7a70') + 4;
+        x6 += drawInt(ctx, Math.max(0, wk.daysLeft | 0), x6, AY + 128, '#e8e2d4') + 3;
+        drawLabel(ctx, 'ДН.', x6, AY + 128, '#8a7a70');
+      }
+    };
+
     // ---------- цикл ----------
     let raf = 0;
     let last = performance.now();
     let alive = true;
     let shownPhase = '';
     let cursorOn = false;
-    if (typeof api._debug === 'function') { try { api._debug({ g, P, zombies }); } catch (e) { /* тесты */ } }
+    if (typeof api._debug === 'function') { try { api._debug({ g, P, zombies, MT }); } catch (e) { /* тесты */ } }
     const loop = (now) => {
       if (!alive) return;
       let dt = (now - last) / 1000;
@@ -2234,6 +2834,7 @@ export default {
       alive = false;
       cancelAnimationFrame(raf);
       if (g.phase === 'play') P.save();
+      MT.flush();
       if (canvas.dataset) delete canvas.dataset.gamePhase;
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('contextmenu', onCtx);

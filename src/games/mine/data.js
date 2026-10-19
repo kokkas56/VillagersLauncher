@@ -90,3 +90,28 @@ export const fresh = () => ({
   up: { brake: 0, lamp: 0, magnet: 0, spring: 0, helmet: 0 },
   daily: { key: '', t: [] }
 });
+
+// события месяца: находка события на путях, цель испытания, «небо» шахты (сквозь колодец и в штреке)
+export const EVENT_MINE = {
+  yule: { goal: 450, sky: 'snow', val: 50 },
+  maslenitsa: { goal: 450, sky: 'embers', val: 50 },
+  thaw: { goal: 450, sky: 'drops', val: 50 },
+  jest: { goal: 450, sky: 'confetti', val: 50 },
+  bloom: { goal: 450, sky: 'spores', val: 50 },
+  kupala: { goal: 450, sky: 'fireflies', val: 50 },
+  storm: { goal: 450, sky: 'rain', val: 50 },
+  starfall: { goal: 450, sky: 'glints', val: 50 },
+  harvest: { goal: 450, sky: 'leaves', val: 50 },
+  pumpkin: { goal: 450, sky: 'bats', val: 50 },
+  fog: { goal: 450, sky: 'fog', val: 50 },
+  newyear: { goal: 450, sky: 'garland', val: 50 }
+};
+// косметика мастерства: окраска вагонетки [корпус, тень, блик]
+export const MINE_COS = [
+  { name: 'Железная', c: '#6b6e76', d: '#4a4c53', h: '#8d9098' },
+  { name: 'Медная', c: '#b0683a', d: '#7a4426', h: '#d8905a' },
+  { name: 'Зелёная', c: '#3e7a4a', d: '#2a5432', h: '#5aa06a' },
+  { name: 'Красная', c: '#a83a3a', d: '#742424', h: '#d05a5a' },
+  { name: 'Золотая', c: '#c8a030', d: '#8a6a1a', h: '#f0cc5a' },
+  { name: 'Самоцветная', c: '#6a4aa8', d: '#462e7a', h: '#9a7ae0' }
+];

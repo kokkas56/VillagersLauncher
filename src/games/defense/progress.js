@@ -2,6 +2,7 @@
 // Корень сохранения: { v, p: настоящий прогресс, authorSave: прогресс режима автора }.
 import { TYPES, TYPE_IDS, MOB_IDS, UPGRADES, upgradeCost, villageLevel, ckptOf } from './data.js';
 import { rewardById } from '../rewards.js';
+import { sanitizeEv } from './meta.js';
 
 export const SAVE_V = 1;
 export const AUTHOR_SPEED = 40;
@@ -15,7 +16,7 @@ export const DEF_REWARDS = [
 ];
 
 export function freshProgress() {
-  return { em: 0, up: [0, 0, 0, 0, 0, 0], ckpt: 1, start: 1, fails: 0, bestW: 0, kills: 0, alb: {}, runs: 0, best: 0, d: null };
+  return { em: 0, up: [0, 0, 0, 0, 0, 0], ckpt: 1, start: 1, fails: 0, bestW: 0, kills: 0, alb: {}, runs: 0, best: 0, d: null, ev: null };
 }
 const num = (v, d, lo, hi) => { v = Number(v); if (!Number.isFinite(v)) return d; return v < lo ? lo : v > hi ? hi : v; };
 function sanitize(o) {
@@ -36,6 +37,7 @@ function sanitize(o) {
   if (o.d && typeof o.d === 'object' && typeof o.d.k === 'string' && Array.isArray(o.d.l) && o.d.l.length === 3) {
     p.d = { k: o.d.k, l: o.d.l.map((t) => [num(t[0], 0, 0, 9) | 0, num(t[1], 0, 0, 99) | 0, num(t[2], 1, 1, 1e6) | 0, num(t[3], 0, 0, 1e6) | 0]), c: Array.isArray(o.d.c) ? [0, 1, 2].map((i) => (o.d.c[i] ? 1 : 0)) : [0, 0, 0], b: o.d.b ? 1 : 0 };
   }
+  p.ev = sanitizeEv(o.ev);
   return p;
 }
 
@@ -101,6 +103,8 @@ export function createProgress(api) {
     get p() { return p; },
     get author() { return author; },
     events,
+    push,
+    onDaily: null,
     load() {
       if (variant) { p = freshProgress(); const v = Math.max(1, Math.min(11, variant)); for (let i = 0, s = (v - 1) * 8; i < p.up.length && s > 0; i++) { const add = Math.min(UPGRADES[i].max, Math.ceil(s / (p.up.length - i))); p.up[i] = add; s -= add; } author = false; return p; }
       let o = null;
@@ -183,6 +187,7 @@ export function createProgress(api) {
           const r = dailyReward(p) * P.mul();
           p.em += r;
           push('Задание! +' + r, '#8af0a8', 4);
+          if (P.onDaily) P.onDaily();
         }
       }
       if (!d.b && d.c[0] && d.c[1] && d.c[2]) {

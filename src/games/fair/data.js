@@ -46,3 +46,28 @@ export const fresh = () => ({
   xp: [0, 0, 0], lv: [1, 1, 1], prizes: [], hits: 0,
   daily: { key: '', t: [] }
 });
+
+// события месяца: праздничная мишень (жетон события), цель испытания, «небо» площади
+export const EVENT_FAIR = {
+  yule: { goal: 400, sky: 'snow', pts: 40 },
+  maslenitsa: { goal: 400, sky: 'ribbons', pts: 40 },
+  thaw: { goal: 400, sky: 'drops', pts: 40 },
+  jest: { goal: 400, sky: 'confetti', pts: 40 },
+  bloom: { goal: 400, sky: 'petals', pts: 40 },
+  kupala: { goal: 400, sky: 'fireflies', pts: 40 },
+  storm: { goal: 400, sky: 'rain', pts: 40 },
+  starfall: { goal: 400, sky: 'meteors', pts: 40 },
+  harvest: { goal: 400, sky: 'leaves', pts: 40 },
+  pumpkin: { goal: 400, sky: 'bats', pts: 40 },
+  fog: { goal: 400, sky: 'fog', pts: 40 },
+  newyear: { goal: 400, sky: 'garland', pts: 40 }
+};
+// косметика мастерства: оперение стрел и лента на шляпе героя
+export const FAIR_COS = [
+  { name: 'Красное оперение', c: '#d84a4a' },
+  { name: 'Синее оперение', c: '#4a7ad8' },
+  { name: 'Зелёное оперение', c: '#4ac060' },
+  { name: 'Золотое оперение', c: '#f2c230' },
+  { name: 'Лиловое оперение', c: '#b07ae8' },
+  { name: 'Белое оперение', c: '#f4f4f0' }
+];

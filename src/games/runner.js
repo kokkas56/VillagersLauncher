@@ -3,8 +3,8 @@
 // по «Играть» из кустов вываливается орда и он срывается в бег (intro), при выходе добегает
 // до заставы, стража закрывает ворота, он отдыхает и снова идёт пешком (outro).
 import { drawText, drawIcon, drawInt, intWidth, drawLabel, labelWidth } from './pixfont.js';
-import { createProg, createBook, kitIcon, drawAuthor, drawBookBtn, bar, fmtKm } from './runner/kit.js';
-import { ROUTES, routesOpen, UPGRADES, missionDef, DAILY, BADGES, fresh as freshSave, M_PER_UNIT, AUTHOR_MUL } from './runner/data.js';
+import { createProg, createBook, kitIcon, drawAuthor, drawBookBtn, bar, fmtKm, createLive, drawEvSky, propSprite, tokenSprite } from './runner/kit.js';
+import { ROUTES, routesOpen, UPGRADES, missionDef, DAILY, BADGES, fresh as freshSave, M_PER_UNIT, AUTHOR_MUL, EVENT_RUN, RUN_COS } from './runner/data.js';
 
 const W = 320;
 const H = 180;
@@ -56,6 +56,7 @@ const VIG = alphaTable(160, 20, 30, 0.35);
 const RED = alphaTable(20, 0, 0, 0.5);
 const NIGHT = alphaTable(14, 12, 40, 0.42);
 const SNOWC = 'rgba(255,255,255,0.8)';
+const EV_GLOW = 'rgba(255,240,200,0.22)';
 const MIST = alphaTable(140, 170, 140, 0.3);
 // цвета каждого маршрута
 const RC = ROUTES.map((r) => ({
@@ -186,9 +187,10 @@ export default {
       if (!Array.isArray(S.mis.a) || S.mis.a.length !== 3) S.mis.a = [{ id: 0, n: 0 }, { id: 1, n: 0 }, { id: 2, n: 0 }];
       S.mis.next = Math.max(S.mis.next | 0, ...S.mis.a.map((a) => (a.id | 0) + 1));
     };
+    let live = null;
     const prog = createProg(api, {
       id: 'runner', version: 1, fresh: freshSave, fix: fixSave, daily: DAILY,
-      onDaily: (S, def, goal, pay) => { S.coins += pay; },
+      onDaily: (S, def, goal, pay) => { S.coins += pay; if (live) live.xp(15); },
       rewards: [
         { id: 'run_badge_marathon', test: (S) => S.total >= 42000 },
         { id: 'run_music_chase', test: (S) => routesOpen(S.total) >= ROUTES.length },
@@ -197,6 +199,9 @@ export default {
       ]
     });
     const MUL = prog.author ? AUTHOR_MUL : 1;
+    // событие месяца, мастерство, турнир недели
+    live = createLive(api, prog, { id: 'runner', table: EVENT_RUN });
+    if (api._dbg) api._dbg.live = live; // тестовый крючок
     prog.load();
     let skyReady = false;
     let rt = -1, RT = ROUTES[0], RCc = RC[0];
@@ -228,6 +233,7 @@ export default {
         else if (v > a.n) a.n = v;
         if (a.n >= d.goal) {
           S.coins += d.pay; S.mis.done++;
+          live.xp(10);
           prog.toast('МИССИЯ ВЫПОЛНЕНА +' + d.pay, '#ffe070');
           sfx('win');
           a.id = S.mis.next++; a.n = 0;
@@ -250,9 +256,11 @@ export default {
       if (runM > S.best) S.best = runM;
       if (runM >= 30) { S.runs++; stat('runs', 1); }
       periodic();
+      live.flush();
       prog.save();
     };
-    const coinVal = () => RT.coin * (1 + 0.2 * prog.S.up.purse) * (prog.author ? 10 : 1);
+    const coinVal = () => RT.coin * (1 + 0.2 * prog.S.up.purse) * live.coinMul() * (prog.author ? 10 : 1);
+    let evT = 5, evDue = false, xpM = 0;
     // ---- книжка ----
     const book = createBook([
       {
@@ -298,10 +306,12 @@ export default {
           return { t: b.name, ic: got ? 'star' : 'flag', lock: !got, r: (b.t === 'total' ? 'ВСЕГО ' : 'ЗА ЗАБЕГ ') + fmtKm(b.m) };
         }),
         foot: () => 'ЗАБЕГОВ: ' + prog.S.runs
-      }
+      },
+      live.page(RUN_COS)
     ], W, H);
     const authorKey = (code) => {
       if (!prog.author) return false;
+      if (live.authorKey(code)) return true;
       const S = prog.S;
       if (code === 'BracketRight') {
         const i = Math.min(ROUTES.length - 1, rt + 1);
@@ -365,7 +375,7 @@ export default {
         add('gem', lane, z0 + i * 2.2, { hgt });
       }
     };
-    const isObstacle = (e) => e.k === 'fence' || e.k === 'beam' || e.k === 'cart' || e.k === 'gap' || e.k === 'gem' || e.k === 'boots' || e.k === 'magnet';
+    const isObstacle = (e) => e.k === 'fence' || e.k === 'beam' || e.k === 'cart' || e.k === 'gap' || e.k === 'gem' || e.k === 'boots' || e.k === 'magnet' || e.k === 'evt';
 
     const spawnRow = () => {
       const z = FAR;
@@ -424,11 +434,16 @@ export default {
         const free = [0, 1, 2].find((l) => !ents.some((e) => e.lane === l && Math.abs(e.z - z) < 1 && isObstacle(e) && e.k !== 'gem'));
         if (free != null) add(wantMag ? 'magnet' : 'boots', free, z + 6, { hgt: 6 });
       }
+      // жетон события месяца
+      if (evDue && live.def) {
+        const ln = [0, 1, 2].find((l) => !ents.some((e) => e.lane === l && Math.abs(e.z - (z + 3)) < 2.5 && isObstacle(e)));
+        if (ln != null) { add('evt', ln, z + 3, { hgt: 6 }); evDue = false; evT = 9 + rand() * 6; }
+      }
     };
 
     function addDeco(side, z) {
       const r = rand();
-      const kind = r < 0.45 ? 'tree' : r < 0.7 ? 'post' : r < 0.88 ? 'bush' : 'lamp';
+      const kind = rand() < 0.15 ? 'ev' : r < 0.45 ? 'tree' : r < 0.7 ? 'post' : r < 0.88 ? 'bush' : 'lamp';
       add('deco', side < 0 ? -1 : 3, z, { side, deco: kind, off: 2.3 + rand() * (kind === 'tree' ? 1.6 : 0.4) });
     }
     // декор сразу вдоль дороги
@@ -567,6 +582,7 @@ export default {
       if (!retry) { prog.load(); refreshMis(); lastOpen = routesOpen(prog.S.total); lastBadges = badgeCount(prog.S); setRoute(prog.S.route); }
       idlePause = 0;
       waveT = 0;
+      live.announce();
       if (lone.on && lone.st < 3) { lone.st = 3; lone.t = 0; }
       fleeAll();
     };
@@ -579,6 +595,7 @@ export default {
       runActive = true; runM = 0; cleanM = 0; runGems = 0; magnetT = 0;
       chances = S.up.chance; bootsMax = 8 + 2 * S.up.boots; magnetMax = 5 + 2 * S.up.magnet; dangerT = 8 - S.up.stam;
       tickT = 1; saveT = 20;
+      evT = 5; evDue = false; xpM = 0;
       // оставшиеся препятствия прошлого забега (если были) — убрать
       let w = 0;
       for (let i = 0; i < ents.length; i++) if (!isObstacle(ents[i])) ents[w++] = ents[i];
@@ -737,6 +754,11 @@ export default {
         const dm = dz * M_PER_UNIT * MUL;
         prog.S.total += dm; runM += dm; cleanM += dm;
         stat('m', dm); stat('mRun', runM); stat('clean', cleanM);
+        // опыт мастерства: за каждые 40 м, дальние маршруты ценнее
+        xpM += dz * M_PER_UNIT;
+        if (xpM >= 40) { xpM -= 40; live.xp(1 + 0.25 * rt); }
+        evT -= dt;
+        if (evT <= 0) evDue = true;
         tickT -= dt; saveT -= dt;
         if (tickT <= 0) { tickT = 1; periodic(); }
         if (saveT <= 0) { saveT = 20; prog.save(); }
@@ -840,7 +862,7 @@ export default {
         }
         if (e.waveT > 0) e.waveT -= dt;
         if (collide && !e.hit && !e.ghost && phase === 'play') {
-          if (e.k === 'gem' && magnetT > 0 && e.z < 10 && e.z > -0.8) e.mag = Math.min(1, e.mag + dt * 4);
+          if ((e.k === 'gem' || e.k === 'evt') && magnetT > 0 && e.z < 10 && e.z > -0.8) e.mag = Math.min(1, e.mag + dt * 4);
           if (e.lane === lane) {
             if (e.k === 'gap') {
               if (e.z <= 0.2 && e.z + e.len >= -0.2 && h <= 0.5) { e.hit = true; stumble(); }
@@ -851,15 +873,18 @@ export default {
               else if (e.k === 'cart') { if (h < 24) { e.hit = true; stumble(); } else stat('jump', 1); }
             }
           }
-          if ((e.k === 'gem' || e.k === 'boots' || e.k === 'magnet') && e.z <= 0.7 && e.z > -0.8 && (e.lane === lane || e.mag > 0.5)) {
+          if ((e.k === 'gem' || e.k === 'boots' || e.k === 'magnet' || e.k === 'evt') && e.z <= 0.7 && e.z > -0.8 && (e.lane === lane || e.mag > 0.5)) {
             const ph = slide > 0 ? 0 : h;
             if (e.mag > 0.5 || Math.abs(ph + 8 - e.hgt) < 16) {
               e.hit = true;
               const sx = playerScreenX();
               if (e.k === 'gem') {
                 gems++; runGems++;
-                if (!prog.variant) { prog.S.coins += coinVal(); prog.S.st.gems++; stat('gems', 1); stat('gemsRun', runGems); }
+                if (!prog.variant) { prog.S.coins += coinVal(); prog.S.st.gems++; stat('gems', 1); stat('gemsRun', runGems); live.xp(0.2); }
                 sfx('coin'); puff(sx, PY - e.hgt - 8, 5, '#7dffaa', 35);
+              } else if (e.k === 'evt') {
+                if (!prog.variant && live.def) { prog.S.coins += live.def.val * coinVal() / RT.coin; live.bump(1); live.xp(1); }
+                sfx('coin'); puff(sx, PY - e.hgt - 8, 8, live.vis.col, 45);
               } else if (e.k === 'boots') { bootsT = bootsMax; stat('power', 1); sfx('win'); puff(sx, PY - e.hgt - 8, 10, '#62d8ff', 50); }
               else { magnetT = magnetMax; stat('power', 1); sfx('win'); puff(sx, PY - e.hgt - 8, 10, '#ff8a8a', 50); }
             }
@@ -907,6 +932,7 @@ export default {
         book.toggle(false);
       }
       prog.tickDay(dt);
+      live.tick(dt, phase === 'play');
       clock += dt; age += dt; pt += dt;
       for (let i = 0; i < parts.length; i++) {
         const p = parts[i];
@@ -1172,6 +1198,16 @@ export default {
     // придорожный декор: свой у каждого маршрута
     const drawDeco = (e) => {
       const k = RT.kind, T = RT.tree, B = RT.bush, Pc = RT.post;
+      if (e.deco === 'ev') {
+        // украшение события месяца у дороги
+        let nm = live.vis.prop;
+        if (nm === 'fire' && (((clock * 6 + e.v * 7) | 0) & 1)) nm = 'fire2';
+        const sp = propSprite(nm), r = sp.r, sc = 3, x0 = -sp.w * sc / 2, y0 = -sp.h * sc;
+        if (nm === 'wisp' || nm === 'fire' || nm === 'fire2' || nm === 'jack') { ctx.fillStyle = pickA(RCc.GLOW, 0.7 + 0.3 * Math.sin(clock * 7 + e.v * 9)); R(-18, y0 - 6, 36, 30); }
+        ctx.fillStyle = 'rgba(0,0,0,0.25)'; R(x0, -2, sp.w * sc, 3);
+        for (let j = 0; j < r.length; j += 4) { ctx.fillStyle = r[j]; R(x0 + r[j + 1] * sc, y0 + r[j + 2] * sc, r[j + 3] * sc, sc); }
+        return;
+      }
       if (e.deco === 'tree') {
         if (k === 0) {
           ctx.fillStyle = T[0]; R(-3, -22, 6, 22);
@@ -1296,6 +1332,13 @@ export default {
             ctx.fillStyle = '#2fd36a'; R(-w / 2, -12, w, 6); R(-w / 2 + 1, -13, Math.max(1, w - 2), 12);
             ctx.fillStyle = '#b8ffd0'; R(-w / 2 + 1, -11, 1, 2);
           }
+        } else if (e.k === 'evt') {
+          if (!e.hit) {
+            _by -= (e.mag > 0 ? e.hgt + (h + 8 - e.hgt) * e.mag : e.hgt) * s + Math.sin(clock * 4 + e.v * 6) * 1.5 * s;
+            ctx.fillStyle = EV_GLOW; R(-10, -19, 20, 20);
+            const r = tokenSprite(live.id).r;
+            for (let j = 0; j < r.length; j += 4) { ctx.fillStyle = r[j]; R(-7 + r[j + 1] * 2, -16 + r[j + 2] * 2, r[j + 3] * 2, 2); }
+          }
         } else if (e.k === 'boots') {
           if (!e.hit) {
             _by -= e.hgt * s + Math.sin(clock * 5) * 2 * s;
@@ -1361,7 +1404,8 @@ export default {
       if (invuln > 0 && (Math.floor(clock * 14) & 1) && phase === 'play') return;
       const y = Math.round(ground - h);
       const u = PU;
-      const robe = '#5a74b4', robeD = '#3e5490', skin = '#e8be96', hair = '#5a3a22', legs = '#3c2c22';
+      const cs = RUN_COS[live.cos()] || RUN_COS[0];
+      const robe = cs.c, robeD = cs.d, skin = '#e8be96', hair = '#5a3a22', legs = '#3c2c22';
       if (slide > 0 && h <= 0 && phase === 'play') {
         // подкат: низкий силуэт
         ctx.fillStyle = legs; ctx.fillRect(x - 3 * u, y - 2 * u, 2 * u, 2 * u); ctx.fillRect(x + u, y - 2 * u, 2 * u, 2 * u);
@@ -1488,14 +1532,14 @@ export default {
     const drawHUD = () => {
       if (hudA < 0.02) return;
       ctx.globalAlpha = hudA;
-      const live = phase === 'play' || phase === 'intro';
+      const liveRun = phase === 'play' || phase === 'intro';
       // изумруды
       ctx.fillStyle = 'rgba(20,12,16,0.55)';
       ctx.fillRect(3, 3, 8 + intWidth(gems, 2) + 6, 18);
       drawIcon(ctx, 'emerald', 6, 6, 2);
       drawInt(ctx, gems, 19, 7, '#b8ffd0', 2);
       // счёт справа
-      const sc = live ? score() : lastRun;
+      const sc = liveRun ? score() : lastRun;
       const sw = intWidth(sc, 2);
       ctx.fillStyle = 'rgba(20,12,16,0.55)';
       ctx.fillRect(W - sw - 10, 3, sw + 7, 14);
@@ -1525,6 +1569,8 @@ export default {
       }
       // задания дня
       if (!prog.variant) prog.drawDailies(ctx, 5, by + 3);
+      // мастерство, турнир, испытание события
+      if (!prog.variant) live.drawHud(ctx, W - 56, 42);
       // опасность: орда рядом
       if (phase === 'play' && time - lastStumble < dangerT) {
         const k = 1 - (time - lastStumble) / dangerT;
@@ -1594,6 +1640,7 @@ export default {
       }
       ctx.restore();
       drawWeather();
+      drawEvSky(ctx, live.def ? live.def.sky : live.vis.sky, clock, W, H, HOR);
       if (dark > 0.02) { ctx.fillStyle = pickA(NIGHT, dark); ctx.fillRect(0, 0, W, H); }
       drawFireflies();
       if (redOv > 0.01) { ctx.fillStyle = pickA(RED, redOv / 0.5); ctx.fillRect(0, 0, W, H); }
@@ -1636,6 +1683,7 @@ export default {
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
+      live.flush();
       window.removeEventListener('keydown', onKey);
       canvas.removeEventListener('pointerdown', onDown);
       canvas.removeEventListener('pointermove', onMove);

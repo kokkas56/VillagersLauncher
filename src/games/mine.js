@@ -7,8 +7,8 @@
 // Финал/выход: вагонетка с искрами тормозит у станции, шахтёр вылезает и берёт кирку.
 
 import { drawNumber, drawText, textWidth, drawIcon, drawLabel, labelWidth, drawInt } from './pixfont.js';
-import { createProg, createBook, kitIcon, drawAuthor, drawBookBtn, bar } from './runner/kit.js';
-import { ORES, ALBUM_MAIN, LEVELS, levelsOpen, UPGRADES, DAILY, fresh as freshSave, PX_PER_M, AUTHOR_MUL, END_DEPTH } from './mine/data.js';
+import { createProg, createBook, kitIcon, drawAuthor, drawBookBtn, bar, createLive, drawEvSky, drawProp } from './runner/kit.js';
+import { ORES, ALBUM_MAIN, LEVELS, levelsOpen, UPGRADES, DAILY, fresh as freshSave, PX_PER_M, AUTHOR_MUL, END_DEPTH, EVENT_MINE, MINE_COS } from './mine/data.js';
 
 const W = 320;
 const H = 180;
@@ -330,6 +330,7 @@ export default {
     const parts = pool(56);
 
     // ---------- прогресс: глубина, альбом руд, вагонетка, задания дня ----------
+    let live = null;
     const prog = createProg(api, {
       id: 'mine', version: 1, fresh: freshSave, daily: DAILY,
       fix: (S) => {
@@ -339,7 +340,7 @@ export default {
         S.lvl = Math.max(0, Math.min(levelsOpen(S.depth) - 1, S.lvl | 0));
         if (S.depth >= END_DEPTH) S.done = 1;
       },
-      onDaily: (S, def, goal, pay) => { S.coins += pay; },
+      onDaily: (S, def, goal, pay) => { S.coins += pay; if (live) live.xp(15); },
       rewards: [
         { id: 'mine_badge_miner', test: (S) => S.depth >= 1000 },
         { id: 'mine_theme_gems', test: (S) => { for (let i = 0; i < ALBUM_MAIN; i++) if (!(S.album[i] > 0)) return false; return true; } },
@@ -349,10 +350,13 @@ export default {
       ]
     });
     const MUL = prog.author ? AUTHOR_MUL : 1;
+    // событие месяца, мастерство, турнир недели
+    live = createLive(api, prog, { id: 'mine', table: EVENT_MINE });
+    if (api._dbg) api._dbg.live = live; // тестовый крючок
     prog.load();
     applyLevel(s, prog.variant ? (prog.variant - 1) % LEVELS.length : prog.S.lvl);
     let lastOpen = levelsOpen(prog.S.depth);
-    const rr = { on: false, depth: 0, value: 0, n: 0, helmets: 0, lastTT: 0, tick: 1, saveT: 20, nameT: 0, brake: 0 };
+    const rr = { on: false, depth: 0, value: 0, n: 0, helmets: 0, lastTT: 0, tick: 1, saveT: 20, nameT: 0, brake: 0, xpD: 0 };
     let LV = LEVELS[curLevel];
     const useLevel = (i) => { applyLevel(s, i); LV = LEVELS[curLevel]; };
     const stat = (name, v) => { if (prog.variant) return; if (name === 'runM') prog.peak(name, v); else prog.bump(name, v); };
@@ -375,13 +379,15 @@ export default {
       if (rr.depth > S.best) S.best = rr.depth;
       if (rr.depth > 0.3) { S.rides++; stat('rides', 1); }
       periodic();
+      live.flush();
       prog.save();
     };
     const gotOre = (k) => {
       const o = ORES[k];
       if (prog.variant) return o.val;
       const S = prog.S, v = o.val * (prog.author ? 10 : 1);
-      S.value += v; S.coins += v; rr.value += v; rr.n++;
+      S.value += v; S.coins += v * live.coinMul(); rr.value += v; rr.n++;
+      live.xp(o.val >= 60 ? 1.5 : 0.2);
       if (!S.album[k]) prog.toast('НОВАЯ НАХОДКА: ' + o.name, '#ffe8c0');
       S.album[k]++;
       stat('ore', 1); stat('value', v);
@@ -400,6 +406,7 @@ export default {
     };
     const authorKey = (code) => {
       if (!prog.author) return false;
+      if (live.authorKey(code)) return true;
       const S = prog.S;
       if (code === 'BracketRight') {
         if (S.lvl < LEVELS.length - 1) { S.lvl++; if (S.depth < LEVELS[S.lvl].need) S.depth = LEVELS[S.lvl].need; }
@@ -463,7 +470,8 @@ export default {
           return out;
         },
         foot: () => 'УРОВЕНЬ: ' + LEVELS[prog.S.lvl].name
-      }
+      },
+      live.page(MINE_COS)
     ], W, H);
 
     // ---------- мир ----------
@@ -473,7 +481,7 @@ export default {
     const rider = { m: 0, x: 0, y: 0, fx: 0, fy: 0, tx: 0, ty: 0, t: 0, dur: 0.6 };
     // трасса
     const ys = new Float32Array(N), ts = new Uint8Array(N);
-    const tr = { start: 0, i: 0, y: RAIL, ty: RAIL, hill: 0, gap: 0, broken: 0, cool: 0, calm: 0, flatFrom: 1e12 };
+    const tr = { start: 0, i: 0, y: RAIL, ty: RAIL, hill: 0, gap: 0, broken: 0, cool: 0, calm: 0, flatFrom: 1e12, evc: 600 };
     // препятствия и руда
     const objs = [];
     for (let i = 0; i < 28; i++) objs.push({ on: 0, k: 0, x: 0, y: 0, ore: 0, ph: 0, flee: 0, hit: 0, pass: 0 });
@@ -502,7 +510,7 @@ export default {
       return null;
     };
     const resetTrack = () => {
-      tr.start = sceneX + W; tr.i = 0; tr.y = RAIL; tr.ty = RAIL; tr.hill = 4; tr.gap = 0; tr.broken = 0; tr.cool = 240; tr.calm = 0; tr.flatFrom = 1e12;
+      tr.start = sceneX + W; tr.i = 0; tr.y = RAIL; tr.ty = RAIL; tr.hill = 4; tr.gap = 0; tr.broken = 0; tr.cool = 240; tr.calm = 0; tr.flatFrom = 1e12; tr.evc = 600;
       for (const o of objs) o.on = 0;
     };
     // генерация трассы на шаг вперёд
@@ -551,6 +559,11 @@ export default {
         }
       }
       if (tr.calm && x + STEP >= tr.flatFrom) tr.y = RAIL;
+      // находка события месяца над путями
+      if (!tr.calm && live.def) {
+        tr.evc -= STEP;
+        if (tr.evc <= 0) { tr.evc = 900 + rand() * 700; addObj(3, x, -13, 0); }
+      }
       ys[j] = tr.y; ts[j] = type;
       tr.i++;
     };
@@ -571,12 +584,13 @@ export default {
     };
     const beginRide = () => {
       const S = prog.S;
-      rr.on = !prog.variant; rr.depth = 0; rr.value = 0; rr.n = 0; rr.helmets = S.up.helmet; rr.lastTT = 0; rr.tick = 1; rr.saveT = 20; rr.nameT = 3; rr.brake = 0;
+      rr.on = !prog.variant; rr.depth = 0; rr.value = 0; rr.n = 0; rr.helmets = S.up.helmet; rr.lastTT = 0; rr.tick = 1; rr.saveT = 20; rr.nameT = 3; rr.brake = 0; rr.xpD = 0;
     };
     const startIntro = () => {
       book.toggle(false);
       prog.load(); lastOpen = levelsOpen(prog.S.depth);
       useLevel(prog.S.lvl);
+      live.announce();
       resetRun();
       resetTrack();
       phase = 'intro'; pt = 0; introK = 0;
@@ -777,6 +791,18 @@ export default {
           const mr = phase === 'play' && prog.S.up.magnet > 0 ? 12 + 12 * prog.S.up.magnet : 0;
           if ((Math.abs(o.x - cx) < 10 && oy > top - 4 && oy < cy) || (mr > 0 && Math.abs(o.x - cx) < mr && Math.abs(oy - (cy - 10)) < mr + 8)) {
             o.hit = 1; o.on = 0;
+            if (o.k === 3) {
+              // находка события месяца
+              if (phase === 'play' && !prog.variant && live.def) {
+                const v = live.def.val * (prog.author ? 10 : 1);
+                prog.S.coins += v * live.coinMul(); g.score += v; rr.value += v;
+                live.bump(1); live.xp(1);
+                popup(o.x - camX, oy - 8, v);
+                api.sfx('win');
+              }
+              for (let i = 0; i < 8; i++) spawnP(parts, o.x, oy, (rand() - 0.5) * 60, -20 - rand() * 30, 0.5, i & 1 ? '#ffffff' : live.vis.col, 200);
+              continue;
+            }
             if (phase === 'play') {
               const v = gotOre(o.ore);
               g.score += v; g.ores[0]++;
@@ -840,7 +866,10 @@ export default {
           S.depth += dd; rr.depth += dd;
           stat('depth', dd); stat('runM', rr.depth);
           const tt = trackT(cart.x);
-          if (rr.lastTT !== 0 && tt === 0 && !cart.crash) stat('gap', 1);
+          if (rr.lastTT !== 0 && tt === 0 && !cart.crash) { stat('gap', 1); live.xp(0.3); }
+          // опыт мастерства: за каждый метр глубины
+          rr.xpD += cart.v * dt / PX_PER_M;
+          if (rr.xpD >= 1) { rr.xpD -= 1; live.xp(1); }
           rr.lastTT = tt;
           rr.tick -= dt; rr.saveT -= dt;
           if (rr.tick <= 0) { rr.tick = 1; periodic(); }
@@ -1080,6 +1109,30 @@ export default {
       }
     };
 
+    // украшения события месяца на станции: два предмета у стены и жетоны под сводом
+    const EVSX = [236, 308], EVCX = [112, 150, 190, 230, 268];
+    const drawEvStation = (o, t) => {
+      let nm = live.vis.prop;
+      const glow = nm === 'fire' || nm === 'wisp' || nm === 'jack';
+      if (nm === 'fire' && (F(t * 6) & 1)) nm = 'fire2';
+      for (let k = 0; k < 2; k++) {
+        const x = o + EVSX[k];
+        if (x < -20 || x > W + 20) continue;
+        if (glow) {
+          C.globalAlpha = 0.8 + 0.2 * Math.sin(t * 7 + k);
+          C.fillStyle = 'rgba(255,180,90,0.12)'; blob(x, FLOOR - 8, 16);
+          C.globalAlpha = 1;
+        }
+        C.fillStyle = 'rgba(0,0,0,0.25)'; R(x - 6, FLOOR + 1, 13, 1);
+        drawProp(C, nm, x, FLOOR + 1, 1);
+      }
+      for (let k = 0; k < EVCX.length; k++) {
+        const cx = EVCX[k], x = o + cx;
+        if (x < -10 || x > W + 10) continue;
+        kitIcon(C, live.ic, x - 3, s.ceil[cx >> 1] + 1 + (k & 1));
+      }
+    };
+
     // штрек поездки: колонки по 4 px
     const drawRide = (t, scrL, scrR) => {
       // порода с параллаксом
@@ -1155,6 +1208,7 @@ export default {
         C.fillStyle = P.woodDk; R(sx - 5, cy - 3, 12, 4);
         C.fillStyle = P.wood; R(sx - 5, cy - 3, 12, 3);
         if (k % 2 === 0) glowLamp(sx + 5, cy + 9, k, t, 0);
+        else kitIcon(C, live.ic, sx - 2, cy + 3);
       }
     };
 
@@ -1169,16 +1223,17 @@ export default {
         return;
       }
       const yy = y - 10;
+      const cs = MINE_COS[live.cos()] || MINE_COS[0];
       if (load) {
         C.fillStyle = '#5a4c40'; R(x - 6, yy - 2, 12, 3);
         C.fillStyle = ORE[2].c; R(x - 4, yy - 2, 2, 2);
         C.fillStyle = ORE[1].c; R(x, yy - 3, 2, 2);
         C.fillStyle = ORE[0].c; R(x + 3, yy - 2, 2, 1);
       }
-      C.fillStyle = P.cartDk; R(x - 8, yy, 16, 8);
-      C.fillStyle = P.cart; R(x - 7, yy + 1, 14, 6);
-      C.fillStyle = P.cartHi; R(x - 8, yy, 16, 1);
-      C.fillStyle = P.cartDk; R(x - 3, yy + 1, 1, 6); R(x + 2, yy + 1, 1, 6);
+      C.fillStyle = cs.d; R(x - 8, yy, 16, 8);
+      C.fillStyle = cs.c; R(x - 7, yy + 1, 14, 6);
+      C.fillStyle = cs.h; R(x - 8, yy, 16, 1);
+      C.fillStyle = cs.d; R(x - 3, yy + 1, 1, 6); R(x + 2, yy + 1, 1, 6);
       const spin = F(cart.x / 2) & 1;
       for (let k = 0; k < 2; k++) {
         const wx = x - 6 + k * 9;
@@ -1224,7 +1279,13 @@ export default {
           C.fillStyle = P.woodHi; R(sx - 11, by - 5, 22, 1);
           C.fillStyle = P.warn; R(sx - 9, by - 4, 3, 1); R(sx - 1, by - 4, 3, 1); R(sx + 7, by - 4, 3, 1);
         } else if (o.k === 1) drawBat(sx, o.y, t, o.ph);
-        else {
+        else if (o.k === 3) {
+          const oy = trackY(o.x) + o.y, bob = Math.sin(t * 3 + o.ph) > 0 ? 1 : 0;
+          C.globalAlpha = 0.6 + 0.4 * Math.sin(t * 5 + o.ph);
+          C.fillStyle = 'rgba(255,240,200,0.25)'; blob(sx, oy - bob, 7);
+          C.globalAlpha = 1;
+          kitIcon(C, live.ic, sx - 3, oy - 3 - bob);
+        } else {
           const oy = o.y < 0 ? trackY(o.x) + o.y : o.y;
           const bob = Math.sin(t * 4 + o.ph) > 0 ? 1 : 0;
           drawSpr(NUG[o.ore], sx - 2, oy - 2 - bob);
@@ -1261,6 +1322,7 @@ export default {
       if (nx < LEVELS.length) bar(ctx, 0, 12, W, 1, (S.depth - LEVELS[nx - 1].need) / (LEVELS[nx].need - LEVELS[nx - 1].need), '#8fd0ff', 'rgba(0,0,0,0.3)');
       else bar(ctx, 0, 12, W, 1, S.depth / END_DEPTH, '#ff9ae8', 'rgba(0,0,0,0.3)');
       prog.drawDailies(ctx, 5, 17);
+      live.drawHud(ctx, W - 58, 38);
       if (phase === 'play') {
         drawBookBtn(ctx, 4, H - 13, book.open);
         if (prog.author) drawAuthor(ctx, W - 26, 26);
@@ -1304,6 +1366,7 @@ export default {
       if (showScene) {
         cached(ctx, s, 'scene', W, H, o, 0, paintScene);
         drawSceneDeco(o, t, dt);
+        drawEvStation(o, t);
         drawSceneLife(o, t, dt, envDark);
       }
       // станция на выезде (новое место сцены рисуем заранее)
@@ -1381,6 +1444,7 @@ export default {
         drawText(ctx, str, q.x - w / 2 + 1, q.y + 1, '#1a1010');
         drawText(ctx, str, q.x - w / 2, q.y, '#fff2a0');
       }
+      drawEvSky(C, live.def ? live.def.sky : live.vis.sky, t, W, H, 80);
       for (let i = 0; i < 24; i++) { C.fillStyle = VIG[i]; R(i * 3, 0, 3, H); }
       // темнота глубин
       const inRide = phase === 'play' || phase === 'crash' || phase === 'wait' || (phase === 'intro' && introK >= 2) || (phase === 'outro' && outroK === 1 && cart.x < tr.flatFrom - W * 0.6);
@@ -1417,6 +1481,7 @@ export default {
       if (book.open && dt > 0 && (api.mode ? api.mode() : 'play') !== 'idle') dt = 0; // книжка — пауза
       if (dt > 0) {
         prog.tickDay(dt);
+        live.tick(dt, phase === 'play');
         const m = prog.variant ? 'idle' : api.mode ? api.mode() : 'play';
         pt += dt;
         if (phase === 'idle') {
@@ -1458,6 +1523,7 @@ export default {
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
+      live.flush();
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);

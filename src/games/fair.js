@@ -7,8 +7,8 @@
 // Финал/выход: камера отъезжает, хозяин вручает розетку (или машет), герой снова гуляет.
 
 import { drawNumber, drawText, textWidth, drawIcon, drawLabel, labelWidth, drawInt } from './pixfont.js';
-import { createProg, createBook, kitIcon, drawAuthor, drawBookBtn, bar } from './runner/kit.js';
-import { STALLS, LV_XP, lvOf, RANKS, rankOf, PRIZES, DAILY, fresh as freshSave, AUTHOR_MUL } from './fair/data.js';
+import { createProg, createBook, kitIcon, drawAuthor, drawBookBtn, bar, createLive, drawEvSky, drawProp, tokenSprite } from './runner/kit.js';
+import { STALLS, LV_XP, lvOf, RANKS, rankOf, PRIZES, DAILY, fresh as freshSave, AUTHOR_MUL, EVENT_FAIR, FAIR_COS } from './fair/data.js';
 
 const W = 320;
 const H = 180;
@@ -133,13 +133,16 @@ const KINDS = [
   null // 4 выскочка (как обычная, стоит на месте) — заполняется ниже
 ];
 KINDS[4] = { sp: KINDS[0].sp, pts: 15, refill: 1, rad: 9 };
+// 5 — праздничная мишень события месяца (спрайт меняется вместе с событием)
+KINDS[5] = { sp: tokenSprite('yule'), pts: 40, refill: 2, rad: 8, sc: 2 };
 // «Топоры»: деревянные чурки вместо бумажных мишеней
 const KINDS_AXE = [
   { sp: ringTarget(8, ['#5a3a1e', '#e8c890', '#c8a060', '#e8c890', '#c8a060', '#e8c890', '#a87840', '#5a3a1e']), pts: 12, refill: 1, rad: 9 },
   { sp: ringTarget(4, ['#5a3a1e', '#e8c890', '#c8a060', '#6a4424']), pts: 30, refill: 2, rad: 5 },
   { sp: ringTarget(6, ['#fff6b0', '#f2c230', '#fff6b0', '#c08a10', '#f2c230', '#8a5e14']), pts: 60, refill: 3, rad: 7 },
   KINDS[3],
-  { sp: ringTarget(8, ['#5a3a1e', '#d8b880', '#b89050', '#d8b880', '#b89050', '#d8b880', '#987030', '#4a2e16']), pts: 18, refill: 1, rad: 9 }
+  { sp: ringTarget(8, ['#5a3a1e', '#d8b880', '#b89050', '#d8b880', '#b89050', '#d8b880', '#987030', '#4a2e16']), pts: 18, refill: 1, rad: 9 },
+  KINDS[5]
 ];
 const AXE_SPR = [
   sprite({ a: '#c8d0dc', b: '#7e8a9a', c: '#8a5a32' }, ['.aa....', 'aaab...', 'aab.c..', '.b...c.', '......c']),
@@ -152,7 +155,8 @@ const APPLES = [
   { sp: sprite({ a: '#d83a3a', b: '#ff8a7a', c: '#4a8a3a', d: '#8a2020' }, ['..c..', '.aaa.', 'abaaa', 'aaaad', '.aad.']), pts: 10 },
   { sp: sprite({ a: '#7ac040', b: '#c8f090', c: '#5a3a1e', d: '#4a8a20' }, ['..c..', '.aaa.', 'abaaa', 'aaaad', '.aad.']), pts: 15 },
   { sp: sprite({ a: '#f2c230', b: '#fff6b0', c: '#4a8a3a', d: '#a07010' }, ['..c..', '.aaa.', 'abaaa', 'aaaad', '.aad.']), pts: 50 },
-  { sp: sprite({ a: '#6a5030', b: '#8a7048', c: '#2a2010', d: '#3a2a18' }, ['..c..', '.aaa.', 'adaaa', 'aaada', '.aad.']), pts: 0 }
+  { sp: sprite({ a: '#6a5030', b: '#8a7048', c: '#2a2010', d: '#3a2a18' }, ['..c..', '.aaa.', 'adaaa', 'aaada', '.aad.']), pts: 0 },
+  { sp: tokenSprite('yule'), pts: 40 } // 4 — жетон события
 ];
 const ARROW_ICON = sprite({ a: '#e8e2d4', b: '#8a5a32', c: '#d84a4a' }, ['c.....a.', '.cbbbbba', 'c.....a.']);
 
@@ -420,6 +424,7 @@ export default {
     const HX = s.gx + 14; // где герой стоит у прилавка
 
     // ---------- прогресс: билеты, ранги, аттракционы, призы, задания дня ----------
+    let live = null;
     const prog = createProg(api, {
       id: 'fair', version: 1, fresh: freshSave, daily: DAILY,
       fix: (S) => {
@@ -430,7 +435,7 @@ export default {
         S.next = (((S.next | 0) % 3) + 3) % 3;
         S.prizes = S.prizes.filter((i, k, a) => Number.isInteger(i) && i >= 0 && i < PRIZES.length && a.indexOf(i) === k);
       },
-      onDaily: (S, def, goal, pay) => { S.tickets += pay; S.earned += pay; },
+      onDaily: (S, def, goal, pay) => { S.tickets += pay; S.earned += pay; if (live) live.xp(15); },
       rewards: [
         { id: 'fair_badge_eye', test: (S) => S.gold >= 100 },
         { id: 'fair_frame_target', test: (S) => S.lv.every((l) => l >= 5) },
@@ -440,7 +445,15 @@ export default {
       ]
     });
     const MUL = prog.author ? AUTHOR_MUL : 1;
+    // событие месяца, мастерство, турнир недели
+    live = createLive(api, prog, { id: 'fair', table: EVENT_FAIR });
+    if (api._dbg) api._dbg.live = live; // тестовый крючок
+    const syncEv = () => {
+      KINDS[5].sp = APPLES[4].sp = tokenSprite(live.id);
+      KINDS[5].pts = APPLES[4].pts = live.def ? live.def.pts : 40;
+    };
     prog.load();
+    syncEv();
     const syncDecor = () => {
       s.prizeN = prog.S.prizes.length;
       s.stallSign = prog.variant ? (prog.variant - 1) % 3 : prog.S.next;
@@ -453,7 +466,7 @@ export default {
       if (!roundOpen || prog.variant) { roundOpen = false; return; }
       roundOpen = false;
       const S = prog.S, st = g.stall, sc = Math.round(g.score);
-      const tk = Math.floor(sc / 60 * (1 + 0.25 * (S.lv[st] - 1)) * MUL);
+      const tk = Math.floor(sc / 60 * (1 + 0.25 * (S.lv[st] - 1)) * MUL * live.coinMul());
       S.tickets += tk; S.earned += tk; S.rounds++; S.hits += g.hits;
       if (sc > S.best) S.best = sc;
       S.xp[st] += sc * MUL;
@@ -467,6 +480,8 @@ export default {
       S.next = (st + 1) % 3;
       syncDecor();
       prog.checkRewards();
+      live.xp(sc / 1000);
+      live.flush();
       prog.save();
     };
     const onHit = (gold) => {
@@ -474,8 +489,9 @@ export default {
       if (g.combo > g.maxCombo) g.maxCombo = g.combo;
       if (prog.variant) return;
       prog.bump('hits', 1); prog.peak('combo', g.combo);
+      live.xp(1 / 3);
       if (g.stall === 2) prog.bump('apples', 1);
-      if (gold) { prog.S.gold += prog.author ? 10 : 1; prog.bump('gold', 1); prog.checkRewards(); }
+      if (gold) { prog.S.gold += prog.author ? 10 : 1; prog.bump('gold', 1); prog.checkRewards(); live.xp(3); }
     };
     const setRank = (rk) => {
       const S = prog.S;
@@ -490,6 +506,7 @@ export default {
     };
     const authorKey = (code) => {
       if (!prog.author) return false;
+      if (live.authorKey(code)) { syncEv(); return true; }
       if (code === 'BracketRight') { setRank(rankOf(prog.S.earned) + 1); return true; }
       if (code === 'BracketLeft') { setRank(rankOf(prog.S.earned) - 1); return true; }
       return false;
@@ -534,7 +551,8 @@ export default {
           return out;
         },
         foot: () => 'РАНГ: ' + RANKS[rankOf(prog.S.earned)].name
-      }
+      },
+      live.page(FAIR_COS)
     ], W, H);
 
     // ---------- состояние игры ----------
@@ -580,7 +598,8 @@ export default {
     const setCursor = () => { canvas.style.cursor = phase === 'play' && !book.open ? 'none' : prevCursor; };
     const startIntro = () => {
       book.toggle(false);
-      if (phase === 'idle' || phase === 'outro') { prog.load(); lastRank = rankOf(prog.S.earned); syncDecor(); }
+      if (phase === 'idle' || phase === 'outro') { prog.load(); syncEv(); lastRank = rankOf(prog.S.earned); syncDecor(); }
+      live.announce();
       resetRun();
       phase = 'intro'; pt = 0;
       if (z < 0.01) { hero.st = H_RUN; hero.bow = 0; hero.shot = 0; hero.pause = 0; s.boardArrow.on = 0; }
@@ -711,11 +730,12 @@ export default {
           g.score += v;
           g.arrows = Math.min(axe ? 18 : MAX_ARROWS, g.arrows + k.refill + (bull > 1 ? 1 : 0));
           popup(best.x, ty - 10, v, 0);
-          api.sfx(best.kind === 2 || bull > 1 ? 'win' : 'coin');
-          if (best.kind === 2) keeper.wave = 1.2;
+          api.sfx(best.kind === 2 || best.kind === 5 || bull > 1 ? 'win' : 'coin');
+          if (best.kind === 2 || best.kind === 5) keeper.wave = 1.2;
           onHit(best.kind === 2);
-          const n = best.kind === 2 ? 10 : 5;
-          for (let i = 0; i < n; i++) spawnP(gparts, best.x, ty, (rand() - 0.5) * 70, -20 - rand() * 40, 0.5 + rand() * 0.4, best.kind === 2 ? (i % 2 ? '#fff6b0' : '#f2c230') : axe ? (i % 2 ? '#e8c890' : '#8a5a32') : (i % 2 ? '#f4ecdc' : '#d83a3a'), 160, 0);
+          if (best.kind === 5) { live.bump(1); live.xp(1); }
+          const n = best.kind === 2 || best.kind === 5 ? 10 : 5;
+          for (let i = 0; i < n; i++) spawnP(gparts, best.x, ty, (rand() - 0.5) * 70, -20 - rand() * 40, 0.5 + rand() * 0.4, best.kind === 5 ? (i % 2 ? '#ffffff' : live.vis.col) : best.kind === 2 ? (i % 2 ? '#fff6b0' : '#f2c230') : axe ? (i % 2 ? '#e8c890' : '#8a5a32') : (i % 2 ? '#f4ecdc' : '#d83a3a'), 160, 0);
         }
       } else {
         g.combo = 0; g.mult = 1; g.misses++;
@@ -734,14 +754,15 @@ export default {
       if (!t || active >= 3 + F(d * 4) + (g.lvl >= 4 ? 1 : 0)) return;
       const r = rand();
       let kind;
-      if (rand() < 0.03 + 0.005 * g.lvl) kind = 2; // золотые — редкость
+      if (live.def && rand() < 0.07) kind = 5; // праздничная мишень события
+      else if (rand() < 0.03 + 0.005 * g.lvl) kind = 2; // золотые — редкость
       else if (r < 0.17 + 0.07 * d) kind = 3;
       else if (r < 0.38 + 0.1 * d) kind = 1;
       else if (r < 0.58 + 0.08 * d) kind = 4;
       else kind = 0;
       t.on = 1; t.kind = kind; t.row = F(rand() * 3); t.pop = 0; t.st = 0; t.t = 0; t.hasArrow = 0; t.shake = 0;
       const dir = rand() < 0.5 ? -1 : 1;
-      const sp = (kind === 1 ? 70 + rand() * 35 : kind === 2 ? 58 + rand() * 18 : kind === 3 ? 22 + rand() * 20 : 26 + rand() * 20) * (1 + d * 0.6 + lk) * (g.stall === 1 ? 0.8 : 1);
+      const sp = (kind === 1 ? 70 + rand() * 35 : kind === 2 || kind === 5 ? 46 + rand() * 18 : kind === 3 ? 22 + rand() * 20 : 26 + rand() * 20) * (1 + d * 0.6 + lk) * (g.stall === 1 ? 0.8 : 1);
       if (kind === 4) { t.vx = 0; t.x = 34 + rand() * (W - 68); t.life = 1.6 - d * 0.6 - lk; }
       else { t.vx = sp * dir; t.x = dir > 0 ? 24 + rand() * 60 : W - 24 - rand() * 60; t.life = 99; }
       // не ставим поверх соседа в том же ряду
@@ -754,7 +775,7 @@ export default {
       for (const q of apples) { if (q.on) active++; else if (!a) a = q; }
       if (!a || active >= 5 + g.lvl) return;
       const d = clamp(g.elapsed / ROUND, 0, 1), r = rand();
-      a.kind = rand() < 0.03 + 0.005 * g.lvl ? 2 : r < 0.16 + 0.06 * d + 0.02 * g.lvl ? 3 : r < 0.42 ? 1 : 0;
+      a.kind = live.def && rand() < 0.07 ? 4 : rand() < 0.03 + 0.005 * g.lvl ? 2 : r < 0.16 + 0.06 * d + 0.02 * g.lvl ? 3 : r < 0.42 ? 1 : 0;
       a.on = 1; a.x = 30 + rand() * (W - 60); a.y = 26 + rand() * 6; a.vy = 4 + rand() * 10; a.t = 0;
     };
     const BASKET_Y = COUNTER_Y - 6;
@@ -782,9 +803,10 @@ export default {
             const v = APPLES[a.kind].pts * g.mult;
             g.score += v;
             popup(a.x, BASKET_Y - 14, v, 0);
-            api.sfx(a.kind === 2 ? 'win' : 'coin');
-            if (a.kind === 2) keeper.wave = 1.2;
+            api.sfx(a.kind === 2 || a.kind === 4 ? 'win' : 'coin');
+            if (a.kind === 2 || a.kind === 4) keeper.wave = 1.2;
             onHit(a.kind === 2);
+            if (a.kind === 4) { live.bump(1); live.xp(1); }
             for (let i = 0; i < 4; i++) spawnP(gparts, a.x, BASKET_Y - 2, (rand() - 0.5) * 40, -20 - rand() * 20, 0.4, a.kind === 2 ? '#fff6b0' : '#c8f090', 160, 0);
           }
         } else if (a.y > COUNTER_Y + 3) {
@@ -976,6 +998,7 @@ export default {
         lantern(p, x + w - 2, t, st.ph);
       }
       drawGalleryStall(p, t);
+      drawEventDeco(p, t);
       // актёры по глубине
       for (let i = 0; i < s.actors.length; i++) {
         const a = s.actors[i];
@@ -1040,7 +1063,27 @@ export default {
         else R(x, y, 1, q.k === 2 ? 2 : 1);
       }
       C.globalAlpha = 1;
+      drawEvSky(C, live.def ? live.def.sky : live.vis.sky, t, W, H, 100);
       for (let i = 0; i < 24; i++) { C.fillStyle = VIG[i]; R(i * 3, 0, 3, H); }
+    };
+    // украшения события месяца на площади (справа и посередине — слева меню лаунчера)
+    const EVX = [152, 311], EVY = [151, 160], EVF = [2, 18, 70, 86];
+    const drawEventDeco = (p, t) => {
+      let nm = live.vis.prop;
+      const glow = nm === 'fire' || nm === 'wisp' || nm === 'jack';
+      if (nm === 'fire' && (F(t * 6) & 1)) nm = 'fire2';
+      for (let k = 0; k < 2; k++) {
+        const x = EVX[k], y = EVY[k];
+        if (glow) {
+          C.globalAlpha = (0.55 + 0.45 * Math.max(envDark, 0.3)) * (0.85 + 0.15 * Math.sin(t * 7 + k));
+          C.fillStyle = 'rgba(255,190,100,0.14)'; blob(x, y - 8, 14);
+          C.globalAlpha = 1;
+        }
+        C.fillStyle = 'rgba(0,0,0,0.2)'; R(x - 6, y, 13, 1);
+        drawProp(C, nm, x, y, 1);
+      }
+      // флажки-жетоны события на гирлянде у тира
+      for (let k = 0; k < 4; k++) kitIcon(C, live.ic, s.gx + EVF[k], 90 + (k & 1));
     };
 
     const lantern = (p, lx, t, ph) => {
@@ -1190,6 +1233,9 @@ export default {
     const drawGallery = (t) => {
       const p = s.p;
       cached(ctx, s, 'gal', s.pq, W, H, 0, 0, paintGallery);
+      // гирлянда из жетонов события под навесом
+      for (let k = 0; k < 8; k++) kitIcon(C, live.ic, 26 + k * 38, 23 + (k & 1));
+      const fc = (FAIR_COS[live.cos()] || FAIR_COS[0]).c;
       // фонари тира
       const lit = envDark > 0.25;
       for (let k = 0; k < 2; k++) {
@@ -1211,7 +1257,7 @@ export default {
         if (a.axe) { drawSpr(AXE_SPR[0], a.x - 3, a.y - 2, 999); continue; }
         C.fillStyle = '#3a2414'; R(a.x, a.y, 1, 1);
         C.fillStyle = '#e8e2d4'; R(a.x - 1, a.y - 1, 1, 1); R(a.x + 1, a.y - 1, 1, 1);
-        C.fillStyle = '#d84a4a'; R(a.x - 1, a.y + 1, 1, 1); R(a.x + 1, a.y + 1, 1, 1);
+        C.fillStyle = fc; R(a.x - 1, a.y + 1, 1, 1); R(a.x + 1, a.y + 1, 1, 1);
       }
       C.globalAlpha = GA;
       if (g.stall === 2) drawBranches(t);
@@ -1237,7 +1283,7 @@ export default {
           else if (ay < clipY) {
             C.fillStyle = '#3a2414'; R(ax, ay, 1, 1);
             C.fillStyle = '#e8e2d4'; R(ax - 1, ay - 1, 1, 1); R(ax + 1, ay - 1, 1, 1);
-            C.fillStyle = '#d84a4a'; R(ax - 1, ay + 1, 1, 1); R(ax + 1, ay + 1, 1, 1);
+            C.fillStyle = fc; R(ax - 1, ay + 1, 1, 1); R(ax + 1, ay + 1, 1, 1);
           }
         }
       }
@@ -1249,7 +1295,7 @@ export default {
         const nShow = Math.min(8, g.arrows);
         for (let i = 0; i < nShow; i++) {
           C.fillStyle = '#e8e2d4'; R(17 + i, COUNTER_Y - 15 - (i % 2), 1, 4);
-          C.fillStyle = '#d84a4a'; R(17 + i, COUNTER_Y - 16 - (i % 2), 1, 1);
+          C.fillStyle = fc; R(17 + i, COUNTER_Y - 16 - (i % 2), 1, 1);
         }
       } else if (g.stall === 1) {
         for (let i = 0; i < Math.min(5, g.arrows); i++) drawSpr(AXE_SPR[1], 30 + i * 7, COUNTER_Y - 6, 999);
@@ -1258,7 +1304,7 @@ export default {
         for (const a of apples) {
           if (!a.on) continue;
           const sw = a.t < 0.35 ? (Math.sin(a.t * 40) > 0 ? 1 : 0) : 0;
-          drawSpr(APPLES[a.kind].sp, Math.round(a.x) - 2 + sw, Math.round(a.y) - 2, 999);
+          drawSpr(APPLES[a.kind].sp, Math.round(a.x) - (a.kind === 4 ? 3 : 2) + sw, Math.round(a.y) - (a.kind === 4 ? 3 : 2), 999);
           if (a.kind === 3 && Math.sin(t * 20 + a.x) > 0) { C.fillStyle = '#2a2a2a'; R(a.x + 3, a.y - 5, 1, 1); }
         }
         const bx = Math.round(g.bx), by = BASKET_Y;
@@ -1295,7 +1341,7 @@ export default {
         const L = 6 * (1 - e * 0.6);
         C.fillStyle = '#e8e2d4';
         for (let k = 0; k < 4; k++) R(x - f.ux * L * k / 4, y - f.uy * L * k / 4, 1, 1);
-        C.fillStyle = '#d84a4a'; R(x - f.ux * L, y - f.uy * L, 2, 1);
+        C.fillStyle = fc; R(x - f.ux * L, y - f.uy * L, 2, 1);
       }
       // частицы
       for (const q of gparts) {
@@ -1404,6 +1450,7 @@ export default {
       drawIcon(ctx, 'trophy', W - 5 - bw - 9, 13);
       if (prog.variant) return;
       prog.drawDailies(ctx, 32, 156);
+      live.drawHud(ctx, W - 58, 151);
       if (phase === 'play') {
         drawBookBtn(ctx, 4, H - 13, book.open);
         if (prog.author) drawAuthor(ctx, W - 26, 24);
@@ -1421,13 +1468,15 @@ export default {
     };
 
     // ---------- цикл ----------
-    let envDark = 0;
+    let envDark = 0, evSeen = live.id;
     let raf = 0, last = performance.now(), alive = true, tAcc = 0;
     const FOCUS_X = s.gx + s.gw / 2, FOCUS_Y = 118, ZOOM = 2.6;
     const step = (dt) => {
       const m = prog.variant ? 'idle' : api.mode ? api.mode() : 'play';
       prog.updToasts(dt);
       prog.tickDay(dt);
+      live.tick(dt, phase === 'play' && !book.open);
+      if (live.id !== evSeen) { evSeen = live.id; syncEv(); }
       if (phase === 'idle' && prog.toasts.length) prog.toasts.length = 0;
       if (book.open && (phase !== 'play' || m !== 'play')) { book.toggle(false); setCursor(); }
       pt += dt;
@@ -1526,6 +1575,7 @@ export default {
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
+      live.flush();
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
