@@ -317,7 +317,29 @@ function scoresWorker() {
 }
 ipcMain.on('scores-board', (e, b) => { if (scoresWin && e.sender === scoresWin.webContents) { scoresBoard = b || {}; send('scores', scoresBoard); } });
 handle('games:board', async () => { scoresWorker(); return scoresBoard; });
-handle('games:submit', async ({ game, score }) => {
+async function submitBoard(game, score) {
+  const s = store.get();
+  const acc = currentAcc();
+  if (!(score > 0) || s.gameShareScores === false || !acc) return;
+  const p = profile();
+  const w = await scoresWorker();
+  w.webContents.send('scores-cmd', { cmd: 'submit', opts: { game, score, nick: acc.name, badge: p.equip.badge || null, title: p.equip.title || null } });
+}
+// мастерство: опыт копится навсегда, уровень видно у ника и в таблице мастеров
+const levelOf = (xp) => Math.floor(Math.sqrt(Math.max(0, xp) / 120));
+handle('games:xp', async ({ game, amount }) => {
+  const add = Math.max(0, Math.min(5000, Number(amount) || 0));
+  if (!add) return null;
+  const p = profile();
+  const before = levelOf(p.mastery[game] || 0);
+  p.mastery[game] = Math.round((p.mastery[game] || 0) + add);
+  const after = levelOf(p.mastery[game]);
+  setProfile(p);
+  if (after > before) submitBoard('ms_' + game, after).catch(() => {});
+  return { xp: p.mastery[game], level: after, up: after > before };
+});
+handle('games:submit', async ({ game, score, week }) => {
+  if (week) { const prev = (store.get().weekBest || {}); if (!(prev[week] >= score)) { store.set({ weekBest: { [week]: score } }); submitBoard('wk_' + week, score).catch(() => {}); } }
   const s = store.get();
   const best = { ...(s.gameBest || {}) };
   const isBest = !(best[game] >= score);
@@ -337,7 +359,7 @@ function nickKey() { const a = currentAcc(); return a ? String(a.name).toLowerCa
 function profile() {
   const all = store.get().gameProfiles || {};
   const p = all[nickKey()] || {};
-  return { games: p.games || {}, rewards: p.rewards || {}, equip: p.equip || {}, equipT: p.equipT || 0 };
+  return { games: p.games || {}, rewards: p.rewards || {}, equip: p.equip || {}, equipT: p.equipT || 0, mastery: p.mastery || {} };
 }
 function setProfile(p) {
   const all = { ...(store.get().gameProfiles || {}) };
@@ -378,6 +400,8 @@ ipcMain.on('progress-remote', (e, { key, doc }) => {
   for (const [g, v] of Object.entries(p.games)) if (!doc.games || !doc.games[g] || doc.games[g].t < v.t) localNewer = true;
   for (const [id, t] of Object.entries(doc.rewards || {})) if (!p.rewards[id]) { p.rewards[id] = t; changed = true; }
   for (const id of Object.keys(p.rewards)) if (!doc.rewards || !doc.rewards[id]) localNewer = true;
+  for (const [g, x] of Object.entries(doc.mastery || {})) { const v = Number(x) || 0; if (v > (p.mastery[g] || 0)) { p.mastery[g] = v; changed = true; } }
+  for (const [g, x] of Object.entries(p.mastery)) if (x > ((doc.mastery || {})[g] || 0)) localNewer = true;
   if ((doc.equipT || 0) > p.equipT && doc.equip) { p.equip = doc.equip; p.equipT = doc.equipT; changed = true; }
   else if (p.equipT > (doc.equipT || 0)) localNewer = true;
   if (changed) { const all = { ...(store.get().gameProfiles || {}) }; all[nickKey()] = p; store.set({ gameProfiles: all }); send('profile', p); }

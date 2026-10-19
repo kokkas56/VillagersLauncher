@@ -5,6 +5,7 @@
 export const AUTHOR_NICK = 'kokkas'; // аккаунт автора на Ely.by (скин «Kokk 2.0», ely.by/skins/s4749321) — рисуется в финале «Побега»
 
 export const GAME_NAMES = {
+  events: 'События месяца', weekly: 'Турнир недели',
   prison: 'Побег', fishing: 'Рыбалка', defense: 'Защита деревни', runner: 'Побег от зомби', fair: 'Ярмарочный тир', mine: 'Вагонетка'
 };
 
@@ -47,7 +48,23 @@ export const REWARDS = [
   { id: 'mine_theme_gems', game: 'mine', kind: 'theme', name: 'Тема «Самоцветы»', theme: 'gems', how: 'Собери все руды и камни в альбом' },
   { id: 'mine_music_deep', game: 'mine', kind: 'music', name: 'Трек «Глубина»', track: 'deep', how: 'Доберись до лавовых глубин' },
   { id: 'mine_title_king', game: 'mine', kind: 'title', name: 'Король руды', how: 'Добудь руды на 100 000' },
-  { id: 'mine_cape_miner', game: 'mine', kind: 'cape', name: 'Плащ шахтёра', cape: 'miner', how: 'Пройди все глубины до конца' }
+  { id: 'mine_cape_miner', game: 'mine', kind: 'cape', name: 'Плащ шахтёра', cape: 'miner', how: 'Пройди все глубины до конца' },
+  // ---- события месяца: значок за испытание события (в любой из игр) ----
+  { id: 'ev_yule', game: 'events', kind: 'badge', name: 'Святки', icon: 'snow', color: '#cfe8ff', how: 'Испытание января' },
+  { id: 'ev_maslenitsa', game: 'events', kind: 'badge', name: 'Масленица', icon: 'sun', color: '#ffcf5a', how: 'Испытание февраля' },
+  { id: 'ev_thaw', game: 'events', kind: 'badge', name: 'Оттепель', icon: 'drop', color: '#7ad0ff', how: 'Испытание марта' },
+  { id: 'ev_jest', game: 'events', kind: 'badge', name: 'Шутник', icon: 'star', color: '#ff8ad8', how: 'Испытание апреля' },
+  { id: 'ev_bloom', game: 'events', kind: 'badge', name: 'Цветение', icon: 'flower', color: '#ffa0c8', how: 'Испытание мая' },
+  { id: 'ev_kupala', game: 'events', kind: 'badge', name: 'Купала', icon: 'fire', color: '#ff9a3a', how: 'Испытание июня' },
+  { id: 'ev_storm', game: 'events', kind: 'badge', name: 'Гроза', icon: 'bolt', color: '#e8e070', how: 'Испытание июля' },
+  { id: 'ev_starfall', game: 'events', kind: 'badge', name: 'Звездопад', icon: 'star', color: '#c8b0ff', how: 'Испытание августа' },
+  { id: 'ev_harvest', game: 'events', kind: 'badge', name: 'Урожай', icon: 'leaf', color: '#e0b040', how: 'Испытание сентября' },
+  { id: 'ev_pumpkin', game: 'events', kind: 'badge', name: 'Ночь тыкв', icon: 'pumpkin', color: '#ff8a2a', how: 'Испытание октября' },
+  { id: 'ev_fog', game: 'events', kind: 'badge', name: 'Туманы', icon: 'drop', color: '#b8c4c8', how: 'Испытание ноября' },
+  { id: 'ev_newyear', game: 'events', kind: 'badge', name: 'Новый год', icon: 'snow', color: '#7affc0', how: 'Испытание декабря' },
+  // ---- турнир недели ----
+  { id: 'week_champion', game: 'weekly', kind: 'badge', name: 'Чемпион недели', icon: 'crown', color: '#ffd34a', how: 'Займи 1-е место в турнире недели' },
+  { id: 'week_podium', game: 'weekly', kind: 'title', name: 'Призёр турнира', how: 'Займи место в тройке турнира недели' }
 ];
 
 export const rewardById = (id) => REWARDS.find((r) => r.id === id) || null;
@@ -62,7 +79,17 @@ const BADGE_PIX = {
   shield: ['#######', '#OOOOO#', '#O###O#', '#O###O#', '.#O#O#.', '..#O#..', '...#...'],
   boot: ['..###..', '..#O#..', '..#O#..', '..#O#..', '.#OO###', '#OOOOO#', '#######'],
   target: ['.#####.', '#OOOOO#', '#O###O#', '#O#O#O#', '#O###O#', '#OOOOO#', '.#####.'],
-  pick: ['.#####.', '#.....#', '...#...', '...#...', '...#...', '...#...', '...#...']
+  pick: ['.#####.', '#.....#', '...#...', '...#...', '...#...', '...#...', '...#...'],
+  snow: ['#..#..#', '.#.#.#.', '..###..', '#######', '..###..', '.#.#.#.', '#..#..#'],
+  sun: ['#..#..#', '.#####.', '.#OOO#.', '##OOO##', '.#OOO#.', '.#####.', '#..#..#'],
+  drop: ['...#...', '..###..', '.#####.', '.##O##.', '#######', '.#####.', '..###..'],
+  star: ['...#...', '...#...', '#######', '.#####.', '..###..', '.##.##.', '.#...#.'],
+  flower: ['.#.#.#.', '#######', '.##O##.', '#######', '.#.#.#.', '...#...', '..###..'],
+  fire: ['...#...', '..##...', '..###..', '.##O##.', '.#OOO#.', '#OOOOO#', '.#####.'],
+  bolt: ['....##.', '...##..', '..##...', '.#####.', '...##..', '..##...', '.##....'],
+  leaf: ['....###', '..#####', '.###O##', '.##O###', '.#O####', '.O#####', 'O......'],
+  pumpkin: ['...#...', '.#####.', '#O#O#O#', '#######', '#O###O#', '#.OOO.#', '.#####.'],
+  crown: ['.......', '#..#..#', '##.#.##', '#######', '#O#O#O#', '#######', '.......']
 };
 export function badgeSvg(r, size = 14) {
   const pix = BADGE_PIX[r.icon] || BADGE_PIX.target;

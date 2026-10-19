@@ -619,3 +619,5 @@ input[type='range'] { accent-color: var(--emerald); width: 100%; }
 .catalog-img { width: 64px; height: 64px; border-radius: 10px; object-fit: cover; flex: none; }
 .catalog-desc { white-space: pre-wrap; }
 .radmin-info { display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin: 6px 0; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); }
+.fun-week { gap: 6px; }
+.fun-ev { font-size: 11px; color: var(--gold-2); padding-right: 6px; }

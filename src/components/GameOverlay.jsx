@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../lib/app.jsx';
 import { call, on } from '../lib/api.js';
+import { weekInfo } from '../games/events.js';
+import { Badge } from './Badge.jsx';
 
 // Поверх игры-фона во время игры: «◀ Меню», во весь экран, подсказка; после проигрыша — счёт, рекорд и таблица игроков сборки.
 export default function GameOverlay({ game, mode, result, onExit, onRetry }) {
@@ -26,7 +28,10 @@ export default function GameOverlay({ game, mode, result, onExit, onRetry }) {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     else document.documentElement.requestFullscreen().catch(() => {});
   };
-  const top = (board[game.id] || []).slice(0, 8);
+  const wk = weekInfo();
+  const isWeek = wk.game === game.id;
+  const [tab, setTab] = useState(isWeek ? 'week' : 'all');
+  const top = (board[tab === 'week' ? 'wk_' + wk.key : game.id] || []).slice(0, 8);
   const me = account ? account.name : null;
 
   return (
@@ -42,10 +47,13 @@ export default function GameOverlay({ game, mode, result, onExit, onRetry }) {
           <div className="game-score">{result.score}</div>
           <div className="small">{result.isBest ? '★ ' + t('Новый рекорд!') : t('Рекорд') + ': ' + result.best}</div>
           <div className="game-board">
-            <div className="small muted">{t('Лучшие игроки сборки')}</div>
+            <div className="row small">
+              <button className={'btn sm ' + (tab === 'all' ? 'primary' : 'ghost')} onClick={() => setTab('all')}>{t('Рекорды')}</button>
+              {isWeek && <button className={'btn sm ' + (tab === 'week' ? 'primary' : 'ghost')} onClick={() => setTab('week')}>🏆 {t('Турнир недели')} · {wk.daysLeft} {t('дн')}</button>}
+            </div>
             {top.length === 0 && <div className="small muted">{t('Пока пусто — будь первым')}</div>}
             {top.map((r, i) => (
-              <div key={r.nick + i} className={'board-row' + (me && r.nick === me ? ' me' : '')}><span>{i + 1}.</span><span className="grow">{r.nick}</span><b>{r.score}</b></div>
+              <div key={r.nick + i} className={'board-row' + (me && r.nick === me ? ' me' : '')}><span>{i + 1}.</span><span className="grow">{r.nick} <Badge id={r.badge} size={10} /></span><b>{r.score}</b></div>
             ))}
           </div>
           <div className="row">
