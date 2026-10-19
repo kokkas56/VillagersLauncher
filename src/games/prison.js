@@ -104,6 +104,7 @@ export default {
     loadSave();
     checkDay();
     const isFree = () => !variant && D.cur > 10;
+    const homeP = () => (isFree() ? (D.rp || 10) : Math.min(10, D.cur));
     const curNeed = () => (isFree() ? (authorMode ? 30 : FREE_NEED) : authorMode ? authorNeedOf(Math.min(10, D.cur)) : needOf(Math.min(10, D.cur)));
     const toolMul = () => (authorMode ? Math.max(SHOVELS[D.tool].mul, EXPECT_TOOL[Math.min(10, D.cur) - 1]) : SHOVELS[D.tool].mul);
 
@@ -159,7 +160,7 @@ export default {
       KK.on = p === 10 && isFree();
       KK.x = 250; KK.tx = 250; KK.walk = 0; KK.reach = 0; KK.wave = 0;
     };
-    setScene(variant || Math.min(10, D.cur));
+    setScene(variant || homeP());
 
     // ---------- состояние смены ----------
     let time = 0;
@@ -404,6 +405,16 @@ export default {
       sfx('click');
       if (menu) sel = 0;
     };
+    // после свободы: вернуться в пройденную тюрьму (0 — последний зал) — ради заданий дня, альбома и испытаний
+    function goReplay(p) {
+      if (!isFree() || phase !== 'play') return;
+      D.rp = p; D.dug = 0; lastSeg = 0;
+      setScene(homeP());
+      bannerP = sceneP; bannerT = 2.4;
+      menu = false;
+      continueAfterEscape();
+      msg(p ? 'СНОВА В ТЮРЬМЕ ' + p : 'ПОСЛЕДНИЙ ЗАЛ', '#ffd34a');
+    }
     const menuKey = (code) => {
       const left = code === 'ArrowLeft' || code === 'KeyA', right = code === 'ArrowRight' || code === 'KeyD';
       if (page === 1 && left && sel % 10 > 0) sel--;
@@ -413,6 +424,7 @@ export default {
       else if (code === 'ArrowUp' || code === 'KeyW') { sel = page === 1 ? (sel + ARTEFACTS.length - 10) % ARTEFACTS.length : Math.max(0, sel - 1); }
       else if (code === 'ArrowDown' || code === 'KeyS') { sel = page === 1 ? (sel + 10) % ARTEFACTS.length : Math.min(page === 0 ? shopRows() - 1 : 2, sel + 1); }
       else if (code === 'Enter' || code === 'Space') { if (page === 0) buy(sel); }
+      else if (page === 2 && isFree() && /^Digit[0-9]$/.test(code)) { const n = Number(code.slice(5)); goReplay(n === 0 ? 0 : n); }
     };
     const onKeyDown = (e) => {
       if (phase !== 'play') return; // в покое и в сценках клавиши принадлежат лаунчеру
@@ -477,6 +489,9 @@ export default {
       } else if (page === 1) {
         const c = Math.floor((x - (MB.x + 10)) / 22), r = Math.floor((y - (MB.y + 26)) / 22);
         if (c >= 0 && c < 10 && r >= 0 && r < 3) sel = r * 10 + c;
+      } else if (page === 2 && isFree() && y >= MB.y + 82 && y < MB.y + 100) {
+        const i = Math.floor((x - (MB.x + 8)) / 22) + 1;
+        if (i >= 1 && i <= 10) goReplay(i === 10 ? 0 : i);
       }
     }
 
@@ -724,7 +739,7 @@ export default {
       const wasAuthor = authorMode;
       loadSave();
       checkDay();
-      const want = Math.min(10, D.cur);
+      const want = homeP();
       if (want !== sceneP || wasAuthor !== authorMode) setScene(want);
       setPhase('intro');
       best = readBest();
@@ -819,7 +834,9 @@ export default {
       lastSeg = 0;
       if (escWasFree) {
         D.st.free++; D.fav += 100; runFav += 100;
-        escToP = 10;
+        const rp = D.rp || 10;
+        escToP = rp >= 10 ? 10 : rp + 1;
+        D.rp = rp >= 10 ? 0 : escToP;
       } else {
         // недостающие артефакты этой тюрьмы находятся в ползке
         for (let i = 0; i < ARTEFACTS.length; i++) if (ARTEFACTS[i].p === from && !hasArt(D.alb, i)) { D.alb = addArt(D.alb, i); }
@@ -869,9 +886,22 @@ export default {
         pr.pose = pt > ESC_CRAWL + 0.8 && pt < ESC_CRAWL + 1.4 ? 'front' : 'front';
         pr.wink = pt > ESC_CRAWL + 1 && pt < ESC_CRAWL + 1.4 ? 1 : 0;
         for (let i = 0; i < guards.length; i++) updGuardIdle(guards[i], dt, i);
-        if (pt >= ESC_END) finish(true, 'escape');
+        if (pt >= ESC_END) continueAfterEscape();
       }
     };
+    function continueAfterEscape() {
+      setPhase('play');
+      time = 0; // в новой тюрьме — новая смена
+      seenT = 0; heat = 0; faintT = 0; stunT = 0; quakeWarn = 0; quakeT = 30 + rand() * 25; caughtLoss = 0;
+      sw = 0; tileOpen = 0; menu = false; digging = false; digHoldKey = false; digHoldPtr = false;
+      pr.x = SMITH_X; pr.tx = SMITH_X; pr.pose = 'forge'; pr.wink = 0;
+      for (const g of guards) { g.state = g.post ? 'stand' : 'walk'; g.dir = g.x < 160 ? 1 : -1; g.t = 0; g.len = 2; if (g.post) g.x = g.home; }
+      for (const b of beasts) { b.warn = 0; if (b.st === 'chew') b.st = 'idle'; }
+      lastSeg = 0;
+      newOrder();
+      msg('ПРОДОЛЖАЙ!', '#7dffaa');
+      persist();
+    }
 
     // ---------- финал: Кокк вручает плащ ----------
     let finLine = -1;
@@ -894,7 +924,7 @@ export default {
       KK.reach = pt > FINALE_AT[2] && pt < FINALE_AT[3] + 0.4 ? -1 : 0;
       KK.wave = pt > FINALE_AT[0] && pt < FINALE_AT[0] + 1.4 ? 1 : 0;
       if (pt > FINALE_AT[3] && !finaleGiven) { giveFinal(); sfx('win'); spark(SMITH_X, FLOOR - 30, 16, '#ffd34a', 80); }
-      if (pt >= FIN_END) finish(true, 'escape');
+      if (pt >= FIN_END) continueAfterEscape();
     };
 
     // ---------- автор: пропуск уровней ----------
@@ -1532,7 +1562,8 @@ export default {
           if (done) drawIco(ctx, 'check', x + 6, y + 10, 1);
           else if (REWARD_AT[i]) { ctx.fillStyle = '#ffd34a'; ctx.fillRect(x + 8, y + 12, 2, 2); }
         }
-        drawLabel(ctx, isFree() ? 'ТЫ СВОБОДЕН · ИСПЫТАНИЙ ' + D.st.free : PRISONS[Math.min(10, D.cur)].name.toUpperCase(), x0, MB.y + 106, '#ffd34a', 1);
+        if (isFree()) { const cx = x0 + ((D.rp || 10) - 1) * 22; ctx.fillStyle = '#ffd34a'; ctx.fillRect(cx, MB.y + 81, 18, 1); ctx.fillRect(cx, MB.y + 100, 18, 1); }
+        drawLabel(ctx, isFree() ? 'СВОБОДЕН · ИСПЫТАНИЙ ' + D.st.free + ' · КЛИК ПО ТЮРЬМЕ — ВЕРНУТЬСЯ' : PRISONS[Math.min(10, D.cur)].name.toUpperCase(), x0, MB.y + 106, '#ffd34a', 1);
         drawLabel(ctx, 'ПОБЕГОВ ' + D.st.esc + ' · ПОЙМАН ' + D.st.cg, x0, MB.y + 116, '#9a8a78', 1);
       }
       drawLabel(ctx, '< > СТРАНИЦЫ · ENTER КУПИТЬ · TAB ЗАКРЫТЬ', MB.x + 8, MB.y + MB.h - 9, '#7a6a5a', 1);

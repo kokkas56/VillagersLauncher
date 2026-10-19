@@ -7,6 +7,7 @@ export const SAVE_V = 1;
 export function freshData() {
   return {
     cur: 1, // 1..10 — тюрьма, где сидит игрок; 11 — свободен
+    rp: 0, // после свободы: в какую пройденную тюрьму вернулся (0 — последний зал)
     dug: 0, // рабочих секунд в текущем подкопе
     fav: 0, // милость (валюта)
     tool: 0, // индекс лопаты
@@ -28,6 +29,7 @@ export function cleanData(o) {
   const f = freshData();
   if (!o || typeof o !== 'object') return f;
   f.cur = num(o.cur, 1, 11, 1);
+  f.rp = num(o.rp, 0, 10, 0);
   f.dug = Math.max(0, Number(o.dug) || 0);
   f.fav = num(o.fav, 0, 1e9, 0);
   f.tool = num(o.tool, 0, SHOVELS.length - 1, 0);
