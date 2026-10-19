@@ -87,6 +87,7 @@ app.whenReady().then(() => {
   });
   createWindow();
   setupUpdater();
+  if (store.get().relayHelp) tunnel(); // ретранслятор включится, как только окно туннеля будет готово
   // автор: ранние выпуски, чья дата наступила, открываются для всех сами
   setTimeout(async () => {
     if (busy) return;
@@ -125,7 +126,13 @@ handle('sys:info', () => ({
   defaults: store.DEFAULTS
 }));
 handle('settings:get', () => store.get());
-handle('settings:set', (patch) => store.set(patch || {}));
+handle('settings:set', (patch) => {
+  const before = store.get();
+  const after = store.set(patch || {});
+  // ретранслятор перезапускается при смене своих настроек (и сетевых, которыми пользуется)
+  if (RELAY_KEYS.some((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k])) && (before.relayHelp || after.relayHelp)) relaySync().catch(() => {});
+  return after;
+});
 
 // аккаунты
 handle('accounts:list', () => ({ accounts: auth.publicAccounts(), selected: store.get().selectedAccount }));
@@ -410,16 +417,21 @@ function tunnel() {
     webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false, backgroundThrottling: false }
   });
   tunnelReady = new Promise((resolve) => ipcMain.once('tunnel-ready', () => resolve(tunnelWin)));
+  // ретранслятор для друзей живёт в том же окне — включаем его сразу, как окно готово (и после пересоздания окна)
+  tunnelReady.then((w) => { const o = relayOpts(); if (o.on && w && !w.isDestroyed()) w.webContents.send('tunnel-cmd', { cmd: 'relay', opts: o }); });
   tunnelWin.loadFile(path.join(__dirname, 'tunnel', 'worker.html'));
   tunnelWin.on('closed', () => { tunnelWin = null; tunnelState = { active: false }; send('tunnel-state', tunnelState); });
   return tunnelReady;
 }
 ipcMain.on('tunnel-state', (e, st) => { if (tunnelWin && e.sender === tunnelWin.webContents) { tunnelState = st; send('tunnel-state', st); } });
+function iceServers(s) {
+  const stun = [...new Set([...(s.stunServers || []), ...store.DEFAULTS.stunServers])]; // новые серверы из обновлений лаунчера тоже
+  return [{ urls: stun }, ...((s.turnServers || []).filter((t) => t && t.urls))];
+}
 function tunnelOpts(data) {
   const s = store.get();
   const acc = auth.publicAccounts().find((a) => a.id === s.selectedAccount);
-  const stun = [...new Set([...(s.stunServers || []), ...store.DEFAULTS.stunServers])]; // новые серверы из обновлений лаунчера тоже
-  const ice = [{ urls: stun }, ...((s.turnServers || []).filter((t) => t && t.urls))];
+  const ice = iceServers(s);
   return {
     name: String(data.name || '').trim(), password: String(data.password || ''), mode: data.mode === 'server' ? 'server' : 'world',
     nick: acc ? acc.name : 'Игрок', brokers: s.tunnelBrokers, iceServers: ice, gameDir: s.gameDir,
@@ -427,6 +439,18 @@ function tunnelOpts(data) {
   };
 }
 async function tunnelCmd(cmd, opts) { const w = await tunnel(); w.webContents.send('tunnel-cmd', { cmd, opts }); return true; }
+// «Помогать друзьям соединяться»: этот лаунчер — ретранслятор для чужих пар, которые не пробились напрямую.
+// Работает и без своей комнаты; трафик зашифрован, ретранслятор не знает ни комнат, ни паролей.
+function relayOpts() {
+  const s = store.get();
+  return { on: !!s.relayHelp, brokers: s.tunnelBrokers, iceServers: iceServers(s), maxKbps: Math.max(64, Number(s.relayMaxKbps) || 4000) };
+}
+const RELAY_KEYS = ['relayHelp', 'relayMaxKbps', 'tunnelBrokers', 'stunServers', 'turnServers'];
+function relaySync() {
+  const o = relayOpts();
+  if (!o.on && !tunnelWin) return Promise.resolve(true); // выключен и окна нет — нечего выключать
+  return tunnelCmd('relay', o);
+}
 handle('net:state', () => tunnelState);
 // сохранённые комнаты: выключить — комната остаётся в списке; удалить — пропадает (пароль хранится зашифрованным)
 function roomKey(role, name) { return role + ':' + String(name).trim().toLowerCase(); }
@@ -617,7 +641,7 @@ app.on('before-quit', (e) => {
   if (server.running() || tunnelWin) {
     e.preventDefault();
     quitting = true;
-    Promise.all([server.stop(), tunnelWin ? tunnelCmd('leave').then(() => new Promise((r) => setTimeout(r, 700))) : null])
+    Promise.all([server.stop(), tunnelWin ? tunnelCmd('shutdown').then(() => new Promise((r) => setTimeout(r, 700))) : null])
       .finally(() => { if (tunnelWin && !tunnelWin.isDestroyed()) tunnelWin.destroy(); app.quit(); });
   }
 });

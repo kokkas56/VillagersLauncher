@@ -345,6 +345,33 @@ function JoinByKey({ t, toast, settings, saveSettings, account, openAccounts }) 
   );
 }
 
+// «Помогать друзьям соединяться»: лаунчер становится ретранслятором для игроков, которые не пробились друг к другу
+function RelayHelp({ st, t, settings, saveSettings }) {
+  const r = st.relay || { on: false };
+  const on = !!settings.relayHelp;
+  return (
+    <div className="relay-help">
+      <label className="check-row">
+        <input type="checkbox" checked={on} onChange={(e) => saveSettings({ relayHelp: e.target.checked })} />
+        <span>{t('Помогать друзьям соединяться (ретранслятор)')}</span>
+      </label>
+      <small className="muted">{t('Если двое не могут соединиться напрямую, их игра пойдёт через твой лаунчер. Тратит немного твоего интернета и только тогда, когда кто-то не соединяется напрямую. Всё зашифровано: ни чужих комнат, ни паролей, ни самой игры ретранслятор не видит. Работает, пока лаунчер открыт.')}</small>
+      {on && (
+        <p className="muted small">
+          {r.on
+            ? <>{t('Сейчас помогаешь')}: <b>{r.sessions || 0}</b>{r.cap ? ` / ${r.cap}` : ''}{r.bytes > 0 ? ` · ${t('передано')} ${fmt(r.bytes)}` : ''}{r.served > 0 ? ` · ${t('пар за сеанс')}: ${r.served}` : ''}</>
+            : t('Включаю ретранслятор…')}
+        </p>
+      )}
+      {st.relays != null && <p className="muted small">{t('Ретрансляторов в сети (кроме тебя)')}: <b>{st.relays}</b></p>}
+      {on && (
+        <label className="small">{t('Лимит скорости, кбит/с')} <input className="input num" type="number" min="64" step="500" defaultValue={settings.relayMaxKbps || 4000}
+          onBlur={(e) => { const v = Math.max(64, Number(e.target.value) || 4000); if (v !== settings.relayMaxKbps) saveSettings({ relayMaxKbps: v }); }} /></label>
+      )}
+    </div>
+  );
+}
+
 export default function Network({ openAccounts }) {
   const { t, toast, settings, saveSettings, account, progress } = useApp();
   const [st, setSt] = useState({ active: false });
@@ -426,6 +453,7 @@ export default function Network({ openAccounts }) {
           )}
 
           <Section title={t('Если не соединяется')} icon="gear">
+            <RelayHelp st={st} t={t} settings={settings} saveSettings={saveSettings} />
             <p className="muted small">{t('Обычно связь идёт напрямую. Если у кого-то очень строгий интернет (мобильный, общежитие), можно добавить TURN-сервер — по одному в строке: адрес логин пароль.')}</p>
             <textarea className="input mono" rows={2} defaultValue={turnText} placeholder="turn:example.com:3478 user pass"
               onBlur={(e) => saveSettings({ turnServers: e.target.value.split('\n').map((l) => l.trim().split(/\s+/)).filter((p) => p[0]).map(([urls, username, credential]) => ({ urls, username, credential })) })} />

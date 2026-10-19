@@ -83,6 +83,9 @@ const DEFAULTS = {
     'stun:stun.sipnet.ru:3478', 'stun:stun.nextcloud.com:443', 'stun:stun.voipgate.com:3478', 'stun:stun.ekiga.net:3478', 'stun:stun.stunprotocol.org:3478'],
   turnServers: [], // {urls, username, credential} — если напрямую не соединяется
   tunnelLocalPort: 25565,
+  // Ретранслятор для друзей (по желанию: тратит часть исходящего интернета, только когда кто-то не соединяется напрямую)
+  relayHelp: false,
+  relayMaxKbps: 4000,
   // Сервер сборки в лаунчере
   serverPort: 25565,
   serverMemoryMb: 4096,
