@@ -90,6 +90,7 @@ function EarlyAccess({ t, toast, refreshPack }) {
   const [ym, setYm] = useState(new Date().toISOString().slice(0, 7));
   const [imp, setImp] = useState('');
   const [sure, setSure] = useState(false);
+  const [delSure, setDelSure] = useState(null);
   const err = (e) => toast(e.message, 'error', 9000);
   const copy = (code, what) => { if (!code) return; navigator.clipboard.writeText(code); toast(what + ' ' + t('скопирован'), 'ok'); };
   const [loadErr, setLoadErr] = useState(null);
@@ -151,6 +152,9 @@ function EarlyAccess({ t, toast, refreshPack }) {
                 <button className="btn sm ghost" title={t('Код этой версии (разовый донат)')} onClick={async () => copy(await call('early:versionCode', r.tag), t('Код версии'))}><Icon name="copy" size={12} /> {t('код версии')}</button>
                 <input className="input sm" type="date" value={r.freeAt || ''} title={t('Когда открыть всем')} onChange={async (e) => { try { await call('early:freeAt', { tag: r.tag, freeAt: e.target.value || null }); load(); } catch (er) { err(er); } }} />
                 <button className="btn sm" onClick={async () => { try { await call('early:open', r.tag); toast(t('Выпуск открыт для всех') + ' #' + r.version, 'ok'); load(); refreshPack(); } catch (e) { err(e); } }}>{t('Открыть всем')}</button>
+                {delSure === r.tag
+                  ? <button className="btn sm danger" onClick={async () => { setDelSure(null); try { await call('early:delete', r.tag); toast(t('Ранний выпуск удалён') + ' #' + r.version, 'ok'); load(); refreshPack(); } catch (e) { err(e); } }}>{t('Точно удалить?')}</button>
+                  : <button className="btn sm danger" title={t('Отменить ранний выпуск (удалить)')} onClick={() => { setDelSure(r.tag); setTimeout(() => setDelSure(null), 4000); }}><Icon name="trash" size={12} /></button>}
               </>
             )}
           </div>
@@ -171,6 +175,9 @@ export default function Author() {
   const [publishing, setPublishing] = useState(false);
   const [noNews, setNoNews] = useState(false);
   const [earlyOn, setEarlyOn] = useState(false);
+  const [earlyTarget, setEarlyTarget] = useState('');
+  const [earlyOpen, setEarlyOpen] = useState([]);
+  useEffect(() => { if (earlyOn) call('early:authorReleases').then((l) => setEarlyOpen((l || []).filter((r) => !r.hidden).sort((a, b) => b.version - a.version))).catch(() => {}); }, [earlyOn]);
   const [freeAt, setFreeAt] = useState(new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10));
   const [news, setNews] = useState([]);
   const [releases, setReleases] = useState([]);
@@ -213,7 +220,7 @@ export default function Author() {
     if (noNews && !n && !optChanged) { toast(t('Нечего заливать: изменений нет, а новость выключена'), 'warn'); return; }
     setPublishing(true);
     try {
-      const r = await call('pack:publish', { title: title.trim(), text: text.trim(), noNews, early: earlyOn, freeAt: earlyOn ? freeAt : null });
+      const r = await call('pack:publish', { title: title.trim(), text: text.trim(), noNews, early: earlyOn, freeAt: earlyOn ? freeAt : null, replaceTag: earlyOn && earlyTarget ? earlyTarget : null });
       if (r.newsWarn) toast(r.newsWarn, 'warn', 10000);
       toast(`${t('Сборка')} #${r.version} ${t('залита!')} ${t('Загружено файлов')}: ${r.uploaded}, ${t('с Modrinth')}: ${r.fromModrinth}`, 'ok', 9000);
       setTitle(''); setText('');
@@ -264,6 +271,15 @@ export default function Author() {
               <div className="form">
                 <label className="check"><input type="checkbox" checked={noNews} onChange={(e) => setNoNews(e.target.checked)} /> {t('Без новости (тихое обновление)')}</label>
                 <label className="check"><input type="checkbox" checked={earlyOn} onChange={(e) => setEarlyOn(e.target.checked)} /> {t('Ранний доступ (сначала только для поддержавших)')}</label>
+                {earlyOn && earlyOpen.length > 0 && (
+                  <label>{t('Куда')}
+                    <select className="input" value={earlyTarget} onChange={(e) => setEarlyTarget(e.target.value)}>
+                      <option value="">{t('Новый ранний выпуск')}</option>
+                      {earlyOpen.map((r) => <option key={r.tag} value={r.tag}>{t('Дополнить ранний')} #{r.version}{r.title ? ' — ' + r.title : ''}</option>)}
+                    </select>
+                  </label>
+                )}
+                {earlyOn && earlyTarget && <small className="muted">{t('Изменения добавятся в этот же выпуск: тот же номер, те же коды. У поддержавших он просто обновится.')}</small>}
                 {earlyOn && <label>{t('Открыть всем')}<input className="input" type="date" value={freeAt} onChange={(e) => setFreeAt(e.target.value)} /></label>}
                 <label>{t('Заголовок')}<input className="input" placeholder={noNews ? t('Необязательно — увидишь только ты') : t('Например: Жители строят теплицы')} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
                 {!noNews && <label>{t('Что нового (увидят все в новостях)')}<textarea className="input" rows={6} value={text} onChange={(e) => setText(e.target.value)} placeholder={t('Коротко опиши изменения…')} /></label>}

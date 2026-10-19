@@ -292,7 +292,7 @@ async function modrinthLookup(hashes) {
   }
 }
 
-async function publish({ title, text, noNews, early: isEarly, freeAt }, progress) {
+async function publish({ title, text, noNews, early: isEarly, freeAt, replaceTag }, progress) {
   title = (title || '').trim() || 'Обновление';
   const s = store.get();
   const token = store.getSecret('githubToken');
@@ -314,13 +314,22 @@ async function publish({ title, text, noNews, early: isEarly, freeAt }, progress
   const prev = new Map(((prevManifest && prevManifest.files) || []).map((f) => [f.path, f]));
   let releases = [];
   try { releases = await listReleases(); } catch (_) {}
-  const version = Math.max(0, (prevManifest && prevManifest.version) || 0, ...releases.map((r) => r.version || 0), ...earlyRels.map((r) => r.version || 0)) + 1;
-  const tag = isEarly ? `early-${version}` : `pack-${version}`;
-  const earlyPrep = isEarly ? await early.prepareRelease(tag, version, { title: noNews ? '' : title, freeAt }) : null;
+  // «Дополнить ранний выпуск»: тот же номер, тот же ключ, недостающие файлы дозаливаются, манифест заменяется
+  const replacing = isEarly && replaceTag ? earlyRels.find((r) => r.tag === replaceTag && !r.hidden) : null;
+  if (isEarly && replaceTag && !replacing) throw new Error('Ранний выпуск ' + replaceTag + ' не найден или уже открыт всем');
+  const version = replacing ? replacing.version : Math.max(0, (prevManifest && prevManifest.version) || 0, ...releases.map((r) => r.version || 0), ...earlyRels.map((r) => r.version || 0)) + 1;
+  const tag = replacing ? replacing.tag : isEarly ? `early-${version}` : `pack-${version}`;
+  let earlyPrep = null;
+  if (replacing) {
+    const key = await early.keyFor(tag);
+    if (!key) throw new Error('Нет ключа от ' + tag + ' на этом компьютере');
+    earlyPrep = { key, commit: () => early.updateRelease(tag, { title: noNews ? replacing.title : title, freeAt: freeAt || replacing.freeAt || null }) };
+  } else if (isEarly) earlyPrep = await early.prepareRelease(tag, version, { title: noNews ? '' : title, freeAt });
 
   // что нужно загрузить
   // для всех: файлы, лежащие только в раннем доступе (адрес воркера), заливаем заново — иначе бесплатные их не скачают
-  const need = ch.files.filter((f) => { const p = prev.get(f.path); return !p || p.sha1 !== f.sha1 || !p.url || isEarlyFile(p); });
+  const sameRel = (p) => replacing && p && p.enc === tag;
+  const need = ch.files.filter((f) => { const p = prev.get(f.path); return !p || p.sha1 !== f.sha1 || !p.url || (isEarlyFile(p) && !sameRel(p)); });
   progress({ stage: 'publish', text: 'Ищу моды на Modrinth (их не нужно заливать)…', indeterminate: true });
   const jars = need.filter((f) => f.path.startsWith('mods/') && f.path.endsWith('.jar'));
   const mr = await modrinthLookup(jars.map((f) => f.sha1));
@@ -333,7 +342,7 @@ async function publish({ title, text, noNews, early: isEarly, freeAt }, progress
     const p = prev.get(f.path);
     const entry = { path: f.path, sha1: f.sha1, size: f.size };
     if (optional.has(f.path)) entry.optional = true;
-    if (p && p.sha1 === f.sha1 && p.url && !isEarlyFile(p)) entry.url = p.url;
+    if (p && p.sha1 === f.sha1 && p.url && (!isEarlyFile(p) || sameRel(p))) { entry.url = p.url; if (sameRel(p)) entry.enc = tag; }
     else if (mr[f.sha1]) { entry.url = mr[f.sha1].url; entry.source = 'modrinth'; }
     else {
       let name = safeAssetName(f.sha1, f.path);
@@ -346,9 +355,15 @@ async function publish({ title, text, noNews, early: isEarly, freeAt }, progress
     files.push(entry);
   }
 
-  const changelog = [{ version, date: new Date().toISOString(), title, text,
+  let changelog = [{ version, date: new Date().toISOString(), title, text,
     added: ch.added.map((f) => f.path), changed: ch.changed.map((f) => f.path), removed: ch.removed.map((f) => f.path) },
   ...((prevManifest && prevManifest.changelog) || [])].slice(0, 40);
+  if (replacing && changelog[1] && changelog[1].version === version) {
+    // дополнение: одна запись на выпуск — изменения складываются, текст новый (если написан)
+    const o = changelog[1]; const n = changelog[0];
+    const u = (a, b) => [...new Set([...(a || []), ...(b || [])])];
+    changelog = [{ ...o, title: noNews ? o.title : n.title, text: noNews || !n.text ? o.text : n.text, added: u(o.added, n.added), changed: u(o.changed, n.changed).filter((x) => !(o.added || []).includes(x)), removed: u(o.removed, n.removed) }, ...changelog.slice(2)];
+  }
 
   const manifest = {
     schema: SCHEMA,
@@ -374,7 +389,8 @@ async function publish({ title, text, noNews, early: isEarly, freeAt }, progress
     const all = await gh('GET', `/repos/${R}/releases?per_page=50`, token);
     for (const r of all) if (r.draft) await gh('DELETE', `/repos/${R}/releases/${r.id}`, token).catch(() => {});
   } catch (_) {}
-  const rel = await gh('POST', `/repos/${R}/releases`, token, { tag_name: tag, name: (isEarly ? '★ ' : '') + (noNews ? `#${version}` : `#${version} ${title}`), body: isEarly ? 'Ранний доступ (файлы зашифрованы).' : body, draft: true, prerelease: !!isEarly });
+  const rel = replacing ? await gh('GET', `/repos/${R}/releases/tags/${tag}`, token)
+    : await gh('POST', `/repos/${R}/releases`, token, { tag_name: tag, name: (isEarly ? '★ ' : '') + (noNews ? `#${version}` : `#${version} ${title}`), body: isEarly ? 'Ранний доступ (файлы зашифрованы).' : body, draft: true, prerelease: !!isEarly });
   try {
     const total = uploads.reduce((a, u) => a + u.size, 0) || 1;
     let done = 0;
@@ -409,6 +425,8 @@ async function publish({ title, text, noNews, early: isEarly, freeAt }, progress
     await Promise.all(Array.from({ length: 8 }, worker));
     const mbuf = Buffer.from(JSON.stringify(manifest));
     if (isEarly) {
+      const oldM = (rel.assets || []).find((a) => a.name === 'manifest.enc');
+      if (oldM) await gh('DELETE', `/repos/${R}/releases/assets/${oldM.id}`, token);
       await gh('POST', `https://uploads.github.com/repos/${R}/releases/${rel.id}/assets?name=manifest.enc`, token, early.encrypt(earlyPrep.key, mbuf),
         { 'Content-Type': 'application/octet-stream' });
       await earlyPrep.commit();
@@ -419,7 +437,7 @@ async function publish({ title, text, noNews, early: isEarly, freeAt }, progress
       await gh('PATCH', `/repos/${R}/releases/${rel.id}`, token, { draft: false, make_latest: 'true' });
     }
   } catch (e) {
-    await gh('DELETE', `/repos/${R}/releases/${rel.id}`, token).catch(() => {});
+    if (!replacing) await gh('DELETE', `/repos/${R}/releases/${rel.id}`, token).catch(() => {});
     throw e;
   }
   // ранний выпуск: сайт и лаунчеры узнают, что поддержавшие уже играют в него (без файлов и ссылок)
