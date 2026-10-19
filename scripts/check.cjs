@@ -2,6 +2,7 @@
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+require('./sync-studio.cjs'); // общая проверка сцен Студии → electron/studio-validate.cjs
 const dir = path.join(__dirname, '..', 'electron');
 for (const f of fs.readdirSync(dir).filter((f) => f.endsWith('.cjs'))) {
   execFileSync(process.execPath, ['--check', path.join(dir, f)], { stdio: 'inherit' });

@@ -19,6 +19,7 @@ import Gallery from './pages/Gallery.jsx';
 import Servers from './pages/Servers.jsx';
 import Settings from './pages/Settings.jsx';
 import Author from './pages/Author.jsx';
+import Studio from './pages/Studio.jsx';
 import Accounts from './pages/Accounts.jsx';
 import Donate from './pages/Donate.jsx';
 import Network from './pages/Network.jsx';
@@ -129,7 +130,7 @@ export default function App() {
 
   if (!settings) return <div className="boot"><div className="boot-logo">VillagersLauncher</div></div>;
 
-  const nav = settings.authorMode ? [...NAV.slice(0, 7), { id: 'author', icon: 'crown', label: 'Автор' }, NAV[7]] : NAV;
+  const nav = settings.authorMode ? [...NAV.slice(0, 7), { id: 'author', icon: 'crown', label: 'Автор' }, { id: 'studio', icon: 'film', label: 'Студия' }, NAV[7]] : NAV;
   const go = (p) => { setPage(p); };
   const openEditor = (initial) => setEditor(initial || {});
 
@@ -178,7 +179,7 @@ export default function App() {
               </div>
             </button>
           </aside>
-          <main className="content" key={page}>
+          <main className={'content' + (page === 'studio' ? ' studio-host' : '')} key={page}>
             {page === 'home' && <Home {...pageProps} />}
             {page === 'skins' && <Skins {...pageProps} />}
             {page === 'news' && <News {...pageProps} />}
@@ -188,6 +189,7 @@ export default function App() {
             {page === 'network' && <Network {...pageProps} />}
             {page === 'settings' && <Settings {...pageProps} />}
             {page === 'author' && <Author {...pageProps} />}
+            {page === 'studio' && settings.authorMode && <Studio {...pageProps} />}
           </main>
         </div>
       )}

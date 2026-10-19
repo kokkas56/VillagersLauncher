@@ -51,6 +51,7 @@ const DEFAULTS = {
   // Режим автора
   authorMode: false,
   authorSourceDir: 'C:\\Games\\MINEVILLAGERS',
+  studioPort: 47311, // «Студия»: порт живой связи с игрой (режим разработчика Kokk Story)
   syncDirs: ['mods', 'config', 'defaultconfigs', 'resourcepacks', 'shaderpacks', 'kubejs'],
   strictDirs: ['mods'],
   ignore: [
