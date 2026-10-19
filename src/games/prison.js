@@ -86,7 +86,7 @@ export default {
     let digSnd = 0;
     let seenT = 0;
     // стражник
-    const guard = { x: 290, dir: -1, state: 'walk', t: 0, look: 0 };
+    const guard = { x: 236, dir: 1, state: 'walk', t: 0, look: 0 };
 
     const parts = [];
     for (let i = 0; i < 40; i++) parts.push({ on: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, c: '#fff', g: 1 });
@@ -470,11 +470,19 @@ export default {
       const ex = Math.round(g.x) + g.dir * 4;
       const ey = FLOOR - 22;
       const alarm = seenT > 0 && digging;
-      ctx.fillStyle = alarm ? 'rgba(255,60,50,0.22)' : g.state === 'alert' ? 'rgba(255,90,60,0.14)' : 'rgba(255,220,120,0.11)';
+      ctx.fillStyle = alarm ? 'rgba(255,60,50,0.26)' : g.state === 'alert' ? 'rgba(255,90,60,0.18)' : 'rgba(255,220,120,0.16)';
       for (let d = 0; d < VIS; d += 3) {
         const hh = 3 + Math.round(d * 0.32);
         const x = g.dir > 0 ? ex + d : ex - d - 3;
         ctx.fillRect(x, ey - (hh >> 2), 3, hh);
+      }
+      // пунктирная кромка конуса
+      ctx.fillStyle = alarm ? 'rgba(255,90,80,0.55)' : 'rgba(255,230,150,0.35)';
+      for (let d = 0; d < VIS; d += 6) {
+        const hh = 3 + Math.round(d * 0.32);
+        const x = g.dir > 0 ? ex + d : ex - d - 3;
+        ctx.fillRect(x, ey - (hh >> 2), 3, 1);
+        ctx.fillRect(x, ey - (hh >> 2) + hh - 1, 3, 1);
       }
     };
 

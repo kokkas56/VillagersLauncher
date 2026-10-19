@@ -139,10 +139,10 @@ const ICONS = {
     pal: { a: '#f4ecdc', b: '#2a2420', c: '#ffd34a' },
     rows: ['..ccc..', '.aaaaa.', 'aabbbaa', '.aaaaa.', '..ccc..']
   },
-  up: { pal: { a: '#ffffff' }, rows: ['..a..', '.aaa.', 'aaaaa', '.aaa.', '.aaa.'] },
-  down: { pal: { a: '#ffffff' }, rows: ['.aaa.', '.aaa.', 'aaaaa', '.aaa.', '..a..'] },
-  left: { pal: { a: '#ffffff' }, rows: ['..a..', '.aaaa', 'aaaaa', '.aaaa', '..a..'] },
-  right: { pal: { a: '#ffffff' }, rows: ['..a..', 'aaaa.', 'aaaaa', 'aaaa.', '..a..'] }
+  up: { pal: { a: '#ffffff' }, rows: ['..a..', '.aaa.', 'aaaaa', '..a..', '..a..'] },
+  down: { pal: { a: '#ffffff' }, rows: ['..a..', '..a..', 'aaaaa', '.aaa.', '..a..'] },
+  left: { pal: { a: '#ffffff' }, rows: ['..a..', '.aa..', 'aaaaa', '.aa..', '..a..'] },
+  right: { pal: { a: '#ffffff' }, rows: ['..a..', '..aa.', 'aaaaa', '..aa.', '..a..'] }
 };
 
 const ICON_RUNS = {};
