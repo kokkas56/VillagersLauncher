@@ -6,10 +6,13 @@ const { spawn } = require('child_process');
 const store = require('./store.cjs');
 const netu = require('./net.cjs');
 const java = require('./java.cjs');
+const hosting = require('./hosting.cjs');
 
 let proc = null;
 let state = 'stopped'; // stopped | installing | starting | running | stopping
 let tail = [];
+let players = new Set(); // кто сейчас на сервере (по строкам консоли)
+let lastCrash = null; // причина последнего падения — показываем, пока не запустят снова
 let emit = () => {};
 
 function dir() { return path.join(store.get().gameDir, 'server'); }
@@ -17,12 +20,12 @@ function markerFile() { return path.join(dir(), '.villagerslauncher.json'); }
 function readMarker() { try { return JSON.parse(fs.readFileSync(markerFile(), 'utf8')); } catch (_) { return {}; } }
 function writeMarker(m) { fs.writeFileSync(markerFile(), JSON.stringify(m, null, 2)); }
 
-function setState(s, extra) { state = s; emit('server-state', { state, port: store.get().serverPort || 25565, ...(extra || {}) }); }
+function setState(s, extra) { state = s; emit('server-state', { state, port: store.get().serverPort || 25565, players: [...players], crash: lastCrash, ...(extra || {}) }); }
 function line(l) { tail.push(l); if (tail.length > 600) tail = tail.slice(-500); emit('server-log', [l]); }
 
 function status() {
   const m = readMarker();
-  return { state, installed: !!m.neo, neo: m.neo || null, dir: dir(), port: store.get().serverPort || 25565, eula: !!store.get().serverEulaAccepted, tail: tail.slice(-200) };
+  return { state, installed: !!m.neo, neo: m.neo || null, dir: dir(), port: store.get().serverPort || 25565, eula: !!store.get().serverEulaAccepted, tail: tail.slice(-200), players: [...players], crash: lastCrash };
 }
 
 function excluded(name) {
@@ -108,8 +111,8 @@ function writeProps() {
     'server-port': String(s.serverPort || 25565),
     'online-mode': 'false', // заходят и Ely.by, и офлайн-ники (как в открытом мире NetKokk)
     'enforce-secure-profile': 'false',
-    motd: (s.serverMotd || 'MineVillagers — сервер сборки').replace(/\n/g, ' '),
-    'max-players': String(s.serverMaxPlayers || 10)
+    'enable-rcon': 'false',
+    ...hosting.props()
   };
   let lines = fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split(/\r?\n/) : ['#Minecraft server properties'];
   const seen = new Set();
@@ -127,6 +130,8 @@ async function start(versions, progress) {
   if (proc) throw new Error('Сервер уже запущен');
   if (!store.get().serverEulaAccepted) throw new Error('Сначала прими лицензию Minecraft (EULA) — галочка в разделе сервера');
   tail = [];
+  players = new Set();
+  lastCrash = null;
   const m = await install(versions, progress);
   progress({ stage: 'server', text: 'Переношу моды сборки на сервер…', indeterminate: true });
   const r = syncPack();
@@ -145,6 +150,10 @@ async function start(versions, progress) {
       if (!l) continue;
       line(l);
       if (state === 'starting' && /Done \(\d/.test(l)) setState('running');
+      const j = /\]: (\S+) joined the game/.exec(l);
+      const q = /\]: (\S+) left the game/.exec(l);
+      if (j) { players.add(j[1]); setState(state); }
+      if (q) { players.delete(q[1]); setState(state); }
     }
   };
   proc.stdout.on('data', on);
@@ -153,8 +162,10 @@ async function start(versions, progress) {
   proc.on('close', (code) => {
     proc = null;
     line(`[лаунчер] Сервер остановлен (код ${code})`);
-    const crashed = state !== 'stopping' && code !== 0;
-    setState('stopped', crashed ? { crashed: true, hint: hint() } : {});
+    const crashed = state !== 'stopping' && (code !== 0 || state === 'starting');
+    players = new Set();
+    if (crashed) lastCrash = { at: Date.now(), code, hint: hint(), lines: tail.filter((x) => /ERROR|Exception|Caused by|FATAL|failed|Missing|requires|incompatible/i.test(x)).slice(-12) };
+    setState('stopped', crashed ? { crashed: true, hint: lastCrash.hint } : {});
   });
   return true;
 }
@@ -164,7 +175,12 @@ function hint() {
   const m = /Attempted to load class (net\/minecraft\/client\S*)|invalid dist DEDICATED_SERVER|Mod (\S+) only supports CLIENT/i.exec(t);
   const mod = /mod file \S*?([^/\\\s]+\.jar)/i.exec(t);
   if (m) return 'Похоже, один из модов только для клиента' + (mod ? `: ${mod[1]}` : '') + '. Добавь часть его имени в «Не брать на сервер».';
-  return null;
+  if (/Address already in use|FAILED TO BIND TO PORT/i.test(t)) return 'Порт занят: уже запущен другой сервер или игра. Закрой его или поменяй порт.';
+  if (/OutOfMemoryError|Could not reserve enough space/i.test(t)) return 'Серверу не хватило памяти. Уменьши «Память, МБ» или закрой лишние программы.';
+  if (/Missing or unsupported mandatory dependencies|requires .* or above/i.test(t)) return 'Не хватает мода-зависимости или версия не та — смотри строки ниже.';
+  if (/Failed to load level|level\.dat|corrupt/i.test(t)) return 'Не получилось открыть мир — возможно, он повреждён. Выбери другой мир.';
+  if (/EULA/i.test(t)) return 'Нужно принять лицензию Minecraft (EULA).';
+  return 'Сервер упал при запуске. Ниже — строки с ошибкой; пришли автору файл server/logs/latest.log.';
 }
 
 function command(text) { if (proc && text) proc.stdin.write(String(text).trim() + '\n'); }
@@ -181,5 +197,6 @@ function stop() {
 }
 
 function running() { return !!proc; }
+function playerList() { return [...players]; }
 
-module.exports = { init: (fn) => { emit = fn; }, status, install, start, stop, command, running, dir };
+module.exports = { init: (fn) => { emit = fn; }, status, install, start, stop, command, running, dir, playerList, state: () => state };

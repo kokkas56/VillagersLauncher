@@ -1,5 +1,5 @@
 // VillagersLauncher — главный процесс.
-const { app, BrowserWindow, ipcMain, shell, dialog, protocol, net, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, protocol, net, Menu, Tray, nativeImage: NI, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -19,6 +19,7 @@ const java = require('./java.cjs');
 const extras = require('./extras.cjs');
 
 let win = null;
+let quitting = false;
 let game = null; // { proc, started }
 let busy = false;
 let busyWhat = null; // publish | play | verify
@@ -57,6 +58,16 @@ function createWindow() {
     if (/^https?:\/\//.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
+  // пока работает свой сервер, крестик сворачивает лаунчер в трей (сервер живёт, пока не выключишь его или компьютер)
+  win.on('close', (e) => {
+    if (!quitting && server.running()) {
+      e.preventDefault();
+      win.hide();
+      ensureTray();
+      if (!trayHinted && tray) { trayHinted = true; try { tray.displayBalloon && tray.displayBalloon({ title: 'Сервер работает', content: 'Лаунчер свернулся в трей. Выйти — правой кнопкой по значку.' }); } catch (_) {} }
+    }
+  });
+  win.on('session-end', () => { server.stop(); }); // Windows выключается — сохраняем мир
   win.on('maximize', () => send('win-state', { maximized: true }));
   win.on('unmaximize', () => send('win-state', { maximized: false }));
 }
@@ -482,7 +493,107 @@ handle('net:leave', () => { store.set({ activeRoom: null }); return tunnelWin ? 
 
 // ---------------- сервер сборки ----------------
 const server = require('./server.cjs');
-server.init((ch, data) => send(ch, data));
+const hosting = require('./hosting.cjs');
+server.init((ch, data) => { send(ch, data); if (ch === 'server-state') onServerState(data); });
+
+// ---------- свой сервер: туннель + «в сети» для каталога + трей ----------
+let tray = null;
+let trayHinted = false;
+let presenceTimer = null;
+function trayMenu() {
+  const p = hosting.profile();
+  const st = server.state();
+  return Menu.buildFromTemplate([
+    { label: 'Открыть лаунчер', click: () => { if (win) { win.show(); win.focus(); } } },
+    { type: 'separator' },
+    { label: `${p.name}: ${st === 'running' ? 'работает, игроков ' + server.playerList().length : st}`, enabled: false },
+    { label: 'Остановить сервер', enabled: server.running(), click: () => server.stop() },
+    { type: 'separator' },
+    { label: 'Выход (сервер сохранится и закроется)', click: () => app.quit() }
+  ]);
+}
+function ensureTray() {
+  if (tray) { tray.setContextMenu(trayMenu()); return; }
+  try {
+    const img = NI.createFromPath(path.join(__dirname, '..', 'dist', 'icon.png')).resize({ width: 16, height: 16 });
+    tray = new Tray(img);
+    tray.setToolTip('VillagersLauncher — сервер');
+    tray.on('click', () => { if (win) { win.show(); win.focus(); } });
+    tray.setContextMenu(trayMenu());
+  } catch (_) { tray = null; }
+}
+function presenceInfo(online) {
+  const p = hosting.profile();
+  return online ? { online: true, name: p.name, players: server.playerList().length, max: p.maxPlayers, at: Date.now() } : { online: false, at: Date.now() };
+}
+async function publishPresence(online) {
+  try { const w = await scoresWorker(); w.webContents.send('scores-cmd', { cmd: 'srvPresence', opts: { id: hosting.profile().id, info: presenceInfo(online) } }); } catch (_) {}
+}
+function onServerState(d) {
+  if (tray) tray.setContextMenu(trayMenu());
+  if (d.state === 'running' && !presenceTimer) {
+    // комната туннеля: друзья по ключу заходят прямо на сервер
+    const p = hosting.profile();
+    const o = tunnelOpts({ name: p.room, password: hosting.hostTunnelPassword(), mode: 'server' });
+    store.set({ hostingActive: true });
+    tunnelCmd('host', o).catch(() => {});
+    publishPresence(true);
+    presenceTimer = setInterval(() => publishPresence(true), 30000);
+    ensureTray();
+  } else if (d.state === 'running') publishPresence(true);
+  if (d.state === 'stopped' && (presenceTimer || store.get().hostingActive)) {
+    clearInterval(presenceTimer); presenceTimer = null;
+    store.set({ hostingActive: false });
+    publishPresence(false);
+    if (tunnelWin && tunnelState.active && tunnelState.role === 'host' && tunnelState.mode === 'server') tunnelCmd('leave').catch(() => {});
+    if (tray && win && win.isVisible()) { tray.destroy(); tray = null; }
+    if (win && !win.isVisible()) { tray && tray.destroy(); tray = null; app.quit(); } // сервер закрыли из трея — выходим
+  }
+}
+handle('hosting:get', () => ({ ...hosting.profile(), key: hosting.keyOf(), worlds: hosting.worlds() }));
+handle('hosting:update', (patch) => { hosting.update(patch || {}); if (server.running()) publishPresence(true); return { ...hosting.profile(), key: hosting.keyOf() }; });
+handle('hosting:resetKey', async () => {
+  hosting.resetKey();
+  if (server.running()) { const p = hosting.profile(); await tunnelCmd('host', tunnelOpts({ name: p.room, password: hosting.hostTunnelPassword(), mode: 'server' })); }
+  return { ...hosting.profile(), key: hosting.keyOf() };
+});
+handle('hosting:importWorld', ({ name, overwrite }) => { hosting.importWorld(name, overwrite); return { ...hosting.profile(), worlds: hosting.worlds() }; });
+handle('hosting:newWorld', (name) => { hosting.newWorld(name); return { ...hosting.profile(), worlds: hosting.worlds() }; });
+handle('hosting:parseKey', (key) => { const k = hosting.parseKey(key); return { name: k.name, password: k.password, radmin: k.radmin, id: k.id, key: k.key }; });
+// войти на сервер по ключу: туннель до хозяина → игра заходит на 127.0.0.1
+handle('hosting:join', async ({ key, password }) => {
+  const k = hosting.parseKey(key);
+  if (k.password && !password) throw new Error('У сервера пароль — введи его');
+  if (server.running()) throw new Error('Пока работает твой сервер, туннель занят им. Останови свой сервер, чтобы зайти к другому.');
+  const o = tunnelOpts({ name: k.room, password: hosting.tunnelPassword(k.secret, password || ''), mode: 'server' });
+  await tunnelCmd('join', o);
+  return { ok: true, name: k.name, radmin: k.radmin };
+});
+handle('hosting:leave', () => (tunnelWin ? tunnelCmd('leave') : true));
+// каталог серверов от автора (вкладка «Сервера» у всех) + кто сейчас в сети
+let srvPresence = {};
+ipcMain.on('srv-presence', (e, { id, info }) => {
+  if (!scoresWin || e.sender !== scoresWin.webContents) return;
+  srvPresence[id] = info && typeof info === 'object' ? { online: !!info.online, players: Number(info.players) || 0, max: Number(info.max) || 0, at: Number(info.at) || 0 } : null;
+  send('servers-presence', srvPresence);
+});
+handle('catalog:list', async () => {
+  const c = await pack.readCatalog();
+  const ids = c.servers.map((x) => x.id);
+  try { const w = await scoresWorker(); w.webContents.send('scores-cmd', { cmd: 'srvWatch', opts: { ids } }); } catch (_) {}
+  return { servers: c.servers.filter((x) => !x.hidden), presence: srvPresence };
+});
+handle('catalog:author', async () => (await pack.readCatalog()).servers);
+handle('catalog:save', async (entry) => {
+  const k = hosting.parseKey(entry.key);
+  return (await pack.writeCatalog((c) => {
+    const i = c.servers.findIndex((x) => x.id === k.id);
+    const prev = i >= 0 ? c.servers[i] : {};
+    const next = { ...prev, ...entry, id: k.id, key: k.key, name: entry.name || prev.name || k.name, addedAt: prev.addedAt || Date.now() };
+    if (i >= 0) c.servers[i] = next; else c.servers.push(next);
+  }, 'Сервера: ' + (entry.name || k.name))).servers;
+});
+handle('catalog:remove', async (id) => (await pack.writeCatalog((c) => { c.servers = c.servers.filter((x) => x.id !== id); }, 'Сервера: убран')).servers);
 async function packVersions() {
   const s = store.get();
   let manifest = null;
@@ -493,13 +604,13 @@ async function packVersions() {
   };
 }
 handle('server:status', () => server.status());
+powerMonitor.on('shutdown', () => { if (server.running()) server.stop(); });
 handle('server:start', async () => {
   try { return await server.start(await packVersions(), progress); } finally { progress(null); }
 });
 handle('server:stop', () => server.stop());
 handle('server:command', (text) => server.command(text));
 handle('server:openDir', () => { fs.mkdirSync(server.dir(), { recursive: true }); shell.openPath(server.dir()); return true; });
-let quitting = false;
 app.on('before-quit', (e) => {
   if (quitting) return;
   if (server.running() || tunnelWin) {

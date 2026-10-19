@@ -26,8 +26,8 @@ export const bossFirstWave = (id) => (BOSS_IDS.indexOf(id) + 1) * 10;
 export const waveCount = (w) => Math.min(10, 3 + Math.floor(0.4 * w));
 export const waveWindow = (n) => 5 + 1.2 * n; // секунд на выход всей волны
 export const bossMul = (w) => 1 + 0.1 * (w - 1);
-// ранний «горб» сложности: волны 1–25 крепче (x1.45), к 45-й остаётся x1.1
-const earlyMul = (w) => 1 + 0.45 * Math.min(1, (w - 1) / 14) * Math.max(0.22, 1 - Math.max(0, w - 25) / 20);
+// ранний «горб» сложности: волны 1–25 крепче (x1.38), к 45-й остаётся x1.1
+const earlyMul = (w) => 1 + 0.38 * Math.min(1, (w - 1) / 14) * Math.max(0.22, 1 - Math.max(0, w - 25) / 20);
 export const hpMul = (w) => (1 + 0.18 * (w - 1) + 0.003 * (w - 1) * (w - 1)) * earlyMul(w);
 export const spdMul = (w) => 1 + Math.min(0.5, 0.012 * w);
 export const dmgMul = (w) => 1 + 0.06 * w;

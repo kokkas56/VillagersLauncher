@@ -633,6 +633,47 @@ async function setNews({ version, hidden, deleted, title, text, restoreAll }) {
   return true;
 }
 
+// ---------- каталог серверов: servers.json в репозитории сборки (ведёт автор, видят все) ----------
+function normCatalog(c) {
+  const list = c && Array.isArray(c.servers) ? c.servers : [];
+  return {
+    servers: list.filter((x) => x && x.key && x.id).map((x) => ({
+      id: String(x.id), key: String(x.key), name: String(x.name || 'Сервер').slice(0, 48), desc: String(x.desc || '').slice(0, 1200),
+      image: x.image ? String(x.image).slice(0, 400) : '', tags: Array.isArray(x.tags) ? x.tags.map(String).slice(0, 6) : [],
+      ad: !!x.ad, order: Number(x.order) || 0, owner: x.owner ? String(x.owner).slice(0, 32) : '', hidden: !!x.hidden, addedAt: Number(x.addedAt) || 0
+    }))
+  };
+}
+async function readCatalog() {
+  const token = store.getSecret('githubToken');
+  try {
+    const d = await gh('GET', `/repos/${repo()}/contents/servers.json?raw=1&_=${Date.now()}`, token, null, { Accept: 'application/vnd.github.raw+json', 'Cache-Control': 'no-cache' });
+    return normCatalog(typeof d === 'string' ? JSON.parse(d) : d);
+  } catch (e) {
+    if (e.status === 404) return normCatalog(null);
+    try {
+      const res = await netu.fetchRaw(`https://raw.githubusercontent.com/${repo()}/HEAD/servers.json?_=${Date.now()}`);
+      if (res.status === 404) return normCatalog(null);
+      if (res.ok) return normCatalog(await res.json());
+    } catch (_) {}
+    return normCatalog(null);
+  }
+}
+async function writeCatalog(mutate, message) {
+  const token = needToken();
+  let sha; let cur = null;
+  try {
+    const d = await gh('GET', `/repos/${repo()}/contents/servers.json?_=${Date.now()}`, token, null, { 'Cache-Control': 'no-cache', Accept: 'application/vnd.github+json' });
+    if (d && d.sha) { sha = d.sha; cur = JSON.parse(Buffer.from(d.content || '', 'base64').toString('utf8') || '{}'); }
+  } catch (e) { if (e.status !== 404) throw e; }
+  const c = normCatalog(cur);
+  mutate(c);
+  const out = normCatalog(c);
+  const content = Buffer.from(JSON.stringify(out, null, 2) + '\n').toString('base64');
+  await gh('PUT', `/repos/${repo()}/contents/servers.json`, token, { message: message || 'Сервера', content, ...(sha ? { sha } : {}) });
+  return out;
+}
+
 async function makeLatest(releaseId) {
   const token = store.getSecret('githubToken');
   if (!token) throw new Error('Нужен токен GitHub');
@@ -674,4 +715,4 @@ async function checkToken(token) {
   return { ok: true, repo: r.full_name };
 }
 
-module.exports = { chosenManifest, authorEarlyReleases, openEarly, openDue, setEarlyFreeAt, deleteEarly, readNews, applyNews, authorNews, setNews, latestManifest, manifestByTag, listReleases, sync, localChanges, publish, makeLatest, deleteRelease, hideRelease, renameRelease, checkToken, readState, isAuthorHome, scanSource };
+module.exports = { readCatalog, writeCatalog, chosenManifest, authorEarlyReleases, openEarly, openDue, setEarlyFreeAt, deleteEarly, readNews, applyNews, authorNews, setNews, latestManifest, manifestByTag, listReleases, sync, localChanges, publish, makeLatest, deleteRelease, hideRelease, renameRelease, checkToken, readState, isAuthorHome, scanSource };

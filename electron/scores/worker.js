@@ -6,7 +6,8 @@ const { ipcRenderer } = require('electron');
 const { Mqtt } = require('../tunnel/mqtt.js');
 
 const ROOT = 'villagerskokk/v1/scores/';
-const PROG = 'villagerskokk/v1/progress/'; // прогресс мини-игр и награды игрока (по нику), retain
+const PROG = 'villagerskokk/v1/progress/';
+const SRV = 'villagerskokk/v1/srv/'; // открытые сервера игроков: кто в сети (публично: имя, игроки, без ключа) // прогресс мини-игр и награды игрока (по нику), retain
 const keyOf = (nick) => String(nick).toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 24) || 'player';
 const boards = {}; // game -> { key -> {nick, score, at} }
 let clients = [];
@@ -18,6 +19,10 @@ function push() {
 }
 
 function onMessage(topic, text) {
+  if (topic.startsWith(SRV)) {
+    try { ipcRenderer.send('srv-presence', { id: topic.slice(SRV.length), info: text ? JSON.parse(text) : null }); } catch (_) {}
+    return;
+  }
   if (topic.startsWith(PROG)) {
     try { ipcRenderer.send('progress-remote', { key: topic.slice(PROG.length), doc: JSON.parse(text) }); } catch (_) {}
     return;
@@ -55,6 +60,12 @@ ipcRenderer.on('scores-cmd', (e, { cmd, opts }) => {
   }
   if (cmd === 'watch') { // следить за своим прогрессом (приходит сохранённая копия с брокера)
     for (const c of clients) c.subscribe(PROG + keyOf(opts.nick));
+  }
+  if (cmd === 'srvWatch') { for (const c of clients) for (const id of opts.ids || []) c.subscribe(SRV + String(id).replace(/[^a-f0-9]/g, '')); }
+  if (cmd === 'srvPresence') {
+    const msg = JSON.stringify(opts.info);
+    const topic = SRV + String(opts.id).replace(/[^a-f0-9]/g, '');
+    for (const c of clients) c.publish(topic, msg, true);
   }
   if (cmd === 'saveProgress') {
     const msg = JSON.stringify(opts.doc);
