@@ -32,7 +32,7 @@ const SUBTABS = [
 const lsGet = (k, d) => { try { const v = localStorage.getItem('studio.' + k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem('studio.' + k, JSON.stringify(v)); } catch (_) {} };
 
-export default function Studio() {
+function ClassicStudio() {
   const { toast } = useApp();
   const [boot, setBoot] = useState(null);
   const [bootErr, setBootErr] = useState(null);
@@ -538,6 +538,7 @@ export default function Studio() {
       {/* центр */}
       <section className="st-center">
         <Onboarding open={helpOpen} setOpen={(v) => { setHelpOpen(v); lsSet('help', v); }} hp={hp} />
+        {scene && Array.isArray(scene.objects) && Array.isArray(scene.stage) && <div className="st-help open" style={{ padding: '8px 12px' }}><b>Сцена из окна «Студия Кокка».</b> <span className="muted small">Камера, свет и клонеры здесь — объекты; дорожка камеры собирается из них сама, и правки камеры в этой вкладке перезапишутся. Правь камеру в окне Студии.</span></div>}
         {scene ? (
           <Timeline scene={scene} sel={sel} actorSel={actorSel} issueMap={issueMap} playhead={playhead} setPlayhead={setPlayhead}
             onSelect={(s) => { setSel(s); setActorSel(null); }} onSelectActor={(i) => { setSel(null); setActorSel(i); }}
@@ -583,7 +584,7 @@ export default function Studio() {
   );
 }
 
-function LinkCard({ link, boot, setBoot, hp, toast, setLink }) {
+export function LinkCard({ link, boot, setBoot, hp, toast, setLink }) {
   const [port, setPort] = useState(null);
   const info = link.info || {};
   return (
@@ -671,7 +672,7 @@ function SceneList({ list, cur, open, create, hp, toast, flush, reload, onRename
   );
 }
 
-function ProjectActors({ project, save, hp, toast, sceneIds, addToScene }) {
+export function ProjectActors({ project, save, hp, toast, sceneIds, addToScene }) {
   const [form, setForm] = useState(null); // { orig, name, id, base, who, type }
   const actors = project.actors || [];
   const submit = (e) => {
@@ -744,3 +745,44 @@ function Onboarding({ open, setOpen, hp }) {
   );
 }
 
+
+// Вкладка «Студия» в лаунчере: главное — большая кнопка «Открыть Студию» (отдельное окно в духе Cinema 4D).
+// Старый редактор во вкладке остаётся запасным вариантом.
+export default function Studio(props) {
+  const { toast } = useApp();
+  const [classic, setClassic] = useState(() => lsGet('classic', false));
+  const [busy, setBusy] = useState(false);
+  const open = async () => {
+    setBusy(true);
+    try { await call('studio:openWindow'); } catch (e) { toast(e.message, 'error', 7000); }
+    setTimeout(() => setBusy(false), 1200);
+  };
+  const setC = (v) => { setClassic(v); lsSet('classic', v); };
+  if (classic) {
+    return (
+      <div className="st-classic-wrap">
+        <div className="st-classic-bar">
+          <button className={'btn sm primary' + (busy ? ' busy' : '')} onClick={open}><Icon name="film" size={12} /> Открыть Студию</button>
+          <span className="muted small grow">Старый редактор сцен во вкладке. Не открывай одну и ту же сцену здесь и в окне Студии одновременно.</span>
+          <button className="btn sm ghost" onClick={() => setC(false)}>Скрыть старый редактор</button>
+        </div>
+        <ClassicStudio {...props} />
+      </div>
+    );
+  }
+  return (
+    <div className="st-landing">
+      <div className="st-landing-card card">
+        <div className="st-landing-icon"><Icon name="film" size={34} /></div>
+        <h2>Студия Кокка</h2>
+        <p className="muted">Отдельное окно как в Cinema 4D: в центре — сама игра, вокруг — дерево объектов, атрибуты с ключами ◇, таймлайн с кривыми и «Монтажом» камер, клонеры и эффекторы. Там же — Диалоги, Задания и Переменные (каждый можно вынести в своё окно).</p>
+        <button className={'btn big primary' + (busy ? ' busy' : '')} onClick={open}><Icon name="film" size={18} /> Открыть Студию</button>
+        <ul className="st-landing-list muted small">
+          <li>Запусти игру с режимом разработчика — окно игры встроится прямо в Студию (Windows) или встанет рядом.</li>
+          <li>В игре: F6 — Камера Студии, ПКМ+WASD/QE — полёт, Alt+мышь — вращать/двигать/приближать как в C4D, E/R/T — инструменты.</li>
+        </ul>
+        <button className="btn sm ghost" onClick={() => setC(true)}>Открыть старый редактор здесь</button>
+      </div>
+    </div>
+  );
+}

@@ -377,7 +377,7 @@ module.exports = function setupStudio({ handle, send, store }) {
     });
   }
   function request(msg, type, ms = 3000) {
-    write(msg);
+    if (msg) write(msg); else if (!sock || !connected) throw new Error('Нет связи с игрой');
     return new Promise((resolve, reject) => {
       const w = { type, resolve, reject };
       w.timer = setTimeout(() => { waiters = waiters.filter((x) => x !== w); reject(new Error('Игра не ответила за ' + Math.round(ms / 1000) + ' с')); }, ms);
@@ -385,8 +385,12 @@ module.exports = function setupStudio({ handle, send, store }) {
     });
   }
 
-  handle('studio:link', (on) => {
-    want = !!on;
+  // связь держат открытой окна-«держатели»: старая вкладка «Студия» в лаунчере ('tab') и окно Студии ('window')
+  const holders = new Set();
+  handle('studio:link', (on, who) => {
+    const k = typeof who === 'string' && who ? who : 'tab';
+    if (on) holders.add(k); else holders.delete(k);
+    want = holders.size > 0;
     clearTimeout(timer);
     if (want) connect();
     else if (sock) { const s = sock; sock = null; connected = false; info = null; failWaiters('Студия закрыта'); s.destroy(); }
@@ -420,8 +424,36 @@ module.exports = function setupStudio({ handle, send, store }) {
     return write(msg);
   });
   handle('studio:vars', () => request({ t: 'vars' }, 'vars', 4000));
+  // ---------- фаза 3: редактор в игре, клонеры ----------
+  // шейдеры: игра отвечает {t:'shaders', on, available}
+  handle('studio:shaders', (on) => request({ t: 'shaders', on: !!on }, 'shaders', 4000));
+  // призрачные блоки клонера: { id, placements } (не больше 20000), пустые placements — убрать призрак
+  handle('studio:ghost', ({ id, placements }) => {
+    if (!id) return write({ t: 'ghostClear' });
+    if (!Array.isArray(placements) || !placements.length) return write({ t: 'ghost', id: String(id), placements: [] });
+    return write({ t: 'ghost', id: String(id), placements: placements.slice(0, V.MAX_SEND) });
+  });
+  // «Запечь в мир»: игра ставит блоки по тикам и шлёт {t:'bake', undoId, state:'progress'|'done'|'error', done, total}
+  handle('studio:bake', ({ id, placements, undoId, replace }) => {
+    if (!Array.isArray(placements) || !placements.length) throw new Error('Клонер ничего не создаёт — запекать нечего');
+    const u = String(undoId || ('bake_' + Date.now().toString(36)));
+    const msg = { t: 'bake', id: String(id || ''), placements: placements.slice(0, V.MAX_SEND), undoId: u };
+    if (replace === false) msg.replace = false;
+    write(msg);
+    return { sent: true, undoId: u, count: msg.placements.length };
+  });
+  // «Отменить запекание»: игра отвечает {t:'undo', undoId, state:'progress'|'done'|'error', …}
+  handle('studio:undoBake', (undoId) => {
+    if (!undoId) throw new Error('Нечего отменять');
+    write({ t: 'undo', undoId: String(undoId) });
+    return { sent: true, undoId };
+  });
+  // список запечек, которые игра может отменить: ответ {t:'undoList', items:[…]}
+  handle('studio:undoList', () => request({ t: 'undoList' }, 'undoList', 4000));
   handle('studio:setVar', ({ name, value }) => {
     if (!V.isVarName(name)) throw new Error('Имя переменной — латиница, цифры, _ . -');
     return write({ t: 'setVar', name, value });
   });
+
+  return { info: () => info, status, write: (m) => write(m) };
 };

@@ -26,7 +26,8 @@ let busyWhat = null; // publish | play | verify
 function setBusy(what) { busy = !!what; busyWhat = what || null; send('busy-state', { busy, what: busyWhat }); }
 const DEV = !!process.env.VITE_DEV;
 
-function send(ch, data) { if (win && !win.isDestroyed()) win.webContents.send(ch, data); }
+let studioWins = null; // окно «Студия Кокка» (electron/studio-window.cjs)
+function send(ch, data) { if (win && !win.isDestroyed()) win.webContents.send(ch, data); if (studioWins) studioWins.forward(ch, data); }
 function progress(p) { send('progress', p); }
 
 function createWindow() {
@@ -51,7 +52,7 @@ function createWindow() {
   Menu.setApplicationMenu(null);
   win.once('ready-to-show', () => win.show());
   // скрытое окно туннеля не держит лаунчер открытым
-  win.on('closed', () => { if (!game && !server.running()) app.quit(); });
+  win.on('closed', () => { if (!game && !server.running() && !(studioWins && studioWins.isOpen())) app.quit(); });
   if (DEV) win.loadURL('http://localhost:5173');
   else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -114,12 +115,18 @@ function handle(ch, fn) {
 }
 
 // «Студия» автора: сцены, сборка, живая связь с игрой
-require('./studio.cjs')({ handle, send, store });
+const studioApi = require('./studio.cjs')({ handle, send, store });
+// отдельное окно «Студия Кокка» (как Cinema 4D) и встраивание окна игры в него
+studioWins = require('./studio-window.cjs')({
+  handle, store, dev: DEV, getGame: () => game, linkInfo: () => studioApi.info(), mainWindow: () => win,
+  log: (l) => console.log('[studio] ' + l)
+});
 
-// окно
-ipcMain.on('win:minimize', () => win && win.minimize());
-ipcMain.on('win:maximize', () => win && (win.isMaximized() ? win.unmaximize() : win.maximize()));
-ipcMain.on('win:close', () => win && win.close());
+// окно: кнопки заголовка работают для того окна, из которого нажаты (лаунчер или окна Студии)
+const senderWin = (e) => { const w = BrowserWindow.fromWebContents(e.sender); return w && !w.isDestroyed() ? w : null; };
+ipcMain.on('win:minimize', (e) => { const w = senderWin(e); if (w) w.minimize(); });
+ipcMain.on('win:maximize', (e) => { const w = senderWin(e); if (w) (w.isMaximized() ? w.unmaximize() : w.maximize()); });
+ipcMain.on('win:close', (e) => { const w = senderWin(e); if (w) w.close(); });
 
 handle('sys:info', () => ({
   version: app.getVersion(),
@@ -676,7 +683,14 @@ handle('server:start', async () => {
 handle('server:stop', () => server.stop());
 handle('server:command', (text) => server.command(text));
 handle('server:openDir', () => { fs.mkdirSync(server.dir(), { recursive: true }); shell.openPath(server.dir()); return true; });
+let studioReleased = false;
 app.on('before-quit', (e) => {
+  // окно игры встроено в Студию — сначала вернуть его на место (иначе Windows закроет его вместе со Студией)
+  if (studioWins && !studioReleased) {
+    studioReleased = true;
+    if (studioWins.embedded()) { e.preventDefault(); studioWins.shutdown().finally(() => app.quit()); return; }
+    studioWins.shutdown();
+  }
   if (quitting) return;
   if (server.running() || tunnelWin) {
     e.preventDefault();
@@ -867,6 +881,7 @@ handle('game:play', async (opts = {}) => {
     proc.on('close', (code) => {
       const played = Date.now() - game.started;
       game = null;
+      if (studioWins) studioWins.onGameExit();
       const s2 = store.get();
       store.set({ playTimeMs: (s2.playTimeMs || 0) + played, lastPlayed: Date.now() });
       if (win && !win.isDestroyed()) { win.show(); win.restore(); }

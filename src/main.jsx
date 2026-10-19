@@ -7,9 +7,10 @@ import '@fontsource/manrope/800.css';
 import './styles.css';
 import { AppProvider } from './lib/app.jsx';
 import App from './App.jsx';
+import StudioRoot, { isStudioHash } from './studio/c4d/StudioRoot.jsx';
 
 createRoot(document.getElementById('root')).render(
   <AppProvider>
-    <App />
+    {isStudioHash(window.location.hash) ? <StudioRoot /> : <App />}
   </AppProvider>
 );
