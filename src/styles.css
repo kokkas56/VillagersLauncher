@@ -563,20 +563,20 @@ input[type='range'] { accent-color: var(--emerald); width: 100%; }
 .fun-play { display: flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--line-2); color: var(--gold-2); border-radius: 999px; padding: 6px 12px; font-size: 12px; cursor: pointer; backdrop-filter: blur(6px); }
 .fun-play:hover { border-color: var(--gold); }
 .fun-play.on { border-color: var(--gold); }
+.fun-group.play { padding: 2px 4px 2px 2px; }
+.fun-group.play .fun-play { border: 0; background: none; backdrop-filter: none; }
 .fun-games { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; width: 100%; animation: pageIn 0.25s ease both; }
 .fun-game { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); color: var(--text); font-size: 12px; cursor: pointer; backdrop-filter: blur(6px); }
 .fun-game:hover { border-color: var(--gold); transform: translateY(-1px); }
-/* игра вместо фона: кнопки лаунчера плавно уходят и так же возвращаются */
+/* игра = живой фон: при «Играть» кнопки лаунчера плавно уходят, при выходе так же возвращаются */
 .shell { transition: opacity 0.5s ease; }
 .app.playing .shell { opacity: 0; pointer-events: none; }
-.game-layer { position: fixed; inset: 0; z-index: 1; background: var(--bg); animation: gameIn 0.6s ease both; transition: opacity 0.9s ease; }
-.game-layer.active { z-index: 3; }
-.game-layer.auto { pointer-events: none; }
-.game-layer.fading { opacity: 0; }
-@keyframes gameIn { from { opacity: 0; } to { opacity: 1; } }
-.game-canvas { position: absolute; top: 34px; left: 0; width: 100%; height: calc(100% - 34px); object-fit: fill; image-rendering: pixelated; outline: none; }
-:fullscreen .game-canvas { top: 0; height: 100%; object-fit: contain; background: #000; }
-.game-top { position: absolute; bottom: 12px; left: 14px; right: 14px; display: flex; align-items: center; gap: 12px; pointer-events: none; }
+.village-scene.live-game { top: 34px; height: calc(100% - 34px); object-fit: fill; outline: none; animation: fade 0.6s ease both; }
+.app.playing .village-scene.live-game { z-index: 3; }
+:fullscreen .village-scene.live-game { top: 0; height: 100%; }
+.game-ui { position: fixed; inset: 0; z-index: 4; pointer-events: none; animation: fade 0.5s ease 0.3s both; }
+.game-ui > * { pointer-events: auto; }
+.game-top { position: absolute; bottom: 12px; left: 14px; right: 14px; display: flex; align-items: center; gap: 12px; pointer-events: none !important; }
 .game-top > * { pointer-events: auto; }
 .game-back { background: var(--panel); border: 1px solid var(--line-2); color: var(--text); border-radius: 999px; padding: 6px 12px; font-size: 12px; cursor: pointer; backdrop-filter: blur(6px); }
 .game-back:hover { border-color: var(--gold); }

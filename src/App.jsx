@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useApp } from './lib/app.jsx';
 import { call } from './lib/api.js';
-import SceneHost from './components/SceneHost.jsx';
+import SceneHost, { SCENES, sceneById } from './components/SceneHost.jsx';
 import { useMusic } from './components/FunBar.jsx';
-import GameStage from './components/GamesPanel.jsx';
+import GameOverlay from './components/GameOverlay.jsx';
 import Icon from './components/Icon.jsx';
 import Head from './components/Head.jsx';
 import { TitleBar, Toasts, Modal } from './components/ui.jsx';
@@ -40,9 +40,29 @@ export default function App() {
   const [donateOpen, setDonateOpen] = useState(false);
   const [crash, setCrash] = useState(null);
   const [consoleOpen, setConsoleOpen] = useState(false);
-  const [game, setGame] = useState(null); // { id, key, active }
-  const playing = !!(game && game.active);
-  const exitGame = useCallback(() => setGame((g) => (g ? { ...g, active: false } : g)), []);
+  // фон: деревня или живая игра; «Играть» превращает фон в игру, выход — обратно
+  const [randomScene] = useState(() => SCENES[Math.floor(Math.random() * SCENES.length)].id);
+  const [sceneOverride, setSceneOverride] = useState(null);
+  const [gmode, setGmode] = useState('idle'); // idle | play | over
+  const [gresult, setGresult] = useState(null);
+  const playing = gmode !== 'idle';
+  const bg = settings ? (settings.bgScene || 'random') : 'random';
+  const sceneId = sceneOverride || (bg === 'random' ? randomScene : bg);
+  const scene = sceneById(sceneId);
+  const exitGame = useCallback(() => {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    setGmode('idle'); setGresult(null);
+  }, []);
+  const onGameOver = useCallback(async (score) => {
+    setGmode('over');
+    const sc = Math.max(0, Math.floor(score || 0));
+    let r = { best: sc, isBest: true };
+    try { r = await call('games:submit', { game: scene.id, score: sc }); } catch (_) {}
+    app.refreshSettings && app.refreshSettings();
+    setGresult({ score: sc, ...r });
+  }, [scene.id]);
+  const playGame = (id) => { if (id && id !== sceneId) setSceneOverride(id); setGresult(null); setGmode('play'); };
+  const chooseScene = (id) => { setSceneOverride(null); app.saveSettings({ bgScene: id }); };
   useMusic(settings, gameState.state === 'running' || gameState.state === 'starting');
   const [skin, setSkin] = useState(null);
   const [skinTick, setSkinTick] = useState(0);
@@ -69,13 +89,13 @@ export default function App() {
   const go = (p) => { setPage(p); };
   const openEditor = (initial) => setEditor(initial || {});
 
-  const pageProps = { go, openEditor, openAccounts: () => setAccountsOpen(true), openDonate: () => setDonateOpen(true), playGame: (id) => setGame({ id, key: Date.now(), active: true }), skin, refreshSkin: () => setSkinTick((n) => n + 1) };
+  const pageProps = { go, openEditor, openAccounts: () => setAccountsOpen(true), openDonate: () => setDonateOpen(true), playGame, sceneId, chooseScene, skin, refreshSkin: () => setSkinTick((n) => n + 1) };
 
   return (
     <div className={'app' + (settings.animations === false ? ' no-anim' : '') + (playing ? ' playing' : '')}>
-      <SceneHost sceneId={settings.scene || 'village'} paused={gameState.state === 'running' || !!editor || playing} animations={settings.animations !== false} hourOverride={settings.theme === 'day' ? 12 : settings.theme === 'night' ? 23 : settings.theme === 'evening' ? 19.2 : null} />
+      <SceneHost sceneId={sceneId} mode={editor ? 'idle' : gmode} best={(settings.gameBest || {})[sceneId] || 0} onOver={onGameOver} paused={gameState.state === 'running' || !!editor} animations={settings.animations !== false} hourOverride={settings.theme === 'day' ? 12 : settings.theme === 'night' ? 23 : settings.theme === 'evening' ? 19.2 : null} />
       <TitleBar />
-      {game && <GameStage key={game.key} gameId={game.id} active={game.active} onExit={exitGame} onDone={() => setGame((g) => (g && !g.active ? null : g))} />}
+      {playing && scene.game && !editor && <GameOverlay game={scene.game} mode={gmode} result={gresult} onExit={exitGame} onRetry={() => { setGresult(null); setGmode('play'); }} />}
       {editor ? (
         <SkinEditor initial={editor} onClose={() => setEditor(null)} />
       ) : (

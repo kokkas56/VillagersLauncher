@@ -34,8 +34,7 @@ const DEFAULTS = {
   pinnedPackVersion: null, // null = всегда последняя
   pinnedEarly: false, // закреплённая версия — из раннего доступа
   useEarly: true, // получать ранние версии, если есть доступ
-  scene: 'village', // сцена на фоне: village | zombies | prison | fair | mine
-  sceneAuto: false, // сцены меняются сами
+  bgScene: 'random', // фон: random | village | id мини-игры (каждая игра — ещё и живой фон)
   musicOn: false, // тихая музыка в лаунчере
   musicVol: 0.25,
   sfxVol: 0.35, // звуки мини-игр

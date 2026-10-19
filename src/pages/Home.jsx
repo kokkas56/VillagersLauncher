@@ -7,7 +7,7 @@ import FunBar from '../components/FunBar.jsx';
 import SkinPreview from '../components/SkinPreview.jsx';
 import { defaultSkinDataUrl } from '../editor/templates.js';
 
-export default function Home({ go, openAccounts, openDonate, playGame, skin }) {
+export default function Home({ go, openAccounts, openDonate, playGame, sceneId, chooseScene, skin }) {
   const { t, lang, settings, account, pack, progress, gameState, busyState, toast, refreshAccounts, checkUpdates, checking } = useApp();
   const [servers, setServers] = useState([]);
   const [fallbackSkin] = useState(() => defaultSkinDataUrl());
@@ -121,7 +121,7 @@ export default function Home({ go, openAccounts, openDonate, playGame, skin }) {
           </div>
         </section>
       </div>
-      <FunBar onPlay={playGame} />
+      <FunBar sceneId={sceneId} onScene={chooseScene} onPlay={playGame} />
     </div>
   );
 }
