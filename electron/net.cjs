@@ -59,7 +59,7 @@ async function fileOk(file, sha1, size) {
 }
 
 // Скачивает url в file. onBytes(n) вызывается по мере загрузки.
-async function downloadFile(url, file, { sha1, size, onBytes, retries = 3, headers } = {}) {
+async function downloadFile(url, file, { sha1, size, onBytes, retries = 3, headers, decrypt } = {}) {
   await fs.promises.mkdir(path.dirname(file), { recursive: true });
   const tmp = file + '.part';
   let lastErr;
@@ -68,6 +68,18 @@ async function downloadFile(url, file, { sha1, size, onBytes, retries = 3, heade
     try {
       const res = await fetchRaw(url, headers ? { headers } : {});
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} ${url}`);
+      if (decrypt) {
+        // зашифрованный файл раннего выпуска: целиком в память, расшифровать, проверить хеш открытого текста
+        const enc = Buffer.from(await res.arrayBuffer());
+        got = enc.length;
+        if (onBytes) onBytes(enc.length);
+        const plain = decrypt(enc);
+        if (sha1 && crypto.createHash('sha1').update(plain).digest('hex') !== sha1) throw new Error(`Хеш не совпал: ${path.basename(file)}`);
+        await fs.promises.writeFile(tmp, plain);
+        await fs.promises.rm(file, { force: true });
+        await fs.promises.rename(tmp, file);
+        return;
+      }
       const hash = crypto.createHash('sha1');
       const src = Readable.fromWeb(res.body);
       src.on('data', (chunk) => {
@@ -115,6 +127,7 @@ async function downloadAll(items, { threads = 8, onProgress, signal, quick = fal
             sha1: it.sha1,
             size: it.size,
             headers: it.headers,
+            decrypt: it.decrypt,
             onBytes: (n) => { done += n; emit(); }
           });
         } else {

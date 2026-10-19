@@ -172,21 +172,21 @@ handle('pack:info', async () => {
     error
   };
 });
-// ранний доступ
+// ранний доступ (зашифрованные выпуски на GitHub, коды)
 handle('early:status', async () => { early.reset(); return early.status(); });
 handle('early:releases', () => early.releases());
 handle('early:config', () => early.config(true));
 handle('early:setConfig', (patch) => early.setConfig(patch));
-handle('early:people', ({ q, after } = {}) => early.people(q || '', after || null));
-handle('early:savePeople', (list) => early.savePeople(list));
-handle('early:deletePerson', (nick) => early.deletePerson(nick));
-handle('early:codes', () => early.codes());
-handle('early:saveCode', (c) => early.saveCode(c));
-handle('early:deleteCode', (code) => early.deleteCode(code));
-handle('early:stats', () => early.stats());
-handle('early:hasKey', () => !!early.adminKey());
-handle('early:setKey', (k) => { store.setSecret('earlyAdminKey', k ? String(k).trim() : null); return !!k; });
 handle('early:redeem', (code) => early.redeem(code));
+handle('early:author', async () => {
+  const m = early.masterNow();
+  return { hasMaster: !!m, masterId: m ? m.id : null, masters: early.masters().map((x) => ({ id: x.id, created: x.created })) };
+});
+handle('early:newMaster', () => early.newMaster());
+handle('early:importMaster', (code) => early.importMaster(code));
+handle('early:friendCode', () => early.friendCode());
+handle('early:monthCode', (ym) => early.monthCode(ym));
+handle('early:versionCode', (tag) => early.versionCode(tag));
 handle('early:authorReleases', () => pack.authorEarlyReleases());
 handle('early:open', async (tag) => {
   if (busy) throw new Error('Лаунчер сейчас занят — подожди');

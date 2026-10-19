@@ -82,139 +82,77 @@ function NewsRow({ n, t, lang, toast, reload }) {
   );
 }
 
-// ранний доступ: настройки, люди и их права, коды для Boosty, ранние выпуски
+// ранний доступ: зашифрованные выпуски на GitHub и коды (месяц / версия / друг)
 function EarlyAccess({ t, toast, refreshPack }) {
   const [cfg, setCfg] = useState(null);
-  const [hasKey, setHasKey] = useState(false);
-  const [key, setKey] = useState('');
-  const [stats, setStats] = useState(null);
-  const [q, setQ] = useState('');
-  const [people, setPeople] = useState([]);
-  const [codes, setCodes] = useState([]);
+  const [au, setAu] = useState(null);
   const [rels, setRels] = useState([]);
-  const [np, setNp] = useState({ nick: '', kind: 'sub', until: new Date(Date.now() + 31 * 864e5).toISOString().slice(0, 10), note: '' });
-  const [nc, setNc] = useState({ kind: 'sub', days: 31, maxUses: 1000, expires: new Date(Date.now() + 40 * 864e5).toISOString().slice(0, 10), note: '', code: '' });
+  const [ym, setYm] = useState(new Date().toISOString().slice(0, 7));
+  const [imp, setImp] = useState('');
+  const [sure, setSure] = useState(false);
   const err = (e) => toast(e.message, 'error', 9000);
-  const [nextPage, setNextPage] = useState(null);
-  const loadPeople = async (qq = q, more = false) => {
-    try {
-      const r = await call('early:people', { q: qq, after: more ? nextPage : null });
-      setPeople(more ? [...people, ...(r.items || [])] : (r.items || []));
-      setNextPage(r.next || null);
-    } catch (e) { err(e); }
-  };
+  const copy = (code, what) => { if (!code) return; navigator.clipboard.writeText(code); toast(what + ' ' + t('скопирован'), 'ok'); };
   const load = async () => {
-    try { setCfg(await call('early:config')); } catch (e) { setCfg({}); }
-    const k = await call('early:hasKey');
-    setHasKey(k);
-    if (!k) return;
-    try { setStats(await call('early:stats')); } catch (e) { err(e); return; }
-    loadPeople('');
-    try { setCodes(await call('early:codes')); } catch (_) {}
+    try { setCfg(await call('early:config')); } catch (_) { setCfg({}); }
+    try { setAu(await call('early:author')); } catch (_) {}
     try { setRels(await call('early:authorReleases')); } catch (_) {}
   };
   useEffect(() => { load(); }, []);
-  if (!cfg) return <span className="muted">{t('Загружаю…')}</span>;
-  const saveCfg = async () => { try { await call('early:setConfig', { worker: (cfg.worker || '').trim(), boosty: (cfg.boosty || '').trim() }); toast(t('Сохранено'), 'ok'); load(); } catch (e) { err(e); } };
-  const savePerson = async (x) => { try { await call('early:savePeople', [x]); toast(t('Сохранено') + ': ' + x.nick, 'ok'); loadPeople(); setStats(await call('early:stats')); } catch (e) { err(e); } };
-  const today = new Date().toISOString().slice(0, 10);
-  const rightsText = (x) => x.friend ? t('друг') : x.forever ? t('навсегда ко всему') : [x.until ? (x.until >= today ? t('подписка до') + ' ' + x.until : t('подписка истекла') + ' ' + x.until) : null, x.versions && x.versions.length ? t('версии') + ': ' + x.versions.map((v) => v.replace('pack-', '#')).join(', ') : null].filter(Boolean).join(' · ') || '—';
+  if (!cfg || !au) return <span className="muted">{t('Загружаю…')}</span>;
   return (
     <div className="form">
-      <p className="muted small">{t('Новые сборки сначала выходят только для поддержавших и друзей, в назначенный день — для всех. Файлы ранних версий лежат в твоём хранилище Яндекс Облака, лаунчер выдаёт ссылки на них только тем, у кого есть права (вход через Ely.by). Как включить — в инструкции early-yandex/README.md.')}</p>
-      <label>{t('Адрес функции')}<input className="input mono" placeholder="https://functions.yandexcloud.net/d4e…" value={cfg.worker || ''} onChange={(e) => setCfg({ ...cfg, worker: e.target.value })} /></label>
+      <p className="muted small">{t('Ранние версии лежат на GitHub зашифрованными — открыть их можно только кодом. Код месяца даёт все ранние версии, вышедшие в этом месяце (остаются навсегда), код версии — одну версию, код друга — всё. Коды кладёшь в закрытые посты Boosty или отдаёшь друзьям; игрок вводит код в «Настройки → Сборка».')}</p>
       <label>{t('Ссылка на Boosty')}<input className="input mono" placeholder="https://boosty.to/…" value={cfg.boosty || ''} onChange={(e) => setCfg({ ...cfg, boosty: e.target.value })} /></label>
-      <button className="btn sm" onClick={saveCfg}>{t('Сохранить настройки')}</button>
-      <label>{t('Ключ автора (ADMIN_KEY функции)')}
-        <div className="row">
-          <input className="input mono grow" type="password" placeholder={hasKey ? t('сохранён — введи новый, чтобы заменить') : ''} value={key} onChange={(e) => setKey(e.target.value)} />
-          <button className="btn sm" disabled={!key.trim()} onClick={async () => { await call('early:setKey', key.trim()); setKey(''); load(); }}>{t('Сохранить')}</button>
-        </div>
-      </label>
-      {(!hasKey || !stats) && <div className="muted small">{t('Добавление людей, «друзья» и коды для Boosty появятся здесь, когда будут сохранены адрес функции и ключ автора и функция ответит. Как её создать — инструкция early-yandex/README.md (Яндекс Облако, ~20 минут).')}</div>}
-      {hasKey && stats && (
+      <button className="btn sm" onClick={async () => { try { await call('early:setConfig', { boosty: (cfg.boosty || '').trim(), enabled: true }); toast(t('Сохранено'), 'ok'); } catch (e) { err(e); } }}>{t('Сохранить')}</button>
+
+      <h4>{t('Мастер-ключ')}</h4>
+      {!au.hasMaster ? (
         <>
-          <div className="ok-box"><Icon name="star" /> {t('Людей в списке')}: {stats.people} · {t('кодов')}: {stats.codes} · {t('ранних выпусков')}: {stats.early}</div>
+          <p className="muted small">{t('Мастер-ключ создаётся один раз. Им шифруются ранние версии, из него получаются коды. Храни его копию (это и есть «код друга») — без него не открыть ранние версии на другом компьютере.')}</p>
+          <button className="btn sm primary" onClick={async () => { try { await call('early:newMaster'); load(); } catch (e) { err(e); } }}>{t('Создать мастер-ключ')}</button>
+        </>
+      ) : (
+        <div className="row wrap">
+          <span className="pill sm green">{t('есть')} · {au.masterId}</span>
+          <button className="btn sm" onClick={async () => copy(await call('early:friendCode'), t('Код друга'))}><Icon name="copy" size={12} /> {t('Код друга (всё, навсегда)')}</button>
+          {sure
+            ? <button className="btn sm danger" onClick={async () => { setSure(false); try { await call('early:newMaster'); toast(t('Новый мастер-ключ: следующие версии — только по новым кодам. Старые коды друзей открывают только старые версии.'), 'ok', 12000); load(); } catch (e) { err(e); } }}>{t('Точно сменить?')}</button>
+            : <button className="btn sm ghost" title={t('Если код друга утёк: следующие версии будут под новым ключом')} onClick={() => { setSure(true); setTimeout(() => setSure(false), 4000); }}>{t('Сменить (утёк)')}</button>}
+        </div>
+      )}
+      <div className="row">
+        <input className="input sm mono grow" placeholder={t('VKF-… — мастер-ключ с другого компьютера')} value={imp} onChange={(e) => setImp(e.target.value)} />
+        <button className="btn sm" disabled={!imp.trim()} onClick={async () => { try { await call('early:importMaster', imp.trim()); setImp(''); toast(t('Мастер-ключ добавлен'), 'ok'); load(); } catch (e) { err(e); } }}>{t('Добавить')}</button>
+      </div>
 
-          <h4>{t('Добавить человека')}</h4>
+      {au.hasMaster && (
+        <>
+          <h4>{t('Коды')}</h4>
           <div className="row wrap">
-            <input className="input sm mono" style={{ width: 150 }} placeholder={t('ник Ely.by')} value={np.nick} onChange={(e) => setNp({ ...np, nick: e.target.value })} />
-            <select className="input sm" value={np.kind} onChange={(e) => setNp({ ...np, kind: e.target.value })}>
-              <option value="sub">{t('подписка до даты')}</option>
-              <option value="friend">{t('друг (всё бессрочно)')}</option>
-              <option value="forever">{t('навсегда ко всему')}</option>
-            </select>
-            {np.kind === 'sub' && <input className="input sm" type="date" value={np.until} onChange={(e) => setNp({ ...np, until: e.target.value })} />}
-            <input className="input sm grow" placeholder={t('заметка (ник на Boosty…)')} value={np.note} onChange={(e) => setNp({ ...np, note: e.target.value })} />
-            <button className="btn sm primary" disabled={!np.nick.trim()} onClick={() => { savePerson({ nick: np.nick.trim(), friend: np.kind === 'friend', forever: np.kind === 'forever', until: np.kind === 'sub' ? np.until : null, note: np.note }); setNp({ ...np, nick: '', note: '' }); }}><Icon name="plus" size={12} /> {t('Добавить')}</button>
+            <input className="input sm" type="month" value={ym} onChange={(e) => setYm(e.target.value)} />
+            <button className="btn sm primary" onClick={async () => copy(await call('early:monthCode', ym), t('Код месяца'))}><Icon name="copy" size={12} /> {t('Код месяца (подписка)')}</button>
           </div>
-
-          <h4>{t('Люди')}</h4>
-          <div className="row">
-            <input className="input sm grow" placeholder={t('поиск по началу ника')} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && loadPeople()} />
-            <button className="btn sm" onClick={() => loadPeople()}><Icon name="refresh" size={12} /></button>
-          </div>
-          <div className="rel-list">
-            {people.map((x) => {
-              const live = x.friend || x.forever || (x.until && x.until >= today);
-              return (
-                <div key={x.nick} className={'rel' + (live ? '' : ' hidden-rel')}>
-                  <b className="mono">{x.nick}</b>
-                  <span className="grow small">{rightsText(x)}{x.note ? <span className="muted"> — {x.note}</span> : null}</span>
-                  {!x.friend && !x.forever && <button className="btn sm ghost" title={t('Продлить на месяц')} onClick={() => { const from = x.until && x.until >= today ? x.until : today; savePerson({ ...x, until: new Date(Date.parse(from) + 31 * 864e5).toISOString().slice(0, 10) }); }}>+31 {t('дн.')}</button>}
-                  <button className="btn sm ghost" title={x.friend ? t('Убрать из друзей') : t('Сделать другом')} onClick={() => savePerson({ ...x, friend: !x.friend })}><Icon name="star" size={12} /></button>
-                  <button className="btn sm danger" onClick={async () => { try { await call('early:deletePerson', x.nick); loadPeople(); } catch (e) { err(e); } }}><Icon name="trash" size={12} /></button>
-                </div>
-              );
-            })}
-            {people.length === 0 && <span className="muted small">{t('Никого не найдено.')}</span>}
-            {nextPage && <button className="btn sm ghost" onClick={() => loadPeople(q, true)}>{t('Показать ещё')}</button>}
-          </div>
-
-          <h4>{t('Коды для Boosty')}</h4>
-          <p className="muted small">{t('Код кладёшь в закрытый пост нужного уровня на Boosty. Игрок вводит его в лаунчере («Настройки → Сборка → Ранний доступ») — права привязываются к его Ely.by. Один человек может активировать каждый код один раз.')}</p>
-          <div className="row wrap">
-            <select className="input sm" value={nc.kind} onChange={(e) => setNc({ ...nc, kind: e.target.value })}>
-              <option value="sub">{t('подписка на N дней')}</option>
-              <option value="version">{t('текущая ранняя версия навсегда')}</option>
-              <option value="forever">{t('навсегда ко всему')}</option>
-            </select>
-            {nc.kind === 'sub' && <label className="small">{t('дней')} <input className="input sm" type="number" style={{ width: 70 }} value={nc.days} onChange={(e) => setNc({ ...nc, days: +e.target.value })} /></label>}
-            <label className="small">{t('активаций')} <input className="input sm" type="number" style={{ width: 90 }} value={nc.maxUses} onChange={(e) => setNc({ ...nc, maxUses: +e.target.value })} /></label>
-            <label className="small">{t('действует до')} <input className="input sm" type="date" value={nc.expires} onChange={(e) => setNc({ ...nc, expires: e.target.value })} /></label>
-            <input className="input sm mono" style={{ width: 150 }} placeholder={t('свой код (или пусто)')} value={nc.code} onChange={(e) => setNc({ ...nc, code: e.target.value })} />
-            <input className="input sm grow" placeholder={t('заметка (уровень Boosty)')} value={nc.note} onChange={(e) => setNc({ ...nc, note: e.target.value })} />
-            <button className="btn sm primary" onClick={async () => { try { const r = await call('early:saveCode', { ...nc, code: nc.code.trim() || undefined }); toast(t('Код') + ': ' + r.code, 'ok', 15000); setCodes(await call('early:codes')); setNc({ ...nc, code: '' }); } catch (e) { err(e); } }}><Icon name="plus" size={12} /> {t('Создать код')}</button>
-          </div>
-          <div className="rel-list">
-            {codes.map((c) => (
-              <div key={c.code} className={'rel' + ((c.expires && c.expires < today) || (c.maxUses && c.uses >= c.maxUses) ? ' hidden-rel' : '')}>
-                <b className="mono">{c.code}</b>
-                <span className="grow small">{c.kind === 'sub' ? `${t('подписка')} ${c.days} ${t('дн.')}` : c.kind === 'version' ? t('версия навсегда') : t('навсегда ко всему')} · {c.uses}/{c.maxUses || '∞'}{c.expires ? ` · ${t('до')} ${c.expires}` : ''}{c.note ? <span className="muted"> — {c.note}</span> : null}</span>
-                <button className="btn sm ghost" title={t('Скопировать')} onClick={() => { navigator.clipboard.writeText(c.code); toast(t('Скопировано'), 'ok'); }}><Icon name="copy" size={12} /></button>
-                <button className="btn sm danger" onClick={async () => { try { await call('early:deleteCode', c.code); setCodes(await call('early:codes')); } catch (e) { err(e); } }}><Icon name="trash" size={12} /></button>
-              </div>
-            ))}
-          </div>
-
-          <h4>{t('Ранние выпуски')}</h4>
-          {rels.length === 0 && <span className="muted small">{t('Пока нет. Отметь «Ранний доступ» при заливке сборки.')}</span>}
-          <div className="rel-list">
-            {rels.sort((a, b) => b.version - a.version).map((r) => (
-              <div key={r.tag} className={'rel' + (r.hidden ? ' hidden-rel' : '')}>
-                <b>#{r.version}</b>
-                <span className="grow">{r.title || ''}</span>
-                {r.hidden ? <span className="pill sm green">{t('открыт всем')}</span> : (
-                  <>
-                    <input className="input sm" type="date" value={r.freeAt || ''} title={t('Когда открыть всем')} onChange={async (e) => { try { await call('early:freeAt', { tag: r.tag, freeAt: e.target.value || null }); load(); } catch (er) { err(er); } }} />
-                    <button className="btn sm" onClick={async () => { try { await call('early:open', r.tag); toast(t('Выпуск открыт для всех') + ' #' + r.version, 'ok'); load(); refreshPack(); } catch (e) { err(e); } }}>{t('Открыть всем')}</button>
-                  </>
-                )}
-              </div>
-            ))}
-          </div>
+          <small className="muted">{t('Код месяца открывает все ранние версии, выпущенные в этом месяце. Клади его в закрытый пост подписочного уровня в начале месяца.')}</small>
         </>
       )}
+
+      <h4>{t('Ранние выпуски')}</h4>
+      {rels.length === 0 && <span className="muted small">{t('Пока нет. Отметь «Ранний доступ» при заливке сборки.')}</span>}
+      <div className="rel-list">
+        {rels.sort((a, b) => b.version - a.version).map((r) => (
+          <div key={r.tag} className={'rel' + (r.hidden ? ' hidden-rel' : '')}>
+            <b>#{r.version}</b>
+            <span className="grow">{r.title || ''} <span className="muted small">{r.month}</span></span>
+            {r.hidden ? <span className="pill sm green">{t('открыт всем')}</span> : (
+              <>
+                <button className="btn sm ghost" title={t('Код этой версии (разовый донат)')} onClick={async () => copy(await call('early:versionCode', r.tag), t('Код версии'))}><Icon name="copy" size={12} /> {t('код версии')}</button>
+                <input className="input sm" type="date" value={r.freeAt || ''} title={t('Когда открыть всем')} onChange={async (e) => { try { await call('early:freeAt', { tag: r.tag, freeAt: e.target.value || null }); load(); } catch (er) { err(er); } }} />
+                <button className="btn sm" onClick={async () => { try { await call('early:open', r.tag); toast(t('Выпуск открыт для всех') + ' #' + r.version, 'ok'); load(); refreshPack(); } catch (e) { err(e); } }}>{t('Открыть всем')}</button>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

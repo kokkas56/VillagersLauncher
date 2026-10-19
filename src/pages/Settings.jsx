@@ -150,21 +150,16 @@ export default function Settings() {
         {pack && pack.early && pack.early.enabled && (
           <div className="field">
             <span>{t('Ранний доступ')}</span>
-            {pack.early.access && (
-              <>
-                <div className="ok-box"><Icon name="star" /> {pack.early.friend ? t('Друг сборки: все ранние версии') : pack.early.forever ? t('Навсегда: все ранние версии') : [pack.early.until ? (pack.early.live ? `${t('Подписка до')} ${pack.early.until}` : `${t('Подписка закончилась')} ${pack.early.until} — ${t('вышедшие за неё версии остаются твоими')}`) : null, (pack.early.versions || []).length ? `${t('Твои версии')}: ${pack.early.versions.map((v) => v.replace('pack-', '#')).join(', ')}` : null].filter(Boolean).join(' · ')} · {pack.early.nick}</div>
-                <Toggle checked={s.useEarly !== false} onChange={(v) => set({ useEarly: v })} label={t('Получать ранние версии')} hint={t('Новые сборки приходят раньше, чем ко всем. Если выключить — будешь на общих.')} />
-              </>
-            )}
-            {!pack.early.access && <span className="muted small">{pack.early.offline ? t('Ранний доступ работает только с аккаунтом Ely.by.') : t('Новые версии сначала выходят для тех, кто поддерживает сборку, потом — для всех бесплатно.')}{pack.early.nick ? ` (${pack.early.nick})` : ''}</span>}
-            {!pack.early.offline && (
-              <div className="row">
-                <input className="input sm mono grow" placeholder={t('Код с Boosty')} value={code} onChange={(e) => setCode(e.target.value)} />
-                <button className="btn sm primary" disabled={!code.trim()} onClick={async () => { try { const r = await call('early:redeem', code.trim()); toast(r.what || t('Код принят'), 'ok', 9000); setCode(''); await call('early:status'); refreshPack(); call('early:releases').then(setEarlyRels).catch(() => {}); } catch (e) { toast(e.message, 'error', 8000); } }}>{t('Активировать')}</button>
-                {pack.early.boosty && <button className="btn sm" onClick={() => call('shell:open', pack.early.boosty)}>{t('Boosty')}</button>}
-                <button className="btn sm ghost" title={t('Проверить доступ')} onClick={async () => { await call('early:status'); refreshPack(); }}><Icon name="refresh" size={12} /></button>
-              </div>
-            )}
+            {pack.early.access
+              ? <div className="ok-box"><Icon name="star" /> {t('Доступны ранние версии')}: {pack.early.available.map((v) => '#' + v).join(', ')}</div>
+              : <span className="muted small">{t('Новые версии сначала выходят для тех, кто поддерживает сборку, потом — для всех бесплатно. Код можно получить на Boosty.')}</span>}
+            {(pack.early.codes || []).length > 0 && <small className="muted">{t('Твои коды')}: {pack.early.codes.map((c) => c.kind === 'month' ? t('месяц') + ' ' + c.ym : c.kind === 'version' ? t('версия') + ' #' + c.version : t('друг')).join(' · ')}</small>}
+            {pack.early.access && <Toggle checked={s.useEarly !== false} onChange={(v) => set({ useEarly: v })} label={t('Получать ранние версии')} hint={t('Если выключить — будешь на общих версиях.')} />}
+            <div className="row">
+              <input className="input sm mono grow" placeholder={t('Код (VKM-… / VKV-… / VKF-…)')} value={code} onChange={(e) => setCode(e.target.value)} />
+              <button className="btn sm primary" disabled={!code.trim()} onClick={async () => { try { const r = await call('early:redeem', code.trim()); toast(r.what || t('Код принят'), 'ok', 9000); setCode(''); await call('early:status'); refreshPack(); call('early:releases').then(setEarlyRels).catch(() => {}); } catch (e) { toast(e.message, 'error', 8000); } }}>{t('Активировать')}</button>
+              {pack.early.boosty && <button className="btn sm" onClick={() => call('shell:open', pack.early.boosty)}>Boosty</button>}
+            </div>
           </div>
         )}
       </Section>

@@ -1,12 +1,33 @@
 'use strict';
-// Ранний доступ: файлы ранних выпусков лежат в бакете Яндекс Облака, ссылки на них выдаёт функция (early-yandex/index.js) тем, у кого есть права.
-// Настройка (адрес воркера, закрытый репозиторий, ссылка на Boosty) лежит в публичном репозитории сборки: early.json.
-// Личность игрока: вход на «сервер» через Ely.by (session/join) — воркер проверяет hasJoined, пароли не передаются.
+// Ранний доступ без сервера: ранние выпуски лежат в том же репозитории GitHub (метки early-N), но файлы зашифрованы
+// (AES-256-GCM, у каждого выпуска свой ключ). Ключ выпуска открывается кодом:
+//   • код месяца   VKM-ГГГГММ-…   — все ранние выпуски, вышедшие в этом месяце (остаются навсегда);
+//   • код версии   VKV-N-…        — один выпуск навсегда;
+//   • код друга    VKF-id-…       — всё (это мастер-ключ автора; при утечке автор его меняет).
+// Ключи месяцев выводятся из мастер-ключа, ключи выпусков случайные и хранятся завёрнутыми в early-keys.json
+// (в публичном репозитории — без кодов их не открыть). Коды игрока хранятся только у него в лаунчере.
+const crypto = require('crypto');
 const store = require('./store.cjs');
 const netu = require('./net.cjs');
 
-let cfgCache = null;
-let session = null; // { accountId, token, exp, nick, access, until, friend }
+const KEYS_FILE = 'early-keys.json';
+const b64 = (b) => Buffer.from(b).toString('base64url');
+const unb64 = (s) => Buffer.from(String(s), 'base64url');
+const check = (key) => crypto.createHmac('sha256', key).update('vk-early-check').digest('hex').slice(0, 16);
+
+function encrypt(key, data) {
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const ct = Buffer.concat([c.update(data), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), ct]);
+}
+function decrypt(key, blob) {
+  const d = crypto.createDecipheriv('aes-256-gcm', key, blob.subarray(0, 12));
+  d.setAuthTag(blob.subarray(12, 28));
+  return Buffer.concat([d.update(blob.subarray(28)), d.final()]);
+}
+const monthKey = (master, ym) => crypto.createHmac('sha256', master).update('month:' + ym).digest();
+const ymOf = (d) => new Date(d || Date.now()).toISOString().slice(0, 7);
 
 function packRepo() { return store.get().packRepo; }
 
@@ -23,202 +44,232 @@ async function ghJson(method, url, token, body, extra) {
   return data;
 }
 
-/** {worker, boosty, latest} из публичного репозитория (кэш 5 минут). */
-async function config(force) {
-  if (!force && cfgCache && Date.now() - cfgCache.t < 5 * 60e3) return cfgCache.c;
-  let c = {};
+// ---------- файлы настроек в репозитории сборки ----------
+async function readRepoJson(name) {
+  const token = store.getSecret('githubToken');
   try {
-    const token = store.getSecret('githubToken');
-    const d = await ghJson('GET', `/repos/${packRepo()}/contents/early.json?_=${Date.now()}`, token, null, { Accept: 'application/vnd.github.raw+json', 'Cache-Control': 'no-cache' });
-    c = typeof d === 'string' ? JSON.parse(d) : (d || {});
-  } catch (_) {}
-  c.worker = String(c.worker || '').replace(/\/+$/, '');
-  cfgCache = { t: Date.now(), c };
-  return c;
+    const d = await ghJson('GET', `/repos/${packRepo()}/contents/${name}?_=${Date.now()}`, token, null, { Accept: 'application/vnd.github.raw+json', 'Cache-Control': 'no-cache' });
+    return typeof d === 'string' ? JSON.parse(d) : (d || {});
+  } catch (e) {
+    if (e.status === 404) return {};
+    try {
+      const res = await netu.fetchRaw(`https://raw.githubusercontent.com/${packRepo()}/HEAD/${name}`);
+      if (res.ok) return await res.json();
+    } catch (_) {}
+    return {};
+  }
 }
 
-/** Автор: записать early.json (адрес воркера, Boosty, какой выпуск сейчас ранний). */
-async function setConfig(patch) {
+async function writeRepoJson(name, mutate, message) {
   const token = store.getSecret('githubToken');
   if (!token) throw new Error('Нужен токен GitHub (раздел «Автор»)');
   let sha; let cur = {};
   try {
-    const d = await ghJson('GET', `/repos/${packRepo()}/contents/early.json?_=${Date.now()}`, token, null, { 'Cache-Control': 'no-cache' });
+    const d = await ghJson('GET', `/repos/${packRepo()}/contents/${name}?_=${Date.now()}`, token, null, { 'Cache-Control': 'no-cache' });
     if (d && d.sha) { sha = d.sha; cur = JSON.parse(Buffer.from(d.content || '', 'base64').toString('utf8') || '{}'); }
   } catch (e) { if (e.status !== 404) throw e; }
-  const next = { ...cur, ...patch };
-  await ghJson('PUT', `/repos/${packRepo()}/contents/early.json`, token, { message: 'Ранний доступ: настройки', content: Buffer.from(JSON.stringify(next, null, 2) + '\n').toString('base64'), ...(sha ? { sha } : {}) });
+  const next = mutate(cur) || cur;
+  await ghJson('PUT', `/repos/${packRepo()}/contents/${name}`, token, { message, content: Buffer.from(JSON.stringify(next, null, 2) + '\n').toString('base64'), ...(sha ? { sha } : {}) });
+  return next;
+}
+
+let cfgCache = null;
+/** early.json: { boosty, latest } — видят все лаунчеры и сайт. */
+async function config(force) {
+  if (!force && cfgCache && Date.now() - cfgCache.t < 5 * 60e3) return cfgCache.c;
+  const c = await readRepoJson('early.json');
+  cfgCache = { t: Date.now(), c };
+  return c;
+}
+async function setConfig(patch) {
+  const next = await writeRepoJson('early.json', (cur) => ({ ...cur, ...patch }), 'Ранний доступ: настройки');
   cfgCache = null;
   return next;
 }
 
-/** Адрес функции + маршрут (функция Яндекса принимает маршрут в параметре r). */
-function routeUrl(base, path) {
-  const i = path.indexOf('?');
-  const route = i < 0 ? path : path.slice(0, i);
-  const rest = i < 0 ? '' : '&' + path.slice(i + 1);
-  return base + (base.includes('?') ? '&' : '?') + 'r=' + encodeURIComponent(route) + rest;
+let keysCache = null;
+async function keys(force) {
+  if (!force && keysCache && Date.now() - keysCache.t < 60e3) return keysCache.k;
+  const k = await readRepoJson(KEYS_FILE);
+  k.releases = k.releases || {};
+  keysCache = { t: Date.now(), k };
+  return k;
+}
+async function writeKeys(mutate, msg) {
+  const next = await writeRepoJson(KEYS_FILE, (cur) => { cur.releases = cur.releases || {}; return mutate(cur) || cur; }, msg || 'Ранний доступ: ключи');
+  keysCache = null;
+  return next;
 }
 
-async function workerFetch(path, opts = {}) {
-  const c = await config();
-  if (!c.worker) throw new Error('Ранний доступ не настроен');
-  return netu.fetchRaw(routeUrl(c.worker, path), opts);
+// ---------- коды игрока ----------
+function myCodes() { return store.getSecret('earlyCodes') || []; }
+
+/** Разбор кода: { kind: 'friend'|'month'|'version', id|ym|version, key } или null. */
+function parseCode(code) {
+  const m = String(code || '').trim().match(/^VK([FMV])-([A-Za-z0-9]+)-([A-Za-z0-9_-]{40,})$/);
+  if (!m) return null;
+  const key = unb64(m[3]);
+  if (key.length !== 32) return null;
+  if (m[1] === 'F') return { kind: 'friend', id: m[2], key };
+  if (m[1] === 'M') return { kind: 'month', ym: m[2].slice(0, 4) + '-' + m[2].slice(4, 6), key };
+  return { kind: 'version', version: parseInt(m[2], 10), key };
 }
 
-/** Адрес файла раннего выпуска в манифесте (сам файл скачивается по подписанной ссылке). */
-function fileUrl(base, tag, name) { return routeUrl(base, `/file/${tag}/${name}`); }
-function parseFileUrl(base, url) {
-  if (!base || !url || !url.startsWith(base)) return null;
-  try {
-    const r = new URL(url).searchParams.get('r') || '';
-    const m = r.match(/^\/file\/([^/]+)\/(.+)$/);
-    return m ? { tag: m[1], name: m[2] } : null;
-  } catch (_) { return null; }
-}
+/** Мастер-ключи автора (история: старые нужны, чтобы открыть старые выпуски). */
+function masters() { return store.getSecret('earlyMasters') || []; }
 
-/** Игрок: подписанные ссылки на файлы ранних выпусков (по выпускам, пачками). items: [{url, ...}] — url заменяется. */
-async function resolveUrls(items) {
-  const c = await config();
-  if (!c.worker) return items;
-  const byTag = new Map();
-  for (const it of items) {
-    const f = parseFileUrl(c.worker, it.url);
-    if (!f) continue;
-    if (!byTag.has(f.tag)) byTag.set(f.tag, []);
-    byTag.get(f.tag).push([it, f.name]);
+/** Ключ выпуска, если он доступен (коды игрока или мастер-ключи автора). */
+async function keyFor(tag) {
+  const k = await keys();
+  const rel = k.releases[tag];
+  if (!rel) return null;
+  const tryUnwrap = (wrapKey, wrapped) => { try { const kr = decrypt(wrapKey, unb64(wrapped)); return check(kr) === rel.check ? kr : null; } catch (_) { return null; } };
+  for (const mk of masters()) {
+    if (mk.id !== rel.mid) continue;
+    const kr = tryUnwrap(unb64(mk.key), rel.wf);
+    if (kr) return kr;
   }
-  if (!byTag.size) return items;
-  await login();
-  for (const [tag, list] of byTag) {
-    for (let i = 0; i < list.length; i += 1000) {
-      const part = list.slice(i, i + 1000);
-      const res = await workerFetch('/sign', { method: 'POST', headers: { ...headers(), 'Content-Type': 'application/json' }, body: JSON.stringify({ tag, names: part.map((x) => x[1]) }) });
-      const d = await res.json();
-      if (!res.ok) throw new Error(d.error === 'no_access' ? 'Нет доступа к ранней версии ' + tag.replace('pack-', '#') + ' — проверь права в «Настройки → Сборка»' : 'Ранний доступ: ' + (d.error || res.status));
-      for (const [it, name] of part) if (d.urls[name]) it.url = d.urls[name];
-    }
+  for (const c of myCodes().map(parseCode).filter(Boolean)) {
+    if (c.kind === 'version' && c.version === rel.version && check(c.key) === rel.check) return c.key;
+    if (c.kind === 'month' && c.ym === rel.month) { const kr = tryUnwrap(c.key, rel.wm); if (kr) return kr; }
+    if (c.kind === 'friend' && c.id === rel.mid) { const kr = tryUnwrap(c.key, rel.wf); if (kr) return kr; }
   }
-  return items;
+  return null;
 }
 
-/** Вход: join через Ely.by → токен воркера на 12 часов (для выбранного аккаунта). */
-async function login(force) {
-  const s = store.get();
-  const accId = s.selectedAccount;
-  if (!force && session && session.accountId === accId && session.exp > Date.now() + 60e3) return session;
-  const auth = require('./auth.cjs');
-  const acc = auth.publicAccounts().find((a) => a.id === accId);
-  if (!acc || acc.type !== 'ely') { session = { accountId: accId, access: false, offline: true }; return session; }
-  const ready = await auth.prepare(acc.id);
-  const ch = await (await workerFetch('/challenge')).json();
-  const join = await netu.fetchRaw('https://authserver.ely.by/session/join', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ accessToken: ready.accessToken, selectedProfile: String(acc.uuid).replace(/-/g, ''), serverId: ch.sid })
-  });
-  if (!join.ok) throw new Error('Ely.by не подтвердил вход (' + join.status + ')');
-  const res = await workerFetch('/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nick: acc.name, ticket: ch.ticket }) });
-  const d = await res.json();
-  if (!res.ok) throw new Error('Ранний доступ: ' + (d.error || res.status));
-  session = { accountId: accId, token: d.token, exp: Date.now() + 11 * 3600e3, nick: d.nick, access: !!d.access, live: !!d.live, until: d.until || null, friend: !!d.friend, forever: !!d.forever, versions: d.versions || [] };
-  return session;
-}
-
-function headers() {
-  return session && session.token ? { Authorization: 'Bearer ' + session.token } : {};
-}
-
-/** Для интерфейса: включено ли, есть ли доступ, до какого числа, ссылка на Boosty. */
-async function status() {
-  const c = await config();
-  if (!c.worker) return { enabled: false };
-  const out = { enabled: true, boosty: c.boosty || null };
-  try {
-    const s = await login();
-    if (s.offline) return { ...out, offline: true, access: false };
-    return { ...out, nick: s.nick, access: s.access, live: s.live, until: s.until, friend: s.friend, forever: s.forever, versions: s.versions || [] };
-  } catch (e) {
-    return { ...out, access: false, error: e.message };
-  }
-}
-
-/** Ранние выпуски (только с доступом). */
+/** Ранние (ещё не открытые всем) выпуски, доступные этому игроку. */
 async function releases() {
-  const s = await login();
-  if (!s.access) return [];
-  const res = await workerFetch('/releases', { headers: headers() });
-  if (!res.ok) return [];
-  return (await res.json()).filter((r) => !r.hidden);
+  const k = await keys();
+  const out = [];
+  for (const [tag, r] of Object.entries(k.releases)) {
+    if (r.opened) continue;
+    if (await keyFor(tag)) out.push({ tag, version: r.version, name: '#' + r.version + (r.title ? ' ' + r.title : ''), date: r.date, freeAt: r.freeAt || null });
+  }
+  return out.sort((a, b) => b.version - a.version);
 }
 
 async function manifest(tag) {
-  const c = await config();
-  const it = { url: fileUrl(c.worker, tag, 'manifest.json') };
-  await resolveUrls([it]);
-  const res = await netu.fetchRaw(it.url);
+  const key = await keyFor(tag);
+  if (!key) throw new Error('Нет кода для ранней версии ' + tag.replace('early-', '#'));
+  const res = await netu.fetchRaw(`https://github.com/${packRepo()}/releases/download/${tag}/manifest.enc`);
   if (!res.ok) throw new Error('Ранний выпуск недоступен: HTTP ' + res.status);
-  return res.json();
+  return JSON.parse(decrypt(key, Buffer.from(await res.arrayBuffer())).toString('utf8'));
 }
 
-/** Новейший ранний выпуск (или null). */
 async function latest() {
   const list = await releases();
-  if (!list.length) return null;
-  const top = list.sort((a, b) => b.version - a.version)[0];
-  return manifest(top.tag);
+  return list.length ? manifest(list[0].tag) : null;
 }
 
-// ---------- автор: управление через воркер (ключ автора) ----------
-function adminKey() { return store.getSecret('earlyAdminKey') || null; }
-
-async function admin(path, { method = 'GET', body, raw } = {}) {
-  // файлы: напрямую в хранилище по подписанной ссылке (функция только выдаёт ссылку)
-  const fm = path.match(/^\/file\/([^/]+)\/(.+)$/);
-  if (fm) {
-    const tag = fm[1]; const name = decodeURIComponent(fm[2]);
-    if (method === 'PUT') {
-      const { url } = await admin('/upload', { method: 'POST', body: { tag, name } });
-      const res = await netu.fetchRaw(url, { method: 'PUT', body });
-      if (!res.ok) throw new Error('Хранилище не приняло файл ' + name + ': HTTP ' + res.status);
-      return true;
-    }
-    const { url } = await admin('/download', { method: 'POST', body: { tag, name } });
-    const res = await netu.fetchRaw(url);
-    if (!res.ok) throw new Error('Хранилище: файл не найден ' + name + ' (' + res.status + ')');
-    return Buffer.from(await res.arrayBuffer());
+/** Для загрузки: файлам ранних выпусков — функция расшифровки (по полю enc в манифесте). */
+async function resolveDecrypt(items) {
+  const tags = [...new Set(items.filter((i) => i.enc).map((i) => i.enc))];
+  const ks = {};
+  for (const t of tags) {
+    ks[t] = await keyFor(t);
+    if (!ks[t]) throw new Error('Нет кода для ранней версии ' + t.replace('early-', '#') + ' — введи код в «Настройки → Сборка»');
   }
-  const key = adminKey();
-  if (!key) throw new Error('Нужен ключ автора раннего доступа (ADMIN_KEY функции) — вставь его в «Автор» → «Ранний доступ»');
-  const res = await workerFetch('/admin' + path, {
-    method,
-    headers: { Authorization: 'Admin ' + key, ...(body && !raw ? { 'Content-Type': 'application/json' } : {}) },
-    body: raw ? body : body ? JSON.stringify(body) : undefined
-  });
-  const text = await res.text();
-  let d = null;
-  try { d = text ? JSON.parse(text) : null; } catch (_) { d = text; }
-  if (res.status === 401) throw new Error('Функция не приняла ключ автора — проверь ADMIN_KEY');
-  if (!res.ok) throw new Error('Ранний доступ: ' + ((d && (d.message || d.error)) || res.status));
-  return d;
+  for (const it of items) if (it.enc) { const key = ks[it.enc]; it.decrypt = (blob) => decrypt(key, blob); delete it.enc; }
+  return items;
 }
 
-async function people(q = '', after = null) { return admin(`/people?q=${encodeURIComponent(q)}${after ? '&after=' + encodeURIComponent(after) : ''}`); }
-async function savePeople(list) { return admin('/people', { method: 'POST', body: list }); }
-async function deletePerson(nick) { return admin('/people/' + encodeURIComponent(nick), { method: 'DELETE' }); }
-async function codes() { return admin('/codes'); }
-async function saveCode(c) { return admin('/codes', { method: 'POST', body: c }); }
-async function deleteCode(code) { return admin('/codes/' + encodeURIComponent(code), { method: 'DELETE' }); }
-async function stats() { return admin('/stats'); }
+/** Для интерфейса игрока. */
+async function status() {
+  const c = await config();
+  const k = await keys();
+  const any = Object.values(k.releases).some((r) => !r.opened);
+  const codes = myCodes().map(parseCode).filter(Boolean).map((x) => x.kind === 'month' ? { kind: 'month', ym: x.ym } : x.kind === 'version' ? { kind: 'version', version: x.version } : { kind: 'friend' });
+  const mine = await releases();
+  return { enabled: !!(c.enabled || any || c.boosty), boosty: c.boosty || null, codes, access: mine.length > 0, available: mine.map((r) => r.version), anyEarly: any };
+}
 
-/** Игрок: активировать код (с Boosty). */
+/** Игрок вводит код. */
 async function redeem(code) {
-  await login();
-  if (!session || !session.token) throw new Error('Ранний доступ работает только с аккаунтом Ely.by');
-  const res = await workerFetch('/redeem', { method: 'POST', headers: { ...headers(), 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
-  const d = await res.json();
-  if (!res.ok) throw new Error(d.error || ('HTTP ' + res.status));
-  session = null; // права изменились — войдём заново
-  return d;
+  code = String(code || '').trim();
+  const c = parseCode(code);
+  if (!c) throw new Error('Это не похоже на код раннего доступа');
+  const k = await keys(true);
+  const rels = Object.values(k.releases);
+  let what;
+  if (c.kind === 'version') {
+    const r = rels.find((x) => x.version === c.version);
+    if (!r || check(c.key) !== r.check) throw new Error('Код не подходит');
+    what = 'Версия #' + c.version + ' — твоя навсегда';
+  } else if (c.kind === 'month') {
+    const has = rels.filter((x) => x.month === c.ym);
+    if (has.length && !has.some((r) => { try { return check(decrypt(c.key, unb64(r.wm))) === r.check; } catch (_) { return false; } })) throw new Error('Код не подходит');
+    what = 'Все ранние версии за ' + c.ym + (has.length ? '' : ' (откроются, когда выйдут)');
+  } else {
+    const ok = (k.master && k.master.id === c.id && k.master.check === check(c.key)) || rels.some((x) => x.mid === c.id);
+    if (!ok) throw new Error('Код не подходит');
+    what = 'Все ранние версии';
+  }
+  const list = myCodes().filter((x) => x !== code);
+  list.push(code);
+  store.setSecret('earlyCodes', list);
+  return { ok: true, what };
 }
 
-module.exports = { config, setConfig, login, status, releases, manifest, latest, fileUrl, parseFileUrl, resolveUrls, routeUrl, admin, adminKey, people, savePeople, deletePerson, codes, saveCode, deleteCode, stats, redeem, ghJson, reset: () => { session = null; cfgCache = null; } };
+// ---------- автор ----------
+function masterNow() { const m = masters(); return m.length ? m[m.length - 1] : null; }
+
+/** Новый мастер-ключ (первый раз или если код друга утёк). Старые остаются — ими открываются старые выпуски. */
+async function newMaster() {
+  const id = crypto.randomBytes(3).toString('hex');
+  const key = crypto.randomBytes(32);
+  const list = masters();
+  list.push({ id, key: b64(key), created: new Date().toISOString().slice(0, 10) });
+  store.setSecret('earlyMasters', list);
+  await writeKeys((k) => { k.master = { id, check: check(key) }; return k; }, 'Ранний доступ: новый мастер-ключ');
+  return id;
+}
+
+/** Импорт мастер-ключа (на другом компьютере автора) — это код друга. */
+async function importMaster(code) {
+  const c = parseCode(code);
+  if (!c || c.kind !== 'friend') throw new Error('Нужен код друга (VKF-…)');
+  const list = masters().filter((m) => m.id !== c.id);
+  list.push({ id: c.id, key: b64(c.key), created: 'imported' });
+  store.setSecret('earlyMasters', list);
+  return true;
+}
+
+function friendCode() { const m = masterNow(); return m ? `VKF-${m.id}-${m.key}` : null; }
+function monthCode(ym) { const m = masterNow(); return m ? `VKM-${ym.replace('-', '')}-${b64(monthKey(unb64(m.key), ym))}` : null; }
+async function versionCode(tag) {
+  const k = await keys(true);
+  const r = k.releases[tag];
+  const kr = await keyFor(tag);
+  return r && kr ? `VKV-${r.version}-${b64(kr)}` : null;
+}
+
+/** Ключ нового раннего выпуска: завёрнут мастер-ключом и ключом месяца. */
+async function prepareRelease(tag, version, info) {
+  let m = masterNow();
+  if (!m) { await newMaster(); m = masterNow(); }
+  const kr = crypto.randomBytes(32);
+  const master = unb64(m.key);
+  const month = ymOf();
+  const entry = {
+    version, title: info.title || '', date: new Date().toISOString(), freeAt: info.freeAt || null, month, opened: false,
+    mid: m.id, check: check(kr), wf: b64(encrypt(master, kr)), wm: b64(encrypt(monthKey(master, month), kr))
+  };
+  return { key: kr, entry, commit: () => writeKeys((k) => { k.releases[tag] = entry; return k; }, 'Ранний выпуск ' + tag) };
+}
+
+async function authorReleases() {
+  const k = await keys(true);
+  return Object.entries(k.releases).map(([tag, r]) => ({ ...r, tag, name: '#' + r.version + (r.title ? ' ' + r.title : ''), hidden: !!r.opened, early: true }));
+}
+async function updateRelease(tag, patch) {
+  return writeKeys((k) => { if (k.releases[tag]) Object.assign(k.releases[tag], patch); return k; }, 'Ранний выпуск ' + tag);
+}
+async function removeRelease(tag) {
+  return writeKeys((k) => { delete k.releases[tag]; return k; }, 'Ранний выпуск удалён ' + tag);
+}
+
+module.exports = {
+  config, setConfig, keys, keyFor, releases, manifest, latest, resolveDecrypt, status, redeem, parseCode,
+  masters, masterNow, newMaster, importMaster, friendCode, monthCode, versionCode, prepareRelease, authorReleases, updateRelease, removeRelease,
+  encrypt, decrypt, ghJson, reset: () => { cfgCache = null; keysCache = null; }
+};
