@@ -109,6 +109,15 @@ function EarlyAccess({ t, toast, refreshPack }) {
       <label>{t('Ссылка на Boosty')}<input className="input mono" placeholder="https://boosty.to/…" value={cfg.boosty || ''} onChange={(e) => setCfg({ ...cfg, boosty: e.target.value })} /></label>
       <button className="btn sm" onClick={async () => { try { await call('early:setConfig', { boosty: (cfg.boosty || '').trim(), enabled: true }); toast(t('Сохранено'), 'ok'); } catch (e) { err(e); } }}>{t('Сохранить')}</button>
 
+      <label className="check-row">
+        <input type="checkbox" checked={!!cfg.publicClosed} onChange={async (e) => {
+          const v = e.target.checked;
+          if (v && !window.confirm(t('Закрыть открытые версии? Новые игроки не смогут скачать сборку без кода раннего доступа. У кого сборка уже скачана — продолжат играть своей версией.'))) return;
+          try { await call('early:setConfig', { publicClosed: v }); setCfg({ ...cfg, publicClosed: v }); toast(v ? t('Открытые версии закрыты: скачать можно только с ранним доступом') : t('Открытые версии снова доступны всем'), 'ok', 7000); } catch (er) { err(er); }
+        }} />
+        <span><b>{t('Закрыть открытые версии')}</b> — {t('без раннего доступа сборку не скачать и не обновить; у кого уже скачано — играют как есть. Лаунчеры заметят в течение 5 минут.')}</span>
+      </label>
+
       <h4>{t('Мастер-ключ')}</h4>
       {!au.hasMaster ? (
         <>

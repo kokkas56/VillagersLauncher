@@ -102,19 +102,28 @@ async function chosenManifest() {
   const s = store.get();
   if (s.pinnedPackVersion) {
     if (s.pinnedEarly) { try { return await early.manifest(s.pinnedPackVersion); } catch (_) { return manifestByTag(String(s.pinnedPackVersion).replace('early-', 'pack-')); } }
+    if (await publicClosed() && !pack_isAuthor()) { let acc = false; try { acc = !!(await early.status()).access; } catch (_) {} if (!acc) { const err = new Error('Сборка сейчас доступна только по раннему доступу.'); err.code = 'closed'; throw err; } }
     return manifestByTag(s.pinnedPackVersion);
   }
   const pub = await latestManifest();
-  if (s.useEarly === false) return pub;
+  let st = null;
   try {
-    const st = await early.status();
-    if (st.enabled && st.access) {
+    st = await early.status();
+    if (s.useEarly !== false && st.enabled && st.access) {
       const e = await early.latest();
       if (e && (!pub || e.version > pub.version)) return e;
     }
   } catch (_) {}
+  // автор закрыл открытые версии: скачать сборку можно только с ранним доступом (у кого уже скачано — играют своей)
+  if (await publicClosed() && !(st && st.access) && !pack_isAuthor()) {
+    const err = new Error('Сборка сейчас доступна только по раннему доступу — код можно получить на Boosty автора. Если сборка уже скачана, она запустится как есть.');
+    err.code = 'closed';
+    throw err;
+  }
   return pub;
 }
+async function publicClosed() { try { const c = await early.config(); return !!(c && c.publicClosed); } catch (_) { return false; } }
+function pack_isAuthor() { try { return !!store.getSecret('githubToken') && !!store.get().authorMode; } catch (_) { return false; } }
 
 async function manifestByTag(tag) {
   return netu.getJson(`https://github.com/${repo()}/releases/download/${tag}/manifest.json`);
