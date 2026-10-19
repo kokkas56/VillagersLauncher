@@ -70,6 +70,7 @@ export default function Home({ go, openAccounts, openDonate, skin }) {
               <div className="play-meta">
                 {pack && pack.authorHome && <span className="pill gold"><Icon name="crown" size={12} /> {t('Режим автора: игра с твоими локальными файлами')}</span>}
                 {needUpdate && <span className="pill green"><Icon name="download" size={12} /> {t('Доступна сборка')} #{latest.version}</span>}
+                {pack && pack.latestEarly && <span className="pill gold" title={t('Эта версия пока только для поддержавших сборку')}><Icon name="star" size={12} /> {t('ранний доступ')}</span>}
                 {latest && !needUpdate && state && state.version === latest.version && <span className="pill"><Icon name="check" size={12} /> {t('Сборка актуальна')}</span>}
                 {latest && (!state || !state.version) && !pack.authorHome && <span className="pill">{t('Будет скачано')} ~{fmtBytes(latest.size)}</span>}
                 {pack && pack.error && <span className="pill warn">{t('Нет связи с сервером сборки')}</span>}

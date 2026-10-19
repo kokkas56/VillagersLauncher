@@ -10,13 +10,14 @@ export default function Settings() {
   const { t, lang, settings, saveSettings, refreshSettings, info, toast, progress, pack, refreshPack, checkUpdates, checking: checkingUpd } = useApp();
   const [javas, setJavas] = useState(null);
   const [releases, setReleases] = useState(null);
+  const [earlyRels, setEarlyRels] = useState([]);
   const [checking, setChecking] = useState(false);
   const s = settings;
   const total = (info && info.totalMb) || 8192;
   const set = (patch) => saveSettings(patch);
 
   const detect = async () => { setJavas(null); try { setJavas(await call('java:detect')); } catch (e) { setJavas([]); toast(e.message, 'error'); } };
-  useEffect(() => { detect(); call('pack:releases').then(setReleases).catch(() => setReleases([])); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { detect(); call('pack:releases').then(setReleases).catch(() => setReleases([])); call('early:releases').then(setEarlyRels).catch(() => {}); /* eslint-disable-next-line */ }, []);
 
   const verify = async () => {
     setChecking(true);
@@ -138,12 +139,30 @@ export default function Settings() {
         <Toggle checked={!!s.keepOwnMods} onChange={(v) => set({ keepOwnMods: v })} label={t('Не трогать мои моды')} hint={t('Моды, которые ты сам положил в mods, лаунчер не будет убирать. Если игра начнёт вылетать — выключи.')} />
         <div className="field">
           <span>{t('Версия сборки')}</span>
-          <select className="input" value={s.pinnedPackVersion || ''} onChange={(e) => set({ pinnedPackVersion: e.target.value || null })}>
-            <option value="">{t('Всегда последняя')}{pack && pack.latest ? ` (#${pack.latest.version})` : ''}</option>
+          <select className="input" value={(s.pinnedEarly ? 'early:' : '') + (s.pinnedPackVersion || '')} onChange={(e) => { const v = e.target.value; set(v.startsWith('early:') ? { pinnedPackVersion: v.slice(6), pinnedEarly: true } : { pinnedPackVersion: v || null, pinnedEarly: false }); }}>
+            <option value="">{t('Всегда последняя')}{pack && pack.latest ? ` (#${pack.latest.version}${pack.latestEarly ? ' · ' + t('ранний доступ') : ''})` : ''}</option>
+            {(earlyRels || []).map((r) => <option key={'e' + r.tag} value={'early:' + r.tag}>#{r.version} ★ {t('ранний доступ')} — {(r.name || '').replace(/^#\d+\s*/, '')}</option>)}
             {(releases || []).filter((r) => !r.hidden).map((r) => <option key={r.tag} value={r.tag}>#{r.version} — {r.name.replace(/^#\d+\s*/, '')} ({fmtDate(r.date, lang)})</option>)}
           </select>
           <small className="muted">{t('Можно откатиться на прошлую версию, если в новой что-то сломалось.')}</small>
         </div>
+        {pack && pack.early && pack.early.enabled && (
+          <div className="field">
+            <span>{t('Ранний доступ')}</span>
+            {pack.early.access ? (
+              <>
+                <div className="ok-box"><Icon name="star" /> {pack.early.friend ? t('Доступ открыт (друг сборки)') : pack.early.until ? `${t('Доступ до')} ${pack.early.until}` : t('Доступ открыт')} · {pack.early.nick}</div>
+                <Toggle checked={s.useEarly !== false} onChange={(v) => set({ useEarly: v })} label={t('Получать ранние версии')} hint={t('Новые сборки приходят раньше, чем ко всем. Если выключить — будешь на общих.')} />
+              </>
+            ) : (
+              <div className="row">
+                <span className="muted small grow">{pack.early.offline ? t('Ранний доступ работает только с аккаунтом Ely.by.') : t('Новые версии сначала выходят для тех, кто поддерживает сборку, потом — для всех бесплатно.')}{pack.early.nick ? ` (${pack.early.nick})` : ''}</span>
+                {pack.early.boosty && <button className="btn sm primary" onClick={() => call('shell:open', pack.early.boosty)}>{t('Поддержать на Boosty')}</button>}
+                <button className="btn sm ghost" onClick={async () => { await call('early:status'); refreshPack(); }}><Icon name="refresh" size={12} /></button>
+              </div>
+            )}
+          </div>
+        )}
       </Section>
 
       <Section title={t('Лаунчер')} icon="gear">

@@ -59,7 +59,8 @@ export function AppProvider({ children }) {
         if (s.state === 'stopped') refreshPack();
       }),
       on('game-log', (lines) => setLogs((l) => { const n = l.concat(lines); return n.length > 1500 ? n.slice(-1200) : n; })),
-      on('update-state', setUpdate)
+      on('update-state', setUpdate),
+      on('toast', (d) => d && toast(d.text, d.kind || 'info', 8000))
     ];
     const timer = setInterval(refreshPack, 10 * 60e3);
     return () => { offs.forEach((f) => f()); clearInterval(timer); };

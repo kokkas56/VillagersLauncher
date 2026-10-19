@@ -82,6 +82,74 @@ function NewsRow({ n, t, lang, toast, reload }) {
   );
 }
 
+// ранний доступ: настройки, список доступа, ранние выпуски
+function EarlyAccess({ t, toast, refreshPack }) {
+  const [cfg, setCfg] = useState(null);
+  const [list, setList] = useState(null);
+  const [rels, setRels] = useState([]);
+  const [dirty, setDirty] = useState(false);
+  const load = async () => {
+    try { setCfg(await call('early:config')); } catch (e) { setCfg({}); }
+    try { setList(await call('early:access')); } catch (e) { setList([]); }
+    try { setRels(await call('early:authorReleases')); } catch (e) { setRels([]); }
+  };
+  useEffect(() => { load(); }, []);
+  if (!cfg) return <span className="muted">{t('Загружаю…')}</span>;
+  const saveCfg = async () => { try { await call('early:setConfig', { worker: (cfg.worker || '').trim(), repo: (cfg.repo || '').trim(), boosty: (cfg.boosty || '').trim() }); toast(t('Сохранено'), 'ok'); load(); } catch (e) { toast(e.message, 'error', 8000); } };
+  const saveList = async () => { try { setList(await call('early:setAccess', list)); setDirty(false); toast(t('Список доступа сохранён'), 'ok'); } catch (e) { toast(e.message, 'error', 8000); } };
+  const edit = (i, patch) => { const n = list.slice(); n[i] = { ...n[i], ...patch }; setList(n); setDirty(true); };
+  const today = new Date().toISOString().slice(0, 10);
+  return (
+    <div className="form">
+      <p className="muted small">{t('Новые сборки можно сначала выпускать только для поддержавших. Они лежат в закрытом репозитории, а лаунчер получает их через твой воркер Cloudflare — только для ников Ely.by из списка ниже. В назначенный день (или по кнопке) выпуск открывается всем.')}</p>
+      <label>{t('Адрес воркера')}<input className="input mono" placeholder="https://villagers-early.<имя>.workers.dev" value={cfg.worker || ''} onChange={(e) => setCfg({ ...cfg, worker: e.target.value })} /></label>
+      <label>{t('Закрытый репозиторий')}<input className="input mono" placeholder="kokkas56/MineVillagers-early" value={cfg.repo || ''} onChange={(e) => setCfg({ ...cfg, repo: e.target.value })} /></label>
+      <label>{t('Ссылка на Boosty')}<input className="input mono" placeholder="https://boosty.to/…" value={cfg.boosty || ''} onChange={(e) => setCfg({ ...cfg, boosty: e.target.value })} /></label>
+      <button className="btn sm" onClick={saveCfg}>{t('Сохранить настройки')}</button>
+      {cfg.repo && list && (
+        <>
+          <h4>{t('Кому открыт доступ')}</h4>
+          <div className="rel-list">
+            {list.map((x, i) => {
+              const live = x.friend || !x.until || x.until >= today;
+              return (
+                <div key={i} className={'rel' + (live ? '' : ' hidden-rel')}>
+                  <input className="input sm mono" style={{ width: 140 }} placeholder={t('ник Ely.by')} value={x.nick} onChange={(e) => edit(i, { nick: e.target.value })} />
+                  <label className="check small"><input type="checkbox" checked={!!x.friend} onChange={(e) => edit(i, { friend: e.target.checked })} /> {t('друг (бессрочно)')}</label>
+                  {!x.friend && <input className="input sm" type="date" value={x.until || ''} onChange={(e) => edit(i, { until: e.target.value || null })} title={t('До какого дня')} />}
+                  <input className="input sm grow" placeholder={t('заметка (Boosty-ник…)')} value={x.note || ''} onChange={(e) => edit(i, { note: e.target.value })} />
+                  {!live && <span className="pill sm">{t('истёк')}</span>}
+                  <button className="btn sm danger" onClick={() => { setList(list.filter((_, j) => j !== i)); setDirty(true); }}><Icon name="trash" size={12} /></button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="row">
+            <button className="btn sm" onClick={() => { const d = new Date(Date.now() + 31 * 864e5).toISOString().slice(0, 10); setList([...list, { nick: '', until: d, friend: false, note: '' }]); setDirty(true); }}><Icon name="plus" size={12} /> {t('Добавить')}</button>
+            <button className="btn sm primary" disabled={!dirty} onClick={saveList}>{t('Сохранить список')}</button>
+          </div>
+          <h4>{t('Ранние выпуски')}</h4>
+          {rels.length === 0 && <span className="muted small">{t('Пока нет. Отметь «Ранний доступ» при заливке сборки.')}</span>}
+          <div className="rel-list">
+            {rels.sort((a, b) => b.version - a.version).map((r) => (
+              <div key={r.tag} className={'rel' + (r.hidden ? ' hidden-rel' : '')}>
+                <b>#{r.version}</b>
+                <span className="grow">{(r.name || '').replace(/^#\d+\s*/, '')}</span>
+                {r.hidden ? <span className="pill sm green">{t('открыт всем')}</span> : (
+                  <>
+                    <input className="input sm" type="date" value={r.freeAt || ''} title={t('Когда открыть всем')} onChange={async (e) => { try { await call('early:freeAt', { tag: r.tag, freeAt: e.target.value || null }); load(); } catch (er) { toast(er.message, 'error'); } }} />
+                    <button className="btn sm" onClick={async () => { try { await call('early:open', r.tag); toast(t('Выпуск открыт для всех') + ' #' + r.version, 'ok'); load(); refreshPack(); } catch (e) { toast(e.message, 'error', 10000); } }}>{t('Открыть всем')}</button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function Author() {
   const { t, lang, settings, saveSettings, progress, toast, refreshPack } = useApp();
   const [hasToken, setHasToken] = useState(false);
@@ -92,6 +160,8 @@ export default function Author() {
   const [text, setText] = useState('');
   const [publishing, setPublishing] = useState(false);
   const [noNews, setNoNews] = useState(false);
+  const [earlyOn, setEarlyOn] = useState(false);
+  const [freeAt, setFreeAt] = useState(new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10));
   const [news, setNews] = useState([]);
   const [releases, setReleases] = useState([]);
   const [showAll, setShowAll] = useState(false);
@@ -133,7 +203,7 @@ export default function Author() {
     if (noNews && !n && !optChanged) { toast(t('Нечего заливать: изменений нет, а новость выключена'), 'warn'); return; }
     setPublishing(true);
     try {
-      const r = await call('pack:publish', { title: title.trim(), text: text.trim(), noNews });
+      const r = await call('pack:publish', { title: title.trim(), text: text.trim(), noNews, early: earlyOn, freeAt: earlyOn ? freeAt : null });
       if (r.newsWarn) toast(r.newsWarn, 'warn', 10000);
       toast(`${t('Сборка')} #${r.version} ${t('залита!')} ${t('Загружено файлов')}: ${r.uploaded}, ${t('с Modrinth')}: ${r.fromModrinth}`, 'ok', 9000);
       setTitle(''); setText('');
@@ -183,6 +253,8 @@ export default function Author() {
             ) : (
               <div className="form">
                 <label className="check"><input type="checkbox" checked={noNews} onChange={(e) => setNoNews(e.target.checked)} /> {t('Без новости (тихое обновление)')}</label>
+                <label className="check"><input type="checkbox" checked={earlyOn} onChange={(e) => setEarlyOn(e.target.checked)} /> {t('Ранний доступ (сначала только для поддержавших)')}</label>
+                {earlyOn && <label>{t('Открыть всем')}<input className="input" type="date" value={freeAt} onChange={(e) => setFreeAt(e.target.value)} /></label>}
                 <label>{t('Заголовок')}<input className="input" placeholder={noNews ? t('Необязательно — увидишь только ты') : t('Например: Жители строят теплицы')} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
                 {!noNews && <label>{t('Что нового (увидят все в новостях)')}<textarea className="input" rows={6} value={text} onChange={(e) => setText(e.target.value)} placeholder={t('Коротко опиши изменения…')} /></label>}
                 {noNews && <small className="muted">{t('Сборка обновится у всех, но в новостях записи не будет. Потом её можно показать в списке «Новости» ниже.')}</small>}
@@ -220,6 +292,10 @@ export default function Author() {
             <div className="rel-list">
               {releases.map((r) => <ReleaseRow key={r.id} r={r} t={t} lang={lang} toast={toast} reload={() => { loadReleases(); refreshPack(); }} />)}
             </div>
+          </Section>
+
+          <Section title={t('Ранний доступ')} icon="star">
+            <EarlyAccess t={t} toast={toast} refreshPack={refreshPack} />
           </Section>
 
           <Section title={t('Новости')} icon="news" right={<button className="btn sm ghost" onClick={loadNews}><Icon name="refresh" size={12} /></button>}>

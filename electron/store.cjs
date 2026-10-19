@@ -32,6 +32,8 @@ const DEFAULTS = {
   lastPackDir: null, // куда сборка скачана в последний раз (чтобы заметить переименованную папку)
   keepOwnMods: false, // не убирать из mods моды, которых нет в сборке (свои)
   pinnedPackVersion: null, // null = всегда последняя
+  pinnedEarly: false, // закреплённая версия — из раннего доступа
+  useEarly: true, // получать ранние версии, если есть доступ
   disabledOptional: [],
   downloadThreads: 8,
   // Публичный репозиторий сборки (откуда качают все)

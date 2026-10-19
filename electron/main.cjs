@@ -14,6 +14,7 @@ const mc = require('./minecraft.cjs');
 const splash = require('./splash.cjs');
 const auth = require('./auth.cjs');
 const pack = require('./pack.cjs');
+const early = require('./early.cjs');
 const java = require('./java.cjs');
 const extras = require('./extras.cjs');
 
@@ -75,6 +76,15 @@ app.whenReady().then(() => {
   });
   createWindow();
   setupUpdater();
+  // автор: ранние выпуски, чья дата наступила, открываются для всех сами
+  setTimeout(async () => {
+    if (busy) return;
+    try {
+      setBusy('publish');
+      const opened = await pack.openDue(progress);
+      if (opened.length) send('toast', { text: 'Открыты для всех: ' + opened.join(', '), kind: 'ok' });
+    } catch (e) { console.error('openDue', e); } finally { setBusy(null); progress(null); }
+  }, 20000);
 });
 
 app.on('window-all-closed', () => { if (!game && !server.running()) app.quit(); });
@@ -148,16 +158,35 @@ handle('pack:info', async () => {
   const state = pack.readState(s.gameDir);
   let latest = null;
   let error = null;
-  try { latest = await pack.latestManifest(); } catch (e) { error = e.message; }
+  try { latest = await pack.chosenManifest(); } catch (e) { error = e.message; }
+  let earlyState = null;
+  try { earlyState = await early.status(); } catch (_) {}
   if (latest) { try { latest.changelog = pack.applyNews(latest.changelog, await pack.readNews()); } catch (_) {} }
   return {
     state,
     latest: latest ? { version: latest.version, tag: latest.tag, date: latest.date, changelog: latest.changelog, minecraft: latest.minecraft, loader: latest.loader, files: latest.files.length, size: latest.files.reduce((a, f) => a + f.size, 0), servers: latest.servers || [], optional: latest.files.filter((f) => f.optional).map((f) => f.path) } : null,
     authorHome: pack.isAuthorHome(s.gameDir),
     dir: dirStatus(),
+    early: earlyState,
+    latestEarly: !!(latest && latest.early),
     error
   };
 });
+// ранний доступ
+handle('early:status', async () => { early.reset(); return early.status(); });
+handle('early:releases', () => early.releases());
+handle('early:config', () => early.config(true));
+handle('early:setConfig', (patch) => early.setConfig(patch));
+handle('early:access', async () => (await early.getAccess()).list);
+handle('early:setAccess', (list) => early.setAccess(list));
+handle('early:authorReleases', () => pack.authorEarlyReleases());
+handle('early:open', async (tag) => {
+  if (busy) throw new Error('Лаунчер сейчас занят — подожди');
+  setBusy('publish');
+  try { return await pack.openEarly(tag, progress); } finally { setBusy(null); progress(null); }
+});
+handle('early:freeAt', ({ tag, freeAt }) => pack.setEarlyFreeAt(tag, freeAt));
+handle('early:delete', (tag) => pack.deleteEarly(tag));
 handle('pack:releases', () => pack.listReleases());
 handle('pack:changes', async () => {
   try { return await pack.localChanges((p) => send('scan-progress', p)); } finally { send('scan-progress', null); }
@@ -345,7 +374,7 @@ server.init((ch, data) => send(ch, data));
 async function packVersions() {
   const s = store.get();
   let manifest = null;
-  try { manifest = s.pinnedPackVersion ? await pack.manifestByTag(s.pinnedPackVersion) : await pack.latestManifest(); } catch (_) {}
+  try { manifest = await pack.chosenManifest(); } catch (_) {}
   return {
     mcVersion: (manifest && manifest.minecraft) || s.minecraftVersion,
     neoVersion: (manifest && manifest.loader && manifest.loader.version) || s.neoforgeVersion
@@ -473,7 +502,7 @@ async function prepareGame({ verify = false, update = false, noUpdate = false } 
   if (!pack.isAuthorHome(gameDir)) {
     progress({ stage: 'pack', text: 'Проверяю обновления сборки…', indeterminate: true });
     try {
-      manifest = s.pinnedPackVersion ? await pack.manifestByTag(s.pinnedPackVersion) : await pack.latestManifest();
+      manifest = await pack.chosenManifest();
     } catch (e) {
       const st = pack.readState(gameDir);
       if (!st.version) throw new Error('Нет связи с GitHub, а сборка ещё не скачана: ' + e.message);

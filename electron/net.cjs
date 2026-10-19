@@ -59,14 +59,14 @@ async function fileOk(file, sha1, size) {
 }
 
 // Скачивает url в file. onBytes(n) вызывается по мере загрузки.
-async function downloadFile(url, file, { sha1, size, onBytes, retries = 3 } = {}) {
+async function downloadFile(url, file, { sha1, size, onBytes, retries = 3, headers } = {}) {
   await fs.promises.mkdir(path.dirname(file), { recursive: true });
   const tmp = file + '.part';
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
     let got = 0;
     try {
-      const res = await fetchRaw(url);
+      const res = await fetchRaw(url, headers ? { headers } : {});
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} ${url}`);
       const hash = crypto.createHash('sha1');
       const src = Readable.fromWeb(res.body);
@@ -114,6 +114,7 @@ async function downloadAll(items, { threads = 8, onProgress, signal, quick = fal
           await downloadFile(it.url, it.file, {
             sha1: it.sha1,
             size: it.size,
+            headers: it.headers,
             onBytes: (n) => { done += n; emit(); }
           });
         } else {
