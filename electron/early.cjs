@@ -34,6 +34,7 @@ function packRepo() { return store.get().packRepo; }
 async function ghJson(method, url, token, body, extra) {
   const res = await netu.fetchRaw(url.startsWith('http') ? url : 'https://api.github.com' + url, {
     method,
+    signal: AbortSignal.timeout(20000),
     headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}), ...(extra || {}) },
     body: body ? JSON.stringify(body) : undefined
   });
@@ -53,7 +54,7 @@ async function readRepoJson(name) {
   } catch (e) {
     if (e.status === 404) return {};
     try {
-      const res = await netu.fetchRaw(`https://raw.githubusercontent.com/${packRepo()}/HEAD/${name}`);
+      const res = await netu.fetchRaw(`https://raw.githubusercontent.com/${packRepo()}/HEAD/${name}`, { signal: AbortSignal.timeout(10000) });
       if (res.ok) return await res.json();
     } catch (_) {}
     return {};

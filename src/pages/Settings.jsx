@@ -12,6 +12,8 @@ export default function Settings() {
   const [releases, setReleases] = useState(null);
   const [earlyRels, setEarlyRels] = useState([]);
   const [code, setCode] = useState('');
+  const [authorAsk, setAuthorAsk] = useState(false);
+  const [authorToken, setAuthorToken] = useState('');
   const [checking, setChecking] = useState(false);
   const s = settings;
   const total = (info && info.totalMb) || 8192;
@@ -196,10 +198,23 @@ export default function Settings() {
           <span>{t('Потоков загрузки')}: <b>{s.downloadThreads}</b></span>
           <input type="range" min="2" max="24" value={s.downloadThreads} onChange={(e) => set({ downloadThreads: +e.target.value })} />
         </div>
-        <Toggle checked={s.authorMode} onChange={(v) => set({ authorMode: v })} label={t('Режим автора')} hint={t('Для Кокка: вкладка «Автор» с кнопкой «Залить сборку»')} />
+        {s.authorMode ? (
+          <Toggle checked={s.authorMode} onChange={(v) => set({ authorMode: v })} label={t('Режим автора')} hint={t('Вкладка «Автор»: заливка сборки, новости, ранний доступ')} />
+        ) : authorAsk ? (
+          <div className="field">
+            <span>{t('Режим автора')}</span>
+            <small className="muted">{t('Только для автора сборки: нужен его токен GitHub с правом записи в репозиторий сборки. Без него вкладка «Автор» не откроется.')}</small>
+            <div className="row">
+              <input className="input sm mono grow" type="password" placeholder="github_pat_…" value={authorToken} onChange={(e) => setAuthorToken(e.target.value)} />
+              <button className="btn sm" disabled={!authorToken.trim()} onClick={async () => { try { await call('pack:setToken', authorToken.trim()); setAuthorToken(''); setAuthorAsk(false); set({ authorMode: true }); toast(t('Режим автора включён'), 'ok'); } catch (e) { toast(e.message, 'error', 8000); } }}>{t('Проверить')}</button>
+              <button className="btn sm ghost" onClick={() => setAuthorAsk(false)}>{t('Отмена')}</button>
+            </div>
+          </div>
+        ) : null}
         <div className="row">
           <button className="btn ghost" onClick={() => call('shell:openPath', '@data')}><Icon name="folder" /> {t('Папка лаунчера')}</button>
           <button className="btn ghost" disabled={checkingUpd} onClick={checkUpdates}><Icon name="refresh" /> {checkingUpd ? t('Проверяю…') : t('Проверить обновления')}</button>
+          {!s.authorMode && !authorAsk && <button className="link-btn small muted" onClick={() => setAuthorAsk(true)}>{t('Я автор сборки')}</button>}
           <span className="muted small">VillagersLauncher {info && info.version}</span>
         </div>
       </Section>

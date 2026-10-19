@@ -92,15 +92,18 @@ function EarlyAccess({ t, toast, refreshPack }) {
   const [sure, setSure] = useState(false);
   const err = (e) => toast(e.message, 'error', 9000);
   const copy = (code, what) => { if (!code) return; navigator.clipboard.writeText(code); toast(what + ' ' + t('скопирован'), 'ok'); };
+  const [loadErr, setLoadErr] = useState(null);
   const load = async () => {
-    try { setCfg(await call('early:config')); } catch (_) { setCfg({}); }
-    try { setAu(await call('early:author')); } catch (_) {}
-    try { setRels(await call('early:authorReleases')); } catch (_) {}
+    setLoadErr(null);
+    try { setCfg(await call('early:config')); } catch (e) { setCfg({}); setLoadErr(e.message); }
+    try { setAu(await call('early:author')); } catch (e) { setAu({ hasMaster: false, masters: [] }); setLoadErr(e.message); }
+    try { setRels(await call('early:authorReleases')); } catch (_) { setRels([]); }
   };
   useEffect(() => { load(); }, []);
   if (!cfg || !au) return <span className="muted">{t('Загружаю…')}</span>;
   return (
     <div className="form">
+      {loadErr && <div className="row"><span className="muted small grow">{t('Не всё загрузилось')}: {loadErr}</span><button className="btn sm ghost" onClick={load}><Icon name="refresh" size={12} /></button></div>}
       <p className="muted small">{t('Ранние версии лежат на GitHub зашифрованными — открыть их можно только кодом. Код месяца даёт все ранние версии, вышедшие в этом месяце (остаются навсегда), код версии — одну версию, код друга — всё. Коды кладёшь в закрытые посты Boosty или отдаёшь друзьям; игрок вводит код в «Настройки → Сборка».')}</p>
       <label>{t('Ссылка на Boosty')}<input className="input mono" placeholder="https://boosty.to/…" value={cfg.boosty || ''} onChange={(e) => setCfg({ ...cfg, boosty: e.target.value })} /></label>
       <button className="btn sm" onClick={async () => { try { await call('early:setConfig', { boosty: (cfg.boosty || '').trim(), enabled: true }); toast(t('Сохранено'), 'ok'); } catch (e) { err(e); } }}>{t('Сохранить')}</button>
