@@ -26,7 +26,7 @@ const VERBS = {
     particles: { need: ['name', 'pos'] }, story_fx: { need: ['name'] }, title: { need: ['text'] }
   },
   sound: { sound: { need: ['id'] }, music: { need: ['id'] }, music_fade: { need: [] } },
-  world: { time: { need: ['value'] }, weather: { need: ['value'] }, block: { need: ['pos', 'state'] }, var: { need: ['name'] } }
+  world: { time: { need: ['value'] }, weather: { need: ['value'] }, block: { need: ['pos', 'state'] }, var: { need: ['name'] }, dialog: { need: ['id'] } }
 };
 
 const TRACK_LABEL = { camera: 'Камера', actor: 'Актёр', fx: 'Эффекты', sound: 'Звук', subtitles: 'Субтитры', world: 'Мир' };
@@ -36,7 +36,7 @@ const VERB_LABEL = {
   sit: 'Сесть', stand: 'Встать', pose: 'Поза',
   fade_in: 'Из темноты', fade_out: 'В темноту', flash: 'Вспышка', shake: 'Тряска', particles: 'Частицы', story_fx: 'Сюжетный эффект', title: 'Заголовок',
   sound: 'Звук', music: 'Музыка', music_fade: 'Музыка затихает',
-  time: 'Время суток', weather: 'Погода', block: 'Блок', var: 'Переменная'
+  time: 'Время суток', weather: 'Погода', block: 'Блок', var: 'Переменная', dialog: 'Открыть диалог'
 };
 const FIELD_LABEL = {
   path: 'путь', name: 'название', at: 'на кого смотреть', text: 'текст', pos: 'место', id: 'звук', value: 'значение', state: 'блок'
@@ -163,7 +163,7 @@ function validateScene(scene, ctx) {
       for (const f of spec.need) {
         const v = ev[f];
         const empty = v === undefined || v === null || (typeof v === 'string' && !v.trim()) || (Array.isArray(v) && !v.length);
-        if (empty) add(ERR, where + ': не заполнено поле «' + (FIELD_LABEL[f] || f) + '»', sel);
+        if (empty) add(ERR, where + ': не заполнено поле «' + (ev.do === 'dialog' ? 'диалог' : (FIELD_LABEL[f] || f)) + '»', sel);
       }
       if (ev.ticks !== undefined && ev.ticks !== null && (!isNum(ev.ticks) || ev.ticks <= 0)) add(ERR, where + ': длительность — число тиков больше нуля', sel);
       if (isNum(ev.t) && isNum(ev.ticks) && isNum(len) && ev.t + ev.ticks > len + 1) add(WARN, where + ': заканчивается после конца сцены — обрежется', sel);
@@ -214,6 +214,9 @@ function validateScene(scene, ctx) {
         case 'var':
           if (ev.name && !VAR_NAME.test(ev.name)) add(ERR, where + ': имя переменной — латиница, цифры, _ . -', sel);
           break;
+        case 'dialog':
+          if (ev.id && ctx.dialogIds && !ctx.dialogIds.includes(ev.id)) add(ERR, where + ': в проекте нет диалога «' + ev.id + '»', sel);
+          break;
         default:
       }
     });
@@ -223,9 +226,11 @@ function validateScene(scene, ctx) {
   return out;
 }
 
-function validateProject(project, scenes) {
+// extra: { dialogs: [диалоги целиком], quests: [задания целиком] } — для «Собрать для игроков»
+function validateProject(project, scenes, extra) {
+  extra = extra || {};
   const out = [];
-  const add = (sev, msg, scene) => out.push({ sev, msg, sel: null, scene: scene || null });
+  const add = (sev, msg, scene) => out.push({ sev, msg, sel: null, scene: scene || null, kind: 'project' });
   const pa = project && Array.isArray(project.actors) ? project.actors : [];
   const ids = [];
   pa.forEach((a, i) => {
@@ -236,8 +241,17 @@ function validateProject(project, scenes) {
     if (a && a.base === 'valley' && (!Number.isInteger(a.who) || a.who < 0)) add(ERR, 'Персонаж проекта ' + nm + ': нужен номер жителя долины (who)');
     if (a && a.base === 'entity' && !isResId(a.type)) add(ERR, 'Персонаж проекта ' + nm + ': тип сущности пиши вида minecraft:villager');
   });
+  out.push(...validateVars(project));
+  const dialogs = (extra.dialogs || []).filter(Boolean);
+  const quests = (extra.quests || []).filter(Boolean);
   const sids = (scenes || []).map((s) => s && s.id);
-  for (const s of scenes || []) out.push(...validateScene(s, { project, ids: sids }));
+  const dctx = dialogs.map((d) => ({ id: d.id, nodes: d.nodes && typeof d.nodes === 'object' ? Object.keys(d.nodes) : [] }));
+  const qctx = quests.map((q) => ({ id: q.id, steps: Array.isArray(q.steps) ? q.steps.map((st) => st && st.id) : [] }));
+  const dialogIds = extra.dialogs ? dctx.map((d) => d.id) : null;
+  for (const s of scenes || []) out.push(...validateScene(s, { project, ids: sids, dialogIds }).map((x) => ({ ...x, kind: 'scene', doc: x.scene })));
+  const ctx = { project, scenes: sids, dialogs: dctx, quests: qctx };
+  for (const d of dialogs) out.push(...validateDialog(d, { ...ctx, ids: dctx.map((x) => x.id) }));
+  for (const q of quests) out.push(...validateQuest(q, { ...ctx, ids: qctx.map((x) => x.id) }));
   return out;
 }
 
@@ -304,4 +318,431 @@ function normalizeProject(p) {
   return { v: 1, name: s.name || 'Сюжет', actors: s.actors || [], vars: s.vars || [], templates: s.templates || [] };
 }
 
-module.exports = { ERR, WARN, TRACK_KINDS, ACTOR_KINDS, EASES, WEATHERS, END_MODES, SUB_MAX, VERBS, TRACK_LABEL, VERB_LABEL, FIELD_LABEL, isResId, isSceneId, isActorId, isPos, isNum, trackKeyOf, itemsOfTrack, verbOf, isTarget, validateScene, validateProject, cleanScene, cleanProject, defaultProject, defaultScene, normalizeScene, normalizeProject };
+// ======================= Фаза 2: диалоги, задания, переменные =======================
+
+const VAR_TYPES = ['bool', 'int', 'text'];
+const OPS = ['==', '!=', '>', '<', '>=', '<='];
+const NODE_TYPES = ['line', 'choice', 'cond', 'action', 'scene', 'jump', 'end'];
+const NODE_LABEL = { line: 'Реплика', choice: 'Выбор', cond: 'Условие', action: 'Действие', scene: 'Сцена', jump: 'Переход', end: 'Конец' };
+const TRIGGERS = ['talk', 'scene', 'quest', 'command'];
+const COND_KINDS = ['var', 'quest', 'item', 'trust', 'time', 'memory', 'chance', 'not', 'any'];
+const COND_LABEL = { var: 'Переменная', quest: 'Задание', item: 'Есть предмет', trust: 'Доверие', time: 'Время суток', memory: 'Память жителя', chance: 'Случайно', not: 'НЕ (наоборот)', any: 'Любое из' };
+// порядок важен: { trust, add } — это доверие, а не «прибавить к переменной»
+const ACTION_KINDS = ['trust', 'set', 'add', 'give', 'take', 'memory', 'quest', 'scene', 'sound', 'xp', 'command'];
+const ACTION_LABEL = { set: 'Записать переменную', add: 'Прибавить к переменной', give: 'Дать предмет', take: 'Забрать предмет', trust: 'Доверие', memory: 'Запомнить факт', quest: 'Задание', scene: 'Сцена', sound: 'Звук', xp: 'Опыт', command: 'Команда' };
+const QUEST_STATES = ['not_started', 'active', 'done', 'failed'];
+const QUEST_OPS = ['start', 'advance', 'complete', 'fail'];
+const GOAL_TYPES = ['item', 'talk', 'reach', 'kill', 'wait', 'var', 'scene'];
+const GOAL_LABEL = { item: 'Принести предмет', talk: 'Поговорить', reach: 'Дойти до места', kill: 'Победить мобов', wait: 'Дождаться', var: 'Условие', scene: 'Посмотреть сцену' };
+const TEXT_MAX = 300;
+const DOC_ID = /^[a-z0-9_-]{1,64}$/;
+const NODE_ID = /^[A-Za-z0-9_-]{1,40}$/;
+
+function isDocId(s) { return typeof s === 'string' && DOC_ID.test(s); }
+function isVarName(s) { return typeof s === 'string' && VAR_NAME.test(s); }
+function condKind(c) { if (!c || typeof c !== 'object' || Array.isArray(c)) return null; for (const k of COND_KINDS) if (k in c) return k; return null; }
+function actionKind(a) { if (!a || typeof a !== 'object' || Array.isArray(a)) return null; for (const k of ACTION_KINDS) if (k in a) return k; return null; }
+// выходы узла диалога: [{ key, label }] — key: 'next' | 'then' | 'else' | 'opt:<i>'
+function nodeOutputs(n) {
+  if (!n) return [];
+  switch (n.type) {
+    case 'line': case 'action': case 'scene': return [{ key: 'next', label: 'дальше' }];
+    case 'cond': return [{ key: 'then', label: 'да' }, { key: 'else', label: 'нет' }];
+    case 'choice': return (Array.isArray(n.options) ? n.options : []).map((o, i) => ({ key: 'opt:' + i, label: (o && o.text) || 'вариант ' + (i + 1) }));
+    default: return [];
+  }
+}
+function getOut(n, key) {
+  if (!n) return null;
+  if (key.startsWith('opt:')) { const o = (n.options || [])[Number(key.slice(4))]; return o ? o.next || null : null; }
+  return n[key] || null;
+}
+function setOut(n, key, target) {
+  const c = { ...n };
+  if (key.startsWith('opt:')) {
+    const i = Number(key.slice(4));
+    c.options = (c.options || []).map((o, j) => { if (j !== i) return o; const x = { ...o }; if (target) x.next = target; else delete x.next; return x; });
+  } else if (target) c[key] = target; else delete c[key];
+  return c;
+}
+// «end» в next — конец диалога, даже если узла с таким id нет
+function isEndRef(id, nodes) { return id === 'end' && !(nodes && nodes.end && nodes.end.type !== 'end'); }
+
+function refsOf(ctx) {
+  ctx = ctx || {};
+  const p = ctx.project || null;
+  const pick = (arr, f) => (Array.isArray(arr) ? arr.map((x) => (typeof x === 'string' ? { id: x } : x)).filter((x) => x && x.id) : null);
+  const dl = pick(ctx.dialogs);
+  const ql = pick(ctx.quests);
+  const vars = p && Array.isArray(p.vars) ? {} : null;
+  if (vars) for (const v of p.vars) if (v && v.name) vars[v.name] = v.type || 'text';
+  return {
+    actors: p && Array.isArray(p.actors) ? p.actors.map((a) => a && a.id) : null,
+    vars,
+    scenes: Array.isArray(ctx.scenes) ? ctx.scenes.map((x) => (typeof x === 'string' ? x : x && x.id)) : null,
+    dialogs: dl ? Object.fromEntries(dl.map((d) => [d.id, Array.isArray(d.nodes) ? d.nodes : null])) : null,
+    quests: ql ? Object.fromEntries(ql.map((q) => [q.id, Array.isArray(q.steps) ? q.steps.map((x) => (typeof x === 'string' ? x : x && x.id)) : null])) : null
+  };
+}
+function typeOfValue(v) { return typeof v === 'boolean' ? 'bool' : typeof v === 'number' ? 'int' : 'text'; }
+const TYPE_RU = { bool: 'да/нет', int: 'число', text: 'текст' };
+
+function checkSpeaker(s, R, allowAny) {
+  if (s === 'any') return allowAny ? null : 'тут нужен конкретный персонаж, а не «любой»';
+  if (typeof s !== 'string' || !s) return 'не выбран';
+  if (s.startsWith('actor:')) return R.actors && !R.actors.includes(s.slice(6)) ? 'в проекте нет персонажа «' + s.slice(6) + '»' : null;
+  if (/^valley:\d+$/.test(s)) return null;
+  if (/^name:.+/.test(s)) return null;
+  return 'непонятно, кто это («' + s + '») — нужно actor:id, valley:номер, name:Имя или any';
+}
+
+function checkCond(c, where, add, R, sel) {
+  const k = condKind(c);
+  const w = where + ' → условие «' + (COND_LABEL[k] || '?') + '»';
+  switch (k) {
+    case null: add(ERR, where + ': непонятное условие', sel); return;
+    case 'var':
+      if (!isVarName(c.var)) { add(ERR, w + ': имя переменной — латиница, цифры, _ . -', sel); return; }
+      if (c.op !== undefined && !OPS.includes(c.op)) add(ERR, w + ': сравнение «' + c.op + '» — бывает ==, !=, >, <, >=, <=', sel);
+      if (c.value === undefined || c.value === null || c.value === '') add(ERR, w + ' «' + c.var + '»: не задано, с чем сравнивать', sel);
+      if (R.vars) {
+        const t = R.vars[c.var];
+        if (!t) add(WARN, w + ': переменная «' + c.var + '» не заведена во вкладке «Переменные»', sel);
+        else if (c.value !== undefined && c.value !== null && typeOfValue(c.value) !== t) add(WARN, w + ' «' + c.var + '»: переменная — ' + TYPE_RU[t] + ', а сравнивается с ' + TYPE_RU[typeOfValue(c.value)], sel);
+        else if (t !== 'int' && ['>', '<', '>=', '<='].includes(c.op)) add(WARN, w + ' «' + c.var + '»: больше/меньше имеет смысл только для чисел', sel);
+      }
+      return;
+    case 'quest':
+      if (!isDocId(c.quest)) { add(ERR, w + ': не выбрано задание', sel); return; }
+      if (R.quests && !(c.quest in R.quests)) add(ERR, w + ': в проекте нет задания «' + c.quest + '»', sel);
+      if (c.state !== undefined && !QUEST_STATES.includes(c.state)) add(ERR, w + ': состояние «' + c.state + '» — бывает не начато / идёт / сделано / провалено', sel);
+      if (c.step && R.quests && R.quests[c.quest] && !R.quests[c.quest].includes(c.step)) add(ERR, w + ': в задании «' + c.quest + '» нет шага «' + c.step + '»', sel);
+      return;
+    case 'item':
+      if (!isResId(c.item)) add(ERR, w + ': предмет пиши вида minecraft:bread', sel);
+      if (c.count !== undefined && (!Number.isInteger(c.count) || c.count < 1)) add(ERR, w + ': количество — целое число от 1', sel);
+      return;
+    case 'trust':
+      if (!c.trust) add(ERR, w + ': не выбран персонаж', sel);
+      else if (R.actors && !R.actors.includes(c.trust)) add(WARN, w + ': в проекте нет персонажа «' + c.trust + '»', sel);
+      if (c.op !== undefined && !OPS.includes(c.op)) add(ERR, w + ': неизвестное сравнение «' + c.op + '»', sel);
+      if (!isNum(c.value)) add(ERR, w + ': доверие сравнивается с числом', sel);
+      return;
+    case 'time': if (!['day', 'night'].includes(c.time)) add(ERR, w + ': время — день или ночь', sel); return;
+    case 'memory': if (!c.memory || !String(c.memory).trim()) add(ERR, w + ': не написан факт памяти', sel); return;
+    case 'chance': if (!isNum(c.chance) || c.chance < 0 || c.chance > 1) add(ERR, w + ': шанс — число от 0 до 1 (0.3 = 30%)', sel); return;
+    case 'not': if (!c.not || typeof c.not !== 'object') add(ERR, w + ': внутри пусто', sel); else checkCond(c.not, where + ' → НЕ', add, R, sel); return;
+    case 'any':
+      if (!Array.isArray(c.any) || !c.any.length) add(ERR, w + ': список пуст', sel);
+      else c.any.forEach((x) => checkCond(x, where + ' → любое из', add, R, sel));
+      return;
+    default:
+  }
+}
+function checkConds(list, where, add, R, sel) {
+  if (list === undefined || list === null) return;
+  if (!Array.isArray(list)) { add(ERR, where + ': список условий повреждён', sel); return; }
+  list.forEach((c) => checkCond(c, where, add, R, sel));
+}
+function checkAction(a, where, add, R, sel) {
+  const k = actionKind(a);
+  const w = where + ' → «' + (ACTION_LABEL[k] || '?') + '»';
+  switch (k) {
+    case null: add(ERR, where + ': непонятное действие', sel); return;
+    case 'set': case 'add': {
+      const name = a[k];
+      if (!isVarName(name)) { add(ERR, w + ': имя переменной — латиница, цифры, _ . -', sel); return; }
+      if (a.value === undefined || a.value === null || a.value === '') add(ERR, w + ' «' + name + '»: не задано значение', sel);
+      if (k === 'add' && a.value !== undefined && !isNum(a.value)) add(ERR, w + ' «' + name + '»: прибавлять можно только число', sel);
+      if (R.vars) {
+        const t = R.vars[name];
+        if (!t) add(WARN, w + ': переменная «' + name + '» не заведена во вкладке «Переменные»', sel);
+        else if (k === 'add' && t !== 'int') add(WARN, w + ' «' + name + '»: прибавлять можно к числу, а переменная — ' + TYPE_RU[t], sel);
+        else if (k === 'set' && a.value !== undefined && a.value !== null && typeOfValue(a.value) !== t) add(WARN, w + ' «' + name + '»: переменная — ' + TYPE_RU[t] + ', а записывается ' + TYPE_RU[typeOfValue(a.value)], sel);
+      }
+      return;
+    }
+    case 'give': case 'take':
+      if (!isResId(a[k])) add(ERR, w + ': предмет пиши вида minecraft:bread', sel);
+      if (a.count !== undefined && (!Number.isInteger(a.count) || a.count < 1 || a.count > 6400)) add(ERR, w + ': количество — целое число от 1', sel);
+      return;
+    case 'trust':
+      if (!a.trust) add(ERR, w + ': не выбран персонаж', sel);
+      else if (R.actors && !R.actors.includes(a.trust)) add(WARN, w + ': в проекте нет персонажа «' + a.trust + '»', sel);
+      if (!isNum(a.add)) add(ERR, w + ': сколько прибавить — число (можно минус)', sel);
+      return;
+    case 'memory': if (!a.memory || !String(a.memory).trim()) add(ERR, w + ': не написан факт', sel); return;
+    case 'quest':
+      if (!isDocId(a.quest)) { add(ERR, w + ': не выбрано задание', sel); return; }
+      if (R.quests && !(a.quest in R.quests)) add(ERR, w + ': в проекте нет задания «' + a.quest + '»', sel);
+      if (!QUEST_OPS.includes(a.do)) add(ERR, w + ': что сделать с заданием — начать / продвинуть / завершить / провалить', sel);
+      if (a.step && R.quests && R.quests[a.quest] && !R.quests[a.quest].includes(a.step)) add(ERR, w + ': в задании «' + a.quest + '» нет шага «' + a.step + '»', sel);
+      return;
+    case 'scene':
+      if (!isDocId(a.scene)) add(ERR, w + ': не выбрана сцена', sel);
+      else if (R.scenes && !R.scenes.includes(a.scene)) add(ERR, w + ': в проекте нет сцены «' + a.scene + '»', sel);
+      return;
+    case 'sound': if (!isResId(a.sound)) add(ERR, w + ': id звука пиши вида minecraft:entity.player.levelup', sel); return;
+    case 'xp': if (!Number.isInteger(a.xp) || a.xp === 0) add(ERR, w + ': опыт — целое число (можно минус)', sel); return;
+    case 'command':
+      if (!a.command || !String(a.command).trim()) add(ERR, w + ': команда пустая', sel);
+      else add(WARN, w + ': команда сервера выполнится с правами оператора — проверь её в игре', sel);
+      return;
+    default:
+  }
+}
+function checkActions(list, where, add, R, sel) {
+  if (list === undefined || list === null) return;
+  if (!Array.isArray(list)) { add(ERR, where + ': список действий повреждён', sel); return; }
+  list.forEach((a) => checkAction(a, where, add, R, sel));
+}
+function checkText(t, where, add, R, sel, required) {
+  const s = t == null ? '' : String(t);
+  if (!s.trim()) { if (required) add(ERR, where + ': пустой текст', sel); return; }
+  if (s.length > TEXT_MAX) add(WARN, where + ': длинный текст (' + s.length + ' знаков, лучше до ' + TEXT_MAX + ') — раздели на две реплики', sel);
+  for (const m of s.matchAll(/\{([^}]*)\}/g)) {
+    const inner = m[1];
+    if (inner === 'player') continue;
+    if (inner.startsWith('var:')) { const n = inner.slice(4); if (R.vars && !(n in R.vars)) add(WARN, where + ': в тексте {var:' + n + '} — такой переменной нет', sel); continue; }
+    add(WARN, where + ': непонятная подстановка {' + inner + '} — бывает {player} и {var:имя}', sel);
+  }
+}
+
+// Проверка диалога. ctx: { project, ids: [id диалогов], dialogs: [{id, nodes:[id узлов]}], scenes: [id], quests: [{id, steps:[id]}] }
+function validateDialog(d, ctx) {
+  ctx = ctx || {};
+  const out = [];
+  const did = d && d.id;
+  const add = (sev, msg, sel) => out.push({ sev, msg, sel: sel || null, kind: 'dialog', doc: did || null });
+  if (!d || typeof d !== 'object') { add(ERR, 'Диалог пустой или повреждён'); return out; }
+  const R = refsOf(ctx);
+  if (!isDocId(d.id)) add(ERR, 'Имя файла диалога (id) — маленькие латинские буквы, цифры, _ и -');
+  if (ctx.ids && ctx.ids.filter((x) => x === d.id).length > 1) add(ERR, 'Диалог с именем «' + d.id + '» уже есть');
+  if (!d.title || !String(d.title).trim()) add(WARN, 'У диалога нет названия — так его трудно искать');
+  const sp = checkSpeaker(d.speaker, R, true);
+  if (sp) add(ERR, 'Кто говорит: ' + sp);
+  const tr = d.trigger || {};
+  if (tr.on !== undefined && !TRIGGERS.includes(tr.on)) add(ERR, 'Запуск: непонятно когда («' + tr.on + '»)');
+  if (tr.priority !== undefined && !isNum(tr.priority)) add(ERR, 'Запуск: важность — число');
+  checkConds(tr.when, 'Условия запуска', add, R, null);
+  if (tr.on === 'talk' && d.speaker === 'any' && !(Array.isArray(tr.when) && tr.when.length)) add(WARN, 'Диалог откроется у ЛЮБОГО жителя при разговоре — добавь условие запуска или выбери, кто говорит');
+  const nodes = d.nodes && typeof d.nodes === 'object' && !Array.isArray(d.nodes) ? d.nodes : null;
+  if (!nodes || !Object.keys(nodes).length) { add(ERR, 'В диалоге нет ни одного узла'); return out; }
+  if (!d.start) add(ERR, 'Не выбран первый узел (старт)');
+  else if (!nodes[d.start]) add(ERR, 'Старт указывает на узел «' + d.start + '», которого нет');
+  const link = (id, where, sel, need) => {
+    if (id === undefined || id === null || id === '') { if (need) add(need === 'warn' ? WARN : ERR, where + ': никуда не ведёт' + (need === 'warn' ? ' — тут диалог закончится (соедини с «Концом», если так задумано)' : ' — протяни стрелку к следующему узлу'), sel); return; }
+    if (isEndRef(id, nodes)) return;
+    if (!nodes[id]) add(ERR, where + ': ведёт к узлу «' + id + '», которого нет', sel);
+  };
+  for (const [id, n] of Object.entries(nodes)) {
+    const sel = { node: id };
+    if (!n || typeof n !== 'object') { add(ERR, 'Узел «' + id + '» повреждён', sel); continue; }
+    const where = (NODE_LABEL[n.type] || 'Узел') + ' «' + id + '»';
+    if (!NODE_ID.test(id)) add(ERR, where + ': id узла — латиница, цифры, _ и -', sel);
+    switch (n.type) {
+      case 'line':
+        checkText(n.text, where, add, R, sel, true);
+        if (n.who && n.who !== 'speaker' && n.who !== 'player') { const e = checkSpeaker(n.who, R, false); if (e) add(ERR, where + ': кто говорит — ' + e, sel); }
+        link(n.next, where, sel, 'warn');
+        break;
+      case 'choice': {
+        if (n.text) checkText(n.text, where, add, R, sel, false);
+        const opts = Array.isArray(n.options) ? n.options : [];
+        if (!opts.length) add(ERR, where + ': нет ни одного варианта ответа', sel);
+        if (opts.length > 6) add(WARN, where + ': ' + opts.length + ' вариантов — в окне поместится 6, лучше разбить', sel);
+        opts.forEach((o, i) => {
+          const w = where + ', вариант ' + (i + 1);
+          if (!o || typeof o !== 'object') { add(ERR, w + ': повреждён', sel); return; }
+          checkText(o.text, w, add, R, sel, true);
+          checkConds(o.when, w, add, R, sel);
+          link(o.next, w, sel, 'err');
+        });
+        if (opts.length && opts.every((o) => o && Array.isArray(o.when) && o.when.length)) add(WARN, where + ': у всех вариантов есть условия — может случиться, что выбрать нечего', sel);
+        break;
+      }
+      case 'cond':
+        if (!Array.isArray(n.if) || !n.if.length) add(ERR, where + ': не задано, что проверять', sel);
+        checkConds(n.if, where, add, R, sel);
+        link(n.then, where + ' → «да»', sel, 'err');
+        link(n.else, where + ' → «нет»', sel, 'warn');
+        break;
+      case 'action':
+        if (!Array.isArray(n.do) || !n.do.length) add(ERR, where + ': нет ни одного действия', sel);
+        checkActions(n.do, where, add, R, sel);
+        link(n.next, where, sel, 'warn');
+        break;
+      case 'scene':
+        if (!isDocId(n.scene)) add(ERR, where + ': не выбрана сцена', sel);
+        else if (R.scenes && !R.scenes.includes(n.scene)) add(ERR, where + ': в проекте нет сцены «' + n.scene + '»', sel);
+        link(n.next, where, sel, null);
+        break;
+      case 'jump':
+        if (!isDocId(n.dialog)) add(ERR, where + ': не выбран диалог, куда перейти', sel);
+        else if (R.dialogs && !(n.dialog in R.dialogs)) add(ERR, where + ': в проекте нет диалога «' + n.dialog + '»', sel);
+        else if (n.node && R.dialogs && R.dialogs[n.dialog] && !R.dialogs[n.dialog].includes(n.node)) add(ERR, where + ': в диалоге «' + n.dialog + '» нет узла «' + n.node + '»', sel);
+        if (n.dialog === d.id && (!n.node || n.node === d.start)) add(WARN, where + ': переход в начало этого же диалога — проверь, что это не бесконечный круг', sel);
+        break;
+      case 'end': break;
+      default: add(ERR, 'Узел «' + id + '»: неизвестный вид «' + n.type + '»', sel);
+    }
+  }
+  // недостижимые узлы
+  if (d.start && nodes[d.start]) {
+    const seen = new Set([d.start]);
+    const q = [d.start];
+    while (q.length) {
+      const n = nodes[q.shift()];
+      for (const o of nodeOutputs(n)) { const t = getOut(n, o.key); if (t && nodes[t] && !seen.has(t)) { seen.add(t); q.push(t); } }
+    }
+    for (const id of Object.keys(nodes)) if (!seen.has(id)) add(WARN, (NODE_LABEL[nodes[id] && nodes[id].type] || 'Узел') + ' «' + id + '»: до него не дойти от старта — в игре его не увидят', { node: id });
+  }
+  return out;
+}
+
+function describeGoal(g) {
+  if (!g || typeof g !== 'object') return '?';
+  switch (g.type) {
+    case 'item': return 'принести ' + (g.count || 1) + ' × ' + String(g.item || '?').replace(/^minecraft:/, '');
+    case 'talk': return 'поговорить: ' + String(g.speaker || '?').replace(/^(actor|name|valley):/, '');
+    case 'reach': return 'дойти до ' + (isPos(g.pos) ? g.pos.map((n) => Math.round(n)).join(' ') : '?');
+    case 'kill': return 'победить ' + (g.count || 1) + ' × ' + String(g.entity || '?').replace(/^minecraft:/, '');
+    case 'wait': return g.until === 'ticks' ? 'подождать ' + (Math.round((g.ticks || 0) / 2) / 10) + ' с' : 'дождаться ' + (g.until === 'day' ? 'дня' : 'ночи');
+    case 'var': return 'условие (' + ((g.cond || []).length) + ')';
+    case 'scene': return 'сцена ' + (g.scene || '?');
+    default: return '?';
+  }
+}
+
+// Проверка задания. ctx — как у диалога (ids — id заданий)
+function validateQuest(q, ctx) {
+  ctx = ctx || {};
+  const out = [];
+  const qid = q && q.id;
+  const add = (sev, msg, sel) => out.push({ sev, msg, sel: sel || null, kind: 'quest', doc: qid || null });
+  if (!q || typeof q !== 'object') { add(ERR, 'Задание пустое или повреждено'); return out; }
+  const R = refsOf(ctx);
+  if (R.quests && isDocId(q.id) && Array.isArray(q.steps)) R.quests[q.id] = q.steps.map((s) => s && s.id); // свои шаги — всегда свежие
+  if (!isDocId(q.id)) add(ERR, 'Имя файла задания (id) — маленькие латинские буквы, цифры, _ и -');
+  if (ctx.ids && ctx.ids.filter((x) => x === q.id).length > 1) add(ERR, 'Задание с именем «' + q.id + '» уже есть');
+  if (!q.title || !String(q.title).trim()) add(ERR, 'У задания нет названия — его видит игрок в журнале');
+  if (q.giver) { const e = checkSpeaker(q.giver, R, false); if (e) add(ERR, 'Кто даёт задание: ' + e); }
+  const st = q.start || {};
+  checkConds(st.when, 'Условия старта', add, R, { head: true });
+  if (st.auto && !(Array.isArray(st.when) && st.when.length)) add(WARN, 'Задание начнётся само сразу у всех игроков — добавь условие старта, если так не задумано', { head: true });
+  const steps = Array.isArray(q.steps) ? q.steps : [];
+  if (!steps.length) add(ERR, 'В задании нет ни одного шага');
+  const ids = [];
+  steps.forEach((s, i) => {
+    const sel = { step: i };
+    if (!s || typeof s !== 'object') { add(ERR, 'Шаг ' + (i + 1) + ' повреждён', sel); return; }
+    const where = 'Шаг ' + (i + 1) + (s.title ? ' «' + s.title + '»' : '');
+    if (!s.id || !NODE_ID.test(s.id)) add(ERR, where + ': id шага — латиница, цифры, _ и -', sel);
+    else if (ids.includes(s.id)) add(ERR, where + ': id «' + s.id + '» повторяется — у шагов должны быть разные id', sel);
+    ids.push(s.id);
+    if (!s.title || !String(s.title).trim()) add(ERR, where + ': нет текста цели — его видит игрок', sel);
+    const g = s.goal || {};
+    const gw = where + ' (' + (GOAL_LABEL[g.type] || 'цель') + ')';
+    switch (g.type) {
+      case 'item':
+        if (!isResId(g.item)) add(ERR, gw + ': предмет пиши вида minecraft:bread', sel);
+        if (!Number.isInteger(g.count) || g.count < 1) add(ERR, gw + ': сколько — целое число от 1', sel);
+        break;
+      case 'talk': {
+        const e = checkSpeaker(g.speaker, R, false);
+        if (e) add(ERR, gw + ': с кем — ' + e, sel);
+        if (g.dialog && R.dialogs && !(g.dialog in R.dialogs)) add(ERR, gw + ': в проекте нет диалога «' + g.dialog + '»', sel);
+        break;
+      }
+      case 'reach':
+        if (!isPos(g.pos)) add(ERR, gw + ': не задано место (x y z) — «Взять из игры»', sel);
+        if (!isNum(g.radius) || g.radius <= 0) add(ERR, gw + ': радиус — число больше нуля', sel);
+        break;
+      case 'kill':
+        if (!isResId(g.entity)) add(ERR, gw + ': моба пиши вида minecraft:zombie', sel);
+        if (!Number.isInteger(g.count) || g.count < 1) add(ERR, gw + ': сколько — целое число от 1', sel);
+        break;
+      case 'wait':
+        if (!['day', 'night', 'ticks'].includes(g.until)) add(ERR, gw + ': чего ждать — день, ночь или время', sel);
+        if (g.until === 'ticks' && (!Number.isInteger(g.ticks) || g.ticks <= 0)) add(ERR, gw + ': сколько ждать — тики больше нуля (20 = 1 с)', sel);
+        break;
+      case 'var':
+        if (!Array.isArray(g.cond) || !g.cond.length) add(ERR, gw + ': не задано условие', sel);
+        checkConds(g.cond, gw, add, R, sel);
+        break;
+      case 'scene':
+        if (!isDocId(g.scene)) add(ERR, gw + ': не выбрана сцена', sel);
+        else if (R.scenes && !R.scenes.includes(g.scene)) add(ERR, gw + ': в проекте нет сцены «' + g.scene + '»', sel);
+        break;
+      default: add(ERR, where + ': не выбран вид цели', sel);
+    }
+    if (s.marker && !isPos(s.marker.pos)) add(ERR, where + ': метка на месте без координат', sel);
+    if (s.dialog && R.dialogs && !(s.dialog in R.dialogs)) add(ERR, where + ': диалог по завершении «' + s.dialog + '» не найден', sel);
+    checkActions(s.onDone, where + ' → по завершении', add, R, sel);
+  });
+  checkActions(q.rewards, 'Награда', add, R, { rewards: true });
+  return out;
+}
+
+function validateVars(project) {
+  const out = [];
+  const add = (sev, msg, i) => out.push({ sev, msg, sel: i == null ? null : { v: i }, kind: 'vars', doc: null });
+  const vars = project && Array.isArray(project.vars) ? project.vars : [];
+  const seen = [];
+  vars.forEach((v, i) => {
+    if (!v || typeof v !== 'object') { add(ERR, 'Переменная №' + (i + 1) + ' повреждена', i); return; }
+    const nm = '«' + (v.name || '№' + (i + 1)) + '»';
+    if (!isVarName(v.name)) add(ERR, 'Переменная ' + nm + ': имя — латиница, цифры, _ . -', i);
+    else if (seen.includes(v.name)) add(ERR, 'Переменная ' + nm + ' заведена дважды', i);
+    seen.push(v.name);
+    if (!VAR_TYPES.includes(v.type)) add(ERR, 'Переменная ' + nm + ': тип — да/нет, число или текст', i);
+    else if (v.init !== undefined && v.init !== null && typeOfValue(v.init) !== v.type) add(ERR, 'Переменная ' + nm + ': начальное значение не того типа (нужно ' + TYPE_RU[v.type] + ')', i);
+    else if (v.type === 'int' && !Number.isInteger(v.init)) add(WARN, 'Переменная ' + nm + ': число лучше целое', i);
+  });
+  return out;
+}
+function varDefault(type) { return type === 'bool' ? false : type === 'int' ? 0 : ''; }
+
+function defaultDialog(id, title) {
+  return {
+    v: 1, id, title: title || id, note: '', speaker: 'any',
+    trigger: { on: 'talk', when: [], once: false, priority: 10 },
+    start: 'n1',
+    nodes: {
+      n1: { type: 'line', who: 'speaker', text: 'Привет, {player}!', next: 'n2', x: 40, y: 60 },
+      n2: { type: 'choice', text: '', options: [{ text: 'Привет!', next: 'end' }, { text: 'Пока.', next: 'end' }], x: 320, y: 60 },
+      end: { type: 'end', x: 600, y: 80 }
+    }
+  };
+}
+function defaultQuest(id, title) {
+  return {
+    v: 1, id, title: title || id, desc: '', giver: null, start: { auto: false, when: [] },
+    steps: [{ id: 's1', title: 'Принеси 3 хлеба', goal: { type: 'item', item: 'minecraft:bread', count: 3, consume: true }, marker: null, onDone: [] }],
+    rewards: [{ xp: 10 }], repeatable: false, journal: true
+  };
+}
+function cleanDoc(d) { return strip(d); }
+// для игроков: без служебных полей, координаты узлов округлены (игра их не читает — только Студия)
+function normalizeDialog(d) {
+  const s = strip(d);
+  const nodes = {};
+  for (const [id, n] of Object.entries(s.nodes || {})) {
+    if (!n || typeof n !== 'object') continue;
+    const c = { ...n };
+    if (isNum(c.x)) c.x = Math.round(c.x); if (isNum(c.y)) c.y = Math.round(c.y);
+    nodes[id] = c;
+  }
+  return { v: 1, id: s.id, title: s.title || s.id, speaker: s.speaker || 'any', trigger: { on: 'talk', when: [], once: false, priority: 10, ...(s.trigger || {}) }, start: s.start, nodes };
+}
+function normalizeQuest(q) {
+  const s = strip(q);
+  return {
+    v: 1, id: s.id, title: s.title || s.id, desc: s.desc || '', giver: s.giver || null,
+    start: { auto: false, when: [], ...(s.start || {}) },
+    steps: (s.steps || []).map((st) => ({ onDone: [], marker: null, ...st })),
+    rewards: s.rewards || [], repeatable: !!s.repeatable, journal: s.journal !== false
+  };
+}
+
+module.exports = { ERR, WARN, TRACK_KINDS, ACTOR_KINDS, EASES, WEATHERS, END_MODES, SUB_MAX, VERBS, TRACK_LABEL, VERB_LABEL, FIELD_LABEL, isResId, isSceneId, isActorId, isPos, isNum, trackKeyOf, itemsOfTrack, verbOf, isTarget, validateScene, validateProject, cleanScene, cleanProject, defaultProject, defaultScene, normalizeScene, normalizeProject, VAR_TYPES, OPS, NODE_TYPES, NODE_LABEL, TRIGGERS, COND_KINDS, COND_LABEL, ACTION_KINDS, ACTION_LABEL, QUEST_STATES, QUEST_OPS, GOAL_TYPES, GOAL_LABEL, TEXT_MAX, isDocId, isVarName, condKind, actionKind, nodeOutputs, getOut, setOut, isEndRef, checkSpeaker, checkConds, checkActions, validateDialog, describeGoal, validateQuest, validateVars, varDefault, defaultDialog, defaultQuest, cleanDoc, normalizeDialog, normalizeQuest };
