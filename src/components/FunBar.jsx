@@ -6,7 +6,8 @@ import * as music from '../lib/music.js';
 
 // Нижняя полоска главного экрана: сцена на фоне (◀ имя ▶, автосмена), музыка (нота + громкость), «Поиграть».
 // Музыка по настройкам; молчит, пока запущен Minecraft.
-export function useMusic(settings, gameRunning) {
+export function useMusic(settingsIn, gameRunning) {
+  const settings = settingsIn || {};
   useEffect(() => {
     music.setVolume(settings.musicVol != null ? settings.musicVol : 0.25);
     music.setSfxVolume(settings.sfxVol != null ? settings.sfxVol : 0.35);
