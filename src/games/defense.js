@@ -563,7 +563,7 @@ export default {
       const leaving = sentry.state === 'leave';
       let target = null;
       if (!leaving && g.phase === 'idle') {
-        for (let i9 = 0; i9 < zombies.length; i9++) { const z = zombies[i9]; if (z.on && (z.mode === 'walk' || z.mode === 'rattle') && z.x > 30 && (!target || z.x > target.x)) target = z; }
+        for (let i9 = 0; i9 < zombies.length; i9++) { const z = zombies[i9]; if (z.on && (z.mode === 'walk' || z.mode === 'rattle') && z.x > OUTER_X - 46 && (!target || z.x > target.x)) target = z; }
       }
       const dx = sentry.timer - sentry.x; // timer хранит цель по x
       if (target) {
@@ -1283,41 +1283,53 @@ export default {
       }
     };
 
-    // внешние ворота на дороге
+    // внешние ворота на дороге: дощатый заслон через дорогу, фонарь на столбе
+    const OG_TOP = 124, OG_BOT = 171;
     const drawOuterGate = (wood, woodD, dark) => {
       const x = OUTER_X;
+      const sh = g.phase === 'intro' && g.og > 0 && g.pt > 0.9 && g.pt < g.introTp ? Math.round(Math.sin(g.t * 45)) : 0;
+      // столб с фонарём
       ctx.fillStyle = woodD;
-      ctx.fillRect(x - 1, LANE_TOP - 8, 3, 16);
-      ctx.fillRect(x - 1, LANE_TOP + LANE_H - 6, 3, 14);
-      // фонарь на столбе
+      ctx.fillRect(x - 5, OG_TOP - 8, 2, OG_BOT - OG_TOP + 8);
+      ctx.fillRect(x - 5, OG_TOP - 8, 5, 1);
       const f = 0.8 + 0.2 * Math.sin(g.t * 6);
       ctx.fillStyle = rgbStr(255, 200 * f, 90);
-      ctx.fillRect(x - 1, LANE_TOP - 11, 3, 3);
+      ctx.fillRect(x - 2, OG_TOP - 6, 2, 3);
       ctx.fillStyle = rgbStr(255, 190, 90, 0.06 + 0.12 * dark);
-      ctx.fillRect(x - 7, LANE_TOP - 17, 15, 15);
-      const rows = g.og >= 0.99 ? 3 : Math.ceil(g.og * 3 - 0.001);
-      for (let row = 0; row < 3; row++) {
-        const by = LANE_TOP + 6 + row * 9;
-        if (row < rows) {
-          const sh = g.phase === 'intro' && g.og > 0 && g.pt > 0.9 ? Math.round(Math.sin(g.t * 40 + row)) : 0;
-          ctx.fillStyle = woodD;
-          ctx.fillRect(x - 3 + sh, by - 3, 7, 1);
-          ctx.fillRect(x - 3 + sh, by - 7, 7, 1);
-          ctx.fillStyle = wood;
-          ctx.fillRect(x - 3 + sh, by - 9, 2, 10);
-          ctx.fillRect(x + sh, by - 10, 2, 11);
-          ctx.fillRect(x + 3 + sh, by - 9, 2, 10);
-          if (g.og < 0.99) {
-            ctx.fillStyle = 'rgba(20,12,8,0.8)';
-            ctx.fillRect(x + sh, by - 6, 1, 3);
-            ctx.fillRect(x + 3 + sh, by - 4, 1, 2);
-          }
-        } else {
-          // обломки
-          ctx.fillStyle = woodD;
-          ctx.fillRect(x - 6 + row * 3, by, 5, 1);
-          ctx.fillRect(x + 4, by - 1, 3, 1);
-        }
+      ctx.fillRect(x - 8, OG_TOP - 12, 13, 13);
+      // доски: целые снизу вверх на высоту og
+      const full = OG_BOT - OG_TOP;
+      const hgt = Math.round(full * clamp(g.og, 0, 1));
+      for (let i = 0; i < 3; i++) {
+        const px = x - 2 + i * 2 + sh;
+        // зубчатый верх: у сломанных досок разная высота
+        const jag = g.og < 0.99 ? (i === 1 ? 3 : i === 2 ? -2 : 0) : 0;
+        const ph = clamp(hgt + jag, 0, full);
+        const top = OG_BOT - ph;
+        ctx.fillStyle = i === 1 ? woodD : wood;
+        if (ph > 0) ctx.fillRect(px, top, 2, ph);
+        if (g.og >= 0.99) ctx.fillRect(px, top - 1, 1, 1); // заострённые колья
+      }
+      if (hgt > 6) {
+        ctx.fillStyle = rgbMix(IRON, NIGHTC, dark * 0.5);
+        const b1 = OG_BOT - 8, b2 = OG_BOT - Math.round(full * 0.7);
+        ctx.fillRect(x - 3 + sh, b1, 8, 1);
+        if (OG_BOT - hgt < b2) ctx.fillRect(x - 3 + sh, b2, 8, 1);
+      }
+      // трещины
+      if (g.og < 0.99 && hgt > 4) {
+        ctx.fillStyle = 'rgba(20,12,8,0.85)';
+        ctx.fillRect(x - 1 + sh, OG_BOT - hgt + 2, 1, 4);
+        ctx.fillRect(x + 2 + sh, OG_BOT - hgt + 5, 1, 3);
+      }
+      // обломки на земле
+      if (g.og < 0.6) {
+        ctx.fillStyle = woodD;
+        ctx.fillRect(x - 12, 160, 6, 1);
+        ctx.fillRect(x + 5, 166, 7, 1);
+        ctx.fillStyle = wood;
+        ctx.fillRect(x - 9, 151, 5, 1);
+        ctx.fillRect(x + 7, 157, 4, 1);
       }
     };
 

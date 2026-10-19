@@ -118,6 +118,7 @@ function drawSpr(sp, x, y) {
   for (let j = 0; j < r.length; j += 4) { C.fillStyle = r[j]; C.fillRect(x + r[j + 1], y + r[j + 2], r[j + 3], 1); }
 }
 // самородки для HUD и трассы
+const CART_ICON = sprite({ a: '#8d9098', b: '#4a4c53', c: '#2a2a2e', d: '#ffcf5a' }, ['d......', 'aaaaaaa', 'babbbab', '.bbbbb.', '.c...c.']);
 const NUG = ORE.map((o) => sprite({ a: o.c, b: o.d, w: '#ffffff' }, ['.aa..', 'awab.', 'aaabb', '.abb.']));
 
 // ---------- пласты породы (бесшовные по 320 px) ----------
@@ -143,7 +144,16 @@ function paintStrata(bands, rand) {
     R(rand() * W, rand() * H, rand() > 0.8 ? 2 : 1, 1);
   }
 }
-function paintRock(s) { paintStrata(s.bands, lcg(s.seed + 7)); }
+function paintRock(s) {
+  const rand = lcg(s.seed + 7);
+  paintStrata(s.bands, rand);
+  // рудные гнёзда в породе
+  for (let i = 0; i < 16; i++) {
+    const c = ORE[F(rand() * 3)], x = 6 + F(rand() * (W - 12)), y = 8 + F(rand() * (H - 16));
+    C.fillStyle = c.d; R(x - 1, y - 1, 4, 4); R(x + 3, y + 2, 2, 2);
+    C.fillStyle = c.c; R(x, y, 2, 2); R(x + 3, y + 2, 1, 1);
+  }
+}
 
 function timberPost(x, top, bot) {
   C.fillStyle = P.woodDk; R(x - 1, top, 4, bot - top);
@@ -371,8 +381,8 @@ export default {
             tr.broken = rand() < 0.5 ? 2 : 3;
             space += tr.broken * STEP;
           } else if (r < 0.62) {
-            addObj(0, x + 4, 0, 0); // низкая балка
-            tr.ty = tr.y; tr.hill = 4;
+            addObj(0, x + 4 + STEP * 4, 0, 0); // низкая балка — вокруг неё путь ровный
+            tr.ty = tr.y; tr.hill = 9;
           } else if (r < 0.78) {
             addObj(1, x + 40, 0, 0); // летучая мышь
           } else {
@@ -464,6 +474,7 @@ export default {
     };
     const crash = (k) => {
       if (cart.crash) return;
+      if (api._dbg) api._dbg.crash = [k, Math.round(cart.v), Math.round(cart.y - trackY(cart.x)), cart.ground, cart.duck, trackT(cart.x)];
       cart.crash = 1; g.crashK = k; cart.v = Math.min(cart.v, k === 0 ? 70 : 45);
       phase = 'crash'; pt = 0;
       api.sfx('hit');
@@ -564,7 +575,7 @@ export default {
           const by = trackY(o.x) - 15;
           if (cx + 7 > o.x - 10 && cx - 7 < o.x + 10 && top < by) { crash(1); return; }
         } else if (o.k === 1) {
-          if (o.flee) continue;
+          if (o.flee || (cart.duck && cart.ground)) continue;
           if (Math.abs(o.x - cx) < 6 && o.y + 2 > top && o.y - 2 < cy - 9) { crash(2); return; }
         } else {
           const oy = o.y < 0 ? trackY(o.x) + o.y : o.y;
@@ -843,6 +854,8 @@ export default {
         C.fillStyle = P.edge; R(sx, cy - 1, 4, 1);
         C.fillStyle = P.back; R(sx, cy, 4, ty - cy + 7);
         C.fillStyle = P.backDk; R(sx, cy, 4, 3);
+        const hsh = (Math.imul(wx | 0, 2654435761) >>> 0) % 97;
+        if (hsh < 30) { C.fillStyle = hsh & 1 ? P.backHi : P.backDk; R(sx + (hsh & 3), cy + 6 + (hsh * 7) % Math.max(1, ty - cy - 10), hsh < 8 ? 2 : 1, 1); }
         if (type === 1) {
           C.fillStyle = P.pit2; R(sx, ty + 2, 4, 8);
           C.fillStyle = P.pit; R(sx, ty + 10, 4, H - ty - 10);
@@ -963,9 +976,9 @@ export default {
       const bw = textWidth(String(g.best));
       drawNumber(ctx, g.best, W - 5 - bw, 15, '#ffe070');
       drawIcon(ctx, 'trophy', W - 5 - bw - 9, 14);
-      // скорость — стрелка и число
-      drawIcon(ctx, 'right', 150, 3);
-      drawNumber(ctx, Math.round(cart.v / 10), 157, 3, '#c8d0dc');
+      // скорость — вагонетка и число
+      drawSpr(CART_ICON, 146, 3);
+      drawNumber(ctx, Math.round(cart.v / 10), 156, 3, '#c8d0dc');
     };
 
     const drawFrame = (t, dt, envDark) => {
@@ -1110,7 +1123,7 @@ export default {
       api._dbg.auto = () => {
         const cx = cart.x;
         for (let dx = 4; dx < cart.v * 0.16 + 12; dx += 4) if (trackT(cx + dx) !== 0) return 1;
-        for (const o of objs) if (o.on && (o.k === 0 || (o.k === 1 && !o.flee)) && o.x - cx < 40 && o.x - cx > -14) return 2;
+        for (const o of objs) if (o.on && (o.k === 0 || (o.k === 1 && !o.flee)) && o.x - cx < 40 && o.x - cx > -22) return 2;
         return 0;
       };
     }
