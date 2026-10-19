@@ -164,6 +164,66 @@ function EarlyAccess({ t, toast, refreshPack }) {
   );
 }
 
+// Каталог серверов: автор вставляет ключ сервера игрока — сервер появляется у всех во вкладке «Сервера»
+function ServerCatalog({ t, toast }) {
+  const [list, setList] = useState(null);
+  const empty = { key: '', name: '', desc: '', image: '', tags: '', owner: '', ad: false, hidden: false, order: 0 };
+  const [form, setForm] = useState(empty);
+  const [busy, setBusy] = useState(false);
+  const load = () => call('catalog:author').then(setList).catch((e) => { setList([]); toast(e.message, 'error'); });
+  useEffect(() => { load(); }, []);
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
+  const onKey = async (v) => {
+    setForm((f) => ({ ...f, key: v }));
+    try { const k = await call('hosting:parseKey', v); setForm((f) => ({ ...f, name: f.name || k.name })); } catch (_) {}
+  };
+  const save = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const entry = { ...form, tags: String(form.tags || '').split(',').map((x) => x.trim()).filter(Boolean), order: Number(form.order) || 0 };
+      setList(await call('catalog:save', entry));
+      setForm(empty);
+      toast(t('Сохранено — сервер виден у всех во вкладке «Сервера» (через минуту)'), 'ok');
+    } catch (err) { toast(err.message, 'error', 8000); } finally { setBusy(false); }
+  };
+  const edit = (x) => setForm({ ...x, tags: (x.tags || []).join(', ') });
+  const remove = async (x) => { if (!window.confirm(t('Убрать сервер из каталога?'))) return; try { setList(await call('catalog:remove', x.id)); } catch (err) { toast(err.message, 'error'); } };
+  const toggle = async (x, k) => { try { setList(await call('catalog:save', { ...x, [k]: !x[k] })); } catch (err) { toast(err.message, 'error'); } };
+  return (
+    <>
+      <p className="muted small">{t('Игрок открывает «Мой сервер» в своём лаунчере и присылает тебе ключ (VKS1-…). Вставь его здесь — сервер появится у всех во вкладке «Сервера» с описанием и статусом «в сети». Работает, пока сервер включён у хозяина.')}</p>
+      <div className="rel-list">
+        {list && list.length === 0 && <span className="muted">{t('В каталоге пока нет серверов.')}</span>}
+        {(list || []).map((x) => (
+          <div key={x.id} className="rel-row">
+            <div className="grow"><b>{x.name}</b> {x.ad && <span className="pill gold sm">{t('Реклама')}</span>} {x.hidden && <span className="pill sm">{t('скрыт')}</span>}<br /><small className="muted">{x.owner ? x.owner + ' · ' : ''}{(x.desc || '').slice(0, 90)}</small></div>
+            <button className="btn sm ghost" onClick={() => toggle(x, 'ad')}>{x.ad ? t('Не реклама') : t('Реклама')}</button>
+            <button className="btn sm ghost" onClick={() => toggle(x, 'hidden')}>{x.hidden ? t('Показать') : t('Скрыть')}</button>
+            <button className="btn sm ghost" onClick={() => edit(x)}><Icon name="pencil" size={12} /></button>
+            <button className="btn sm danger" onClick={() => remove(x)}><Icon name="trash" size={12} /></button>
+          </div>
+        ))}
+      </div>
+      <form className="form" onSubmit={save} style={{ marginTop: 10 }}>
+        <label>{t('Ключ сервера')}<input className="input mono" placeholder="VKS1-…" value={form.key} onChange={(e) => onKey(e.target.value)} /></label>
+        <div className="row wrap">
+          <label className="grow">{t('Название')}<input className="input" value={form.name} onChange={set('name')} /></label>
+          <label>{t('Хозяин')}<input className="input" value={form.owner} onChange={set('owner')} /></label>
+        </div>
+        <label>{t('Описание')}<textarea className="input" rows={3} value={form.desc} onChange={set('desc')} /></label>
+        <div className="row wrap">
+          <label className="grow">{t('Картинка (ссылка)')}<input className="input" placeholder="https://…png" value={form.image} onChange={set('image')} /></label>
+          <label>{t('Метки через запятую')}<input className="input" placeholder={t('выживание, без гриферов')} value={form.tags} onChange={set('tags')} /></label>
+          <label>{t('Порядок')}<input className="input num" type="number" value={form.order} onChange={set('order')} /></label>
+        </div>
+        <label className="check-row"><input type="checkbox" checked={!!form.ad} onChange={set('ad')} /> <span>{t('Реклама — показывать первым с пометкой')}</span></label>
+        <button className="btn primary" disabled={busy || !form.key}>{busy ? t('Сохраняю…') : t('Сохранить в каталог')}</button>
+      </form>
+    </>
+  );
+}
+
 export default function Author() {
   const { t, lang, settings, saveSettings, progress, toast, refreshPack } = useApp();
   const [hasToken, setHasToken] = useState(false);
@@ -322,6 +382,10 @@ export default function Author() {
 
           <Section title={t('Ранний доступ')} icon="star">
             <EarlyAccess t={t} toast={toast} refreshPack={refreshPack} />
+          </Section>
+
+          <Section title={t('Сервера игроков в лаунчере')} icon="globe">
+            <ServerCatalog t={t} toast={toast} />
           </Section>
 
           <Section title={t('Новости')} icon="news" right={<button className="btn sm ghost" onClick={loadNews}><Icon name="refresh" size={12} /></button>}>

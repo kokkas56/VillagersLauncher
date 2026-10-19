@@ -3,6 +3,62 @@ import { useApp } from '../lib/app.jsx';
 import { call } from '../lib/api.js';
 import Icon from '../components/Icon.jsx';
 import { Empty } from '../components/ui.jsx';
+import { call as call2, on } from '../lib/api.js';
+import { joinByKey } from '../lib/joinServer.js';
+
+// Сервера игроков из каталога автора: описание, кто в сети, вход по кнопке (через туннель лаунчера)
+function Catalog({ t, toast, account, busy }) {
+  const [list, setList] = useState(null);
+  const [presence, setPresence] = useState({});
+  const [step, setStep] = useState({});
+  const [pw, setPw] = useState({});
+  useEffect(() => {
+    let off = () => {};
+    const load = () => call2('catalog:list').then((r) => { if (r) { setList(r.servers); setPresence(r.presence || {}); } }).catch(() => setList([]));
+    load();
+    off = on('servers-presence', (p) => setPresence({ ...(p || {}) }));
+    const id = setInterval(load, 5 * 60e3);
+    return () => { off(); clearInterval(id); };
+  }, []);
+  if (!list || list.length === 0) return null;
+  const online = (s) => { const p = presence[s.id]; return p && p.online && Date.now() - p.at < 100e3 ? p : null; };
+  const sorted = [...list].sort((a, b) => (b.ad - a.ad) || (!!online(b) - !!online(a)) || (a.order - b.order));
+  const join = async (s) => {
+    if (!account) { toast(t('Сначала выбери аккаунт'), 'warn'); return; }
+    const k = await call2('hosting:parseKey', s.key).catch(() => null);
+    if (k && k.password && pw[s.id] === undefined) { setPw({ ...pw, [s.id]: '' }); return; }
+    if (k && k.password && !pw[s.id]) { toast(t('Введи пароль сервера'), 'warn'); return; }
+    setStep({ ...step, [s.id]: t('Ищу сервер…') });
+    try { await joinByKey(s.key, pw[s.id] || '', (x) => setStep((o) => ({ ...o, [s.id]: t(x) }))); }
+    catch (e) { toast(e.message, 'error', 12000); }
+    finally { setStep((o) => ({ ...o, [s.id]: null })); }
+  };
+  return (
+    <div className="servers catalog">
+      {sorted.map((s) => {
+        const on_ = online(s);
+        return (
+          <div key={s.id} className={'server card catalog-card' + (s.ad ? ' ad' : '')}>
+            {s.image ? <img className="catalog-img" src={s.image} alt="" /> : <div className="server-icon"><Icon name="globe" size={26} /></div>}
+            <div className="grow">
+              <div className="server-title"><b>{s.name}</b>{s.ad && <span className="pill gold sm">{t('Реклама')}</span>}{(s.tags || []).map((x) => <span key={x} className="pill sm">{x}</span>)}</div>
+              {s.owner && <small className="muted">{t('Хозяин')}: {s.owner}</small>}
+              {s.desc && <p className="motd catalog-desc">{s.desc}</p>}
+              {pw[s.id] !== undefined && (
+                <input className="input" type="password" placeholder={t('Пароль сервера')} value={pw[s.id]} onChange={(e) => setPw({ ...pw, [s.id]: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && join(s)} autoFocus />
+              )}
+            </div>
+            <div className="server-status">
+              {on_ ? <span className="pill green"><span className="dot on" /> {on_.players}/{on_.max}</span> : <span className="pill"><span className="dot off" /> {t('не в сети')}</span>}
+              {!on_ && <small className="muted">{t('откроется, когда хозяин включит')}</small>}
+            </div>
+            <button className="btn primary" disabled={busy || !on_ || !!step[s.id]} onClick={() => join(s)}><Icon name="play" size={14} /> {step[s.id] || t('Зайти')}</button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function Servers() {
   const { t, settings, saveSettings, pack, gameState, progress, toast, account } = useApp();
@@ -42,6 +98,8 @@ export default function Servers() {
         <div className="grow" />
         <button className="btn ghost" onClick={pingAll}><Icon name="refresh" /> {t('Обновить')}</button>
       </div>
+
+      <Catalog t={t} toast={toast} account={account} busy={busy} />
 
       <form className="card add-server" onSubmit={add}>
         <input className="input" placeholder={t('Название (необязательно)')} value={name} onChange={(e) => setName(e.target.value)} />

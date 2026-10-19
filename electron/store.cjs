@@ -39,7 +39,10 @@ const DEFAULTS = {
   musicVol: 0.25,
   sfxVol: 0.35, // звуки мини-игр
   gameBest: {},
-  gameProfiles: {}, // прогресс мини-игр и награды по никам: { ник: { games, rewards, equip } } // лучшие результаты мини-игр
+  gameProfiles: {},
+  hostServer: {}, // «Мой сервер»: имя, описание, мир, игроки, адрес Radmin (секрет ключа и пароль — в зашифрованных секретах)
+  friendServers: [], // ключи серверов друзей (видны только тебе)
+  hostingActive: false, // прогресс мини-игр и награды по никам: { ник: { games, rewards, equip } } // лучшие результаты мини-игр
   gameShareScores: true, // отправлять рекорды в общую таблицу
   disabledOptional: [],
   downloadThreads: 8,

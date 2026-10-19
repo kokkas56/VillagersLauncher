@@ -609,3 +609,12 @@ input[type='range'] { accent-color: var(--emerald); width: 100%; }
 .rw-text { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .cape-prev { width: 20px; height: 32px; background-size: 128px 64px; background-position: -2px -2px; image-rendering: pixelated; }
 .hint-box { padding: 8px 10px; border-radius: 10px; background: var(--panel-2); margin-bottom: 10px; }
+
+/* ---- свой сервер и каталог ---- */
+.crash-box { border: 1px solid rgba(229, 88, 75, 0.5); background: rgba(229, 88, 75, 0.08); border-radius: 12px; padding: 10px 12px; margin: 8px 0; display: flex; flex-direction: column; gap: 6px; }
+.crash-box pre { max-height: 160px; overflow: auto; font-size: 11px; margin: 0; }
+.srv-form, .srv-world, .srv-key { margin: 10px 0; display: flex; flex-direction: column; gap: 6px; }
+.key-text { flex: 1; padding: 6px 8px; border-radius: 8px; background: rgba(0,0,0,.3); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.catalog-card.ad { border-color: var(--gold); }
+.catalog-img { width: 64px; height: 64px; border-radius: 10px; object-fit: cover; flex: none; }
+.catalog-desc { white-space: pre-wrap; }
