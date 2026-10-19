@@ -1,7 +1,9 @@
 // Проверка и нормализация сцен «Студии». Чистые функции без зависимостей.
 // Этот же код работает в главном процессе («Собрать для игроков»): electron/studio-validate.cjs
 // генерируется из этого файла командой `node scripts/sync-studio.cjs` (её же вызывает scripts/check.cjs).
-// Здесь нельзя использовать import — только `export function` / `export const`.
+// Импорт разрешён только из scene3d.js и mograph.js (sync-studio.cjs склеивает их в один файл).
+
+import { compileScene, sceneForDisk, validateObjects, hasObjects } from './scene3d.js';
 
 export const ERR = 'ошибка';
 export const WARN = 'предупреждение';
@@ -67,6 +69,28 @@ function tsec(t) { return isNum(t) ? (Math.round(t / 2) / 10) + ' с' : '?'; }
 // Проверка одной сцены. ctx: { project, ids: [все id сцен проекта] }
 export function validateScene(scene, ctx) {
   ctx = ctx || {};
+  // фаза 3: сцена из объектов — проверить объекты и то, что из них соберётся для игры
+  if (hasObjects(scene)) {
+    const res = [];
+    validateObjects(scene, (sev, msg, sel) => res.push({ sev, msg, sel: sel || null, scene: scene.id || null }), ERR, WARN);
+    let comp;
+    try { comp = compileScene(scene); } catch (e) { res.push({ sev: ERR, msg: 'Сцена не собирается из объектов: ' + e.message, sel: null, scene: scene.id || null }); return res; }
+    for (const x of validateScene(comp, ctx)) {
+      if (x.sel && x.sel.track === 'camera') continue; // ключи камеры сгенерированы — ошибки уже у объектов
+      if (!x.sel && /ключ(а|ей)? камеры/.test(x.msg)) continue;
+      if (x.sel && x.sel.track) {
+        const tr = (comp.tracks || []).find((t) => trackKeyOf(t) === x.sel.track);
+        const items = itemsOfTrack(tr);
+        const it = items[x.sel.i];
+        if (it && it.gen) { res.push({ ...x, sel: it.src ? { obj: it.src } : null }); continue; }
+        const i = items.slice(0, x.sel.i).filter((e) => !(e && e.gen)).length;
+        res.push({ ...x, sel: { ...x.sel, i } });
+        continue;
+      }
+      res.push(x);
+    }
+    return res;
+  }
   const out = [];
   const sid = scene && scene.id;
   const add = (sev, msg, sel) => out.push({ sev, msg, sel: sel || null, scene: sid || null });
@@ -264,7 +288,8 @@ function strip(v) {
   return v;
 }
 // убрать служебные поля редактора (начинаются с _), ничего не меняя по смыслу — так сцена сохраняется в проект
-export function cleanScene(scene) { return strip(scene); }
+// сохранение: для сцен из объектов рядом пишутся и сгенерированные дорожки (игра в режиме разработчика читает файл как есть)
+export function cleanScene(scene) { return strip(hasObjects(scene) ? sceneForDisk(scene) : scene); }
 export function cleanProject(p) { return strip(p); }
 
 export const DEFAULT_UI = { hud: true, markers: true, chat: false };
@@ -282,8 +307,14 @@ export function defaultScene(id, title) {
 }
 
 // Нормализация для игроков: целые тики, события по порядку, без пустых дорожек и служебных полей.
+function dropGen(v) {
+  if (Array.isArray(v)) return v.map(dropGen);
+  if (v && typeof v === 'object') { const o = { ...v }; if (o.gen === true) { delete o.gen; delete o.src; } return o; }
+  return v;
+}
 export function normalizeScene(scene) {
-  const s = strip(scene);
+  const s = strip(hasObjects(scene) ? compileScene(scene) : scene);
+  if (Array.isArray(s.tracks)) s.tracks = s.tracks.map((tr) => { const c = dropGen(tr); if (Array.isArray(c.keys)) c.keys = c.keys.map(dropGen); if (Array.isArray(c.events)) c.events = c.events.map(dropGen); return c; });
   const d = defaultScene(s.id, s.title);
   const out = {
     v: 1, id: s.id, title: s.title || s.id,

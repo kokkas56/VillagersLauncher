@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-const ALLOWED_EVENTS = ['tunnel-state', 'server-state', 'server-log', 'busy-state', 'progress', 'game-state', 'game-log', 'update-state', 'win-state', 'scan-progress', 'toast', 'scores', 'profile', 'servers-presence', 'studio-link'];
+const ALLOWED_EVENTS = ['tunnel-state', 'server-state', 'server-log', 'busy-state', 'progress', 'game-state', 'game-log', 'update-state', 'win-state', 'scan-progress', 'toast', 'scores', 'profile', 'servers-presence', 'studio-link', 'studio-embed', 'studio-win'];
 const ALLOWED_PREFIX = /^(sys|settings|accounts|skin|wardrobe|editor|ely|pack|java|mods|worlds|shots|servers|shell|dialog|game|app|net|server|early|games|hosting|catalog|radmin|studio):/;
 
 contextBridge.exposeInMainWorld('vl', {
