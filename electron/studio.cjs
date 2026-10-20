@@ -541,7 +541,26 @@ module.exports = function setupStudio({ handle, send, store, getGame }) {
     try { const j = JSON.parse(fs.readFileSync(linkFile(), 'utf8')); return j && Number(j.port) > 0 ? j : null; } catch (_) { return null; }
   }
   function pidAlive(pid) { if (!(Number(pid) > 0)) return false; try { process.kill(Number(pid), 0); return true; } catch (e) { return e.code === 'EPERM'; } }
-  function gameRunning(lf) { return !!(getGame && getGame()) || !!(lf && pidAlive(lf.pid)); }
+  // лог игры: свежий latest.log = игра запущена (даже если её запустили не из лаунчера); строки «studio» объясняют, что со связью
+  function gameLog() {
+    const f = path.join(gameDir(), 'logs', 'latest.log');
+    try {
+      const st = fs.statSync(f);
+      const size = st.size, want = Math.min(size, 3 * 1024 * 1024);
+      const fd = fs.openSync(f, 'r');
+      const b = Buffer.alloc(want);
+      fs.readSync(fd, b, 0, want, size - want);
+      fs.closeSync(fd);
+      const text = b.toString('utf8');
+      const lines = text.split(/\r?\n/);
+      const studio = lines.filter((l) => /\[KokkStory\] studio/.test(l));
+      const started = /Loading Minecraft|ModLauncher running|Launching target/.test(text);
+      const stopped = /Stopping!|Game crashed|Crash report saved/.test(lines.slice(-30).join('\n'));
+      const kokk = lines.some((l) => /kokkstory/i.test(l));
+      return { mtime: st.mtimeMs, fresh: Date.now() - st.mtimeMs < 90000 && !stopped, started, stopped, kokk, studio: studio.slice(-4).map((l) => l.replace(/^.*\[KokkStory\] /, '')) };
+    } catch (_) { return null; }
+  }
+  function gameRunning(lf) { if ((getGame && getGame()) || (lf && pidAlive(lf.pid))) return true; const gl = gameLog(); return !!(gl && gl.fresh); }
   // одна попытка TCP: { ok, socket } или { ok:false, code }
   function tryOne(host, p) {
     return new Promise((resolve) => {
@@ -587,6 +606,14 @@ module.exports = function setupStudio({ handle, send, store, getGame }) {
       else if (timeouts) { reason = 'timeout'; text = 'Порт ' + (lf ? lf.port : port()) + ' не отвечает — похоже на брандмауэр Windows'; }
       else if (!lf && g && g.started && Date.now() - g.started > 120000) { reason = 'old-mod'; text = 'Отказ соединения: игра не открыла связь (нет studio/.link) — старая версия мода Kokk Story или порт ' + port() + ' занят'; }
       else { reason = 'refused'; text = 'Отказ соединения (' + (lf ? 'порт ' + lf.port + ' из .link' : 'порт ' + port()) + ') — игра ещё грузится или связь не открылась'; }
+      // что пишет сама игра (latest.log) — точнее любых догадок
+      if (reason !== 'no-game') {
+        const gl = gameLog();
+        if (gl) {
+          if (gl.studio.length) text += ' · игра пишет: «' + gl.studio[gl.studio.length - 1] + '»';
+          else if (gl.fresh) { reason = 'no-studio-log'; text = 'Игра запущена, но мод Kokk Story не открывал связь (в logs/latest.log нет строк «studio») — проверь, что в mods лежит свежий kokkstory.jar, и перезапусти игру'; }
+        }
+      }
       ls.port = lf ? Number(lf.port) : port(); ls.host = null;
       setReason(reason, text);
       // в журнал — каждая попытка (окно склеивает одинаковые строки в «×N»)
