@@ -197,7 +197,7 @@ function collectArgs(list, vars, features) {
   return out.map((s) => s.replace(/\$\{([^}]+)\}/g, (m, k) => (vars[k] !== undefined ? String(vars[k]) : m)));
 }
 
-function buildLaunch({ vanilla, neo, javaPath, account, gameDir, quickPlay, extraClasspath = [] }) {
+function buildLaunch({ vanilla, neo, javaPath, account, gameDir, quickPlay, quickPlayWorld, extraClasspath = [] }) {
   const s = store.get();
   const id = neo.id;
   const nativesDir = path.join(VER_DIR, id, 'natives');
@@ -265,7 +265,9 @@ function buildLaunch({ vanilla, neo, javaPath, account, gameDir, quickPlay, extr
     cleanGame.push(game[i]);
   }
   if (s.fullscreen) cleanGame.push('--fullscreen');
-  if (quickPlay) cleanGame.push('--quickPlayMultiplayer', quickPlay);
+  // сразу в одиночный мир (папка в saves) — для «Студии»; иначе — сразу на сервер
+  if (quickPlayWorld) cleanGame.push('--quickPlaySingleplayer', quickPlayWorld);
+  else if (quickPlay) cleanGame.push('--quickPlayMultiplayer', quickPlay);
   cleanGame.push(...(s.gameArgs || '').split(/\s+/).filter(Boolean));
   return { javaPath, args: [...jvm, neo.mainClass, ...cleanGame], cwd: gameDir };
 }

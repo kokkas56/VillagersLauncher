@@ -860,7 +860,14 @@ handle('game:play', async (opts = {}) => {
     }
     fs.mkdirSync(path.join(gameDir, 'skinkokk'), { recursive: true });
     const splashJar = splash.prepare({ enabled: s.customSplash !== false, gameDir, libDir: mc.LIB_DIR, log: (l) => send('game-log', [l]) });
-    const launch = mc.buildLaunch({ ...installed, account, gameDir, quickPlay: opts.quickPlay, extraClasspath: splashJar ? [splashJar] : [] });
+    // quickPlayWorld — имя папки одиночного мира в saves (кнопка «Запустить игру в этом мире» в Студии)
+    let quickPlayWorld = null;
+    if (opts.quickPlayWorld) {
+      const w = String(opts.quickPlayWorld);
+      if (/[\\/]/.test(w) || w === '.' || w === '..' || !fs.existsSync(path.join(gameDir, 'saves', w, 'level.dat'))) throw new Error('Мир «' + w + '» не найден в папке saves — обнови список миров в Студии');
+      quickPlayWorld = w;
+    }
+    const launch = mc.buildLaunch({ ...installed, account, gameDir, quickPlay: opts.quickPlay, quickPlayWorld, extraClasspath: splashJar ? [splashJar] : [] });
     progress({ stage: 'launch', text: 'Запускаю Minecraft…', indeterminate: true });
     const proc = spawn(launch.javaPath, launch.args, { cwd: launch.cwd, windowsHide: false, detached: false });
     game = { proc, started: Date.now() };
