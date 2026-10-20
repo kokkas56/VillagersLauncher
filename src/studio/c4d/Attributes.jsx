@@ -7,8 +7,9 @@ import I, { TypeIcon, KeyDiamond } from './icons.jsx';
 import { TYPE_HINT } from './actions.js';
 import {
   objById, propsAt, chanGet, defaultProps, OBJ_LABEL, CHANNEL_LABEL, isAnimated, keyAt, clonerOutput, clonerInputs,
-  INTERP_LABEL, childrenOf, actorPosAt
+  INTERP_LABEL, childrenOf, actorPosAt, CHANNELS, linkableChannels, splitRef, withLinks, ticksToHM, hmToTicks, WEATHER_RU, DAY, mapLink
 } from '../scene3d.js';
+import EntityAttrs from './EntityAttrs.jsx';
 import { CLONER_MODES, CLONER_MODE_LABEL, EFFECTOR_KINDS, EFFECTOR_LABEL, MAX_SEND } from '../mograph.js';
 import { patchObj, setChan, toggleKeys, keyState, setKeyField, stageSet, stageRemove } from './ops.js';
 import { ACTOR_FIELDS, SCENE_FIELDS, VERB_DEFS, TRACKS } from '../schema.js';
@@ -74,11 +75,19 @@ export function useScrub({ value, onChange, step, onStart, onEnd }) {
   };
 }
 
-export function ARow({ label, hint, keyBtn, children, onReset, scrub }) {
-  const { hp } = useStudio();
+// link — «объект.свойство»: подпись можно перетащить на другое свойство (или на объект в дереве) — получится «Связь»
+export function ARow({ label, hint, keyBtn, children, onReset, scrub, link, learnKey }) {
+  const core = useStudio();
+  const { hp } = core;
+  const [over, setOver] = useState(false);
+  const dropOk = (e) => link && e.dataTransfer.types.includes('text/c4link');
   return (
-    <div className="c4-arow" {...hp(label + ' — ' + (hint || ''))}>
-      <span className={'c4-alabel' + (scrub ? ' scrub' : '')} title={hint} onMouseDown={(e) => { if (e.ctrlKey && onReset) { e.preventDefault(); onReset(); return; } if (scrub) scrub(e); }}>
+    <div className={'c4-arow' + (over ? ' linkover' : '')} data-learn={learnKey || (link ? 'attr-' + link.slice(link.indexOf('.') + 1) : undefined)} {...hp(label + ' — ' + (hint || '') + (link ? ' Перетащи подпись на другое свойство или на объект в дереве — свяжешь их («Связи»).' : ''))}
+      onDragOver={(e) => { if (dropOk(e)) { e.preventDefault(); setOver(true); } }} onDragLeave={() => setOver(false)}
+      onDrop={(e) => { setOver(false); if (!dropOk(e)) return; e.preventDefault(); const from = e.dataTransfer.getData('text/c4link'); if (from && from !== link) core.addLink && core.addLink(from, link); }}>
+      <span className={'c4-alabel' + (scrub ? ' scrub' : '') + (link ? ' linkable' : '')} title={hint} draggable={!!link}
+        onDragStart={(e) => { if (!link) return; e.dataTransfer.setData('text/c4link', link); e.dataTransfer.effectAllowed = 'link'; }}
+        onMouseDown={(e) => { if (e.ctrlKey && onReset) { e.preventDefault(); onReset(); return; } if (scrub && !e.altKey) scrub(e); }}>
         {label}<span className="dots"> . . </span>
       </span>
       {keyBtn || <span className="c4-key blank" />}
@@ -86,7 +95,7 @@ export function ARow({ label, hint, keyBtn, children, onReset, scrub }) {
     </div>
   );
 }
-function Sec({ title, children, open: open0 = true }) {
+export function Sec({ title, children, open: open0 = true }) {
   const [open, setOpen] = useState(open0);
   return (
     <div className="c4-asec">
@@ -95,12 +104,12 @@ function Sec({ title, children, open: open0 = true }) {
     </div>
   );
 }
-function Check({ value, onChange }) { return <span className={'c4-check' + (value ? ' on' : '')} onClick={() => onChange(!value)}>{value ? '✓' : ''}</span>; }
-function Text({ value, onChange, placeholder, list, mono, area }) {
+export function Check({ value, onChange }) { return <span className={'c4-check' + (value ? ' on' : '')} onClick={() => onChange(!value)}>{value ? '✓' : ''}</span>; }
+export function Text({ value, onChange, placeholder, list, mono, area }) {
   const C = area ? 'textarea' : 'input';
   return <C className={'c4-text' + (mono ? ' mono' : '')} value={value == null ? '' : value} placeholder={placeholder} list={list} onChange={(e) => onChange(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />;
 }
-function Select({ value, onChange, options }) {
+export function Select({ value, onChange, options }) {
   return (
     <select className="c4-text" value={value == null ? '' : value} onChange={(e) => onChange(e.target.value)} onKeyDown={(e) => e.stopPropagation()}>
       {options.map(([v, l]) => <option key={String(v)} value={v}>{l}</option>)}
@@ -115,7 +124,8 @@ export default function AttributesPane({ act }) {
   const [tab, setTab] = useState('attr');
   const issuesFor = (fn) => core.issues.filter(fn);
   let body = null;
-  if (scene) {
+  if (core.selEnt) body = <EntityAttrs key={core.selEnt} id={core.selEnt} />;
+  else if (scene) {
     const objs = sel.objs.map((id) => objById(scene, id)).filter(Boolean);
     const ev = sel.ev && getItem(scene, sel.ev);
     if (ev) body = <EventAttrs ev={ev} />;
@@ -129,10 +139,10 @@ export default function AttributesPane({ act }) {
       <div className="c4-ptabs">
         <button className={tab === 'attr' ? 'on' : ''} onClick={() => setTab('attr')} {...hp('Свойства выбранного: объекта, события, блока «Монтажа» или всей сцены.')}>Атрибуты</button>
         <button className={tab === 'issues' ? 'on' : ''} onClick={() => setTab('issues')} {...hp('Проверка сцены: ошибки (сцена не соберётся) и предупреждения. Щёлкни — выберется нужное.')}>
-          Проверка{core.issues.length ? <small style={{ color: core.nErr ? '#ff8f86' : '#e8c070' }}>{core.nErr || core.issues.length}</small> : null}
+          Проверка{core.issues.length + core.entIssues.length ? <small style={{ color: core.nErr + core.entErr ? '#ff8f86' : '#e8c070' }}>{core.nErr + core.entErr || core.issues.length + core.entIssues.length}</small> : null}
         </button>
       </div>
-      {tab === 'attr' ? <div className="c4-attr">{body || <div className="c4-tree-empty">Открой сцену — здесь будут свойства.</div>}</div> : <IssuesList onPick={() => setTab('attr')} />}
+      {tab === 'attr' ? <div className="c4-attr">{body || <div className="c4-tree-empty">Выбери сущность мира в «Объектах» или открой сцену (двойной щелчок) — здесь будут свойства.</div>}</div> : <IssuesList onPick={() => setTab('attr')} />}
     </div>
   );
 }
@@ -140,9 +150,17 @@ export default function AttributesPane({ act }) {
 function IssuesList({ onPick }) {
   const core = useStudio();
   const { issues, setSel, scene, setTime } = core;
-  if (!issues.length) return <div className="c4-tree-empty">Ошибок нет — сцену можно проигрывать и собирать.</div>;
+  if (!issues.length && !core.entIssues.length) return <div className="c4-tree-empty">Ошибок нет — можно играть (F5) и собирать.</div>;
   return (
     <div className="c4-attr" style={{ padding: 4 }}>
+      {core.entIssues.length > 0 && <div className="c4-ahint" style={{ margin: '2px 4px 4px' }}><b>Мир (сущности и выходы)</b></div>}
+      {core.entIssues.map((x, i) => (
+        <div key={'e' + i} className="c4-issrow" onClick={() => { if (x.ent) core.setSelEnt(x.ent); onPick(); }}>
+          <span className="sv" style={{ background: x.sev === ERR ? '#e0504a' : '#e0a030' }} />
+          <span>{x.msg}</span>
+        </div>
+      ))}
+      {core.entIssues.length > 0 && issues.length > 0 && <div className="c4-ahint" style={{ margin: '6px 4px 4px' }}><b>Сцена «{scene && (scene.title || scene.id)}»</b></div>}
       {issues.map((x, i) => (
         <div key={i} className="c4-issrow" onClick={() => {
           const s = x.sel || {};
@@ -159,7 +177,7 @@ function IssuesList({ onPick }) {
   );
 }
 
-function Issues({ list }) {
+export function Issues({ list }) {
   if (!list || !list.length) return null;
   return list.slice(0, 5).map((x, i) => <div key={i} className={'c4-iss ' + (x.sev === ERR ? 'e' : 'w')}>{x.msg}</div>);
 }
@@ -177,13 +195,16 @@ const TABS = {
   block: [['object', 'Блок'], ['basic', 'Основное']],
   template: [['object', 'Шаблон'], ['basic', 'Основное']],
   structure: [['object', 'Постройка'], ['bake', 'В мир'], ['basic', 'Основное'], ['coord', 'Координаты'], ['anim', 'Анимация']],
-  actor: [['object', 'Актёр'], ['basic', 'Основное'], ['events', 'Дорожка']]
+  actor: [['object', 'Актёр'], ['basic', 'Основное'], ['events', 'Дорожка']],
+  sky: [['object', 'Небо'], ['links', 'Связи'], ['basic', 'Основное'], ['anim', 'Анимация']]
 };
+// «Связи» есть у всего, что можно анимировать
+for (const k of Object.keys(TABS)) if ((CHANNELS[k] || []).length && !TABS[k].some((t) => t[0] === 'links')) TABS[k].push(['links', 'Связи']);
 
 function ObjAttrs({ o, act, issues }) {
   const core = useStudio();
   const tabs = TABS[o.type] || [['basic', 'Основное']];
-  const [tab, setTab] = useState(() => (tabs.some((t) => t[0] === 'object') && ['cloner', 'effector', 'block', 'template', 'actor', 'structure'].includes(o.type) ? 'object' : tabs[0][0]));
+  const [tab, setTab] = useState(() => (tabs.some((t) => t[0] === 'object') && ['cloner', 'effector', 'block', 'template', 'actor', 'structure', 'sky'].includes(o.type) ? 'object' : tabs[0][0]));
   useEffect(() => { if (!tabs.some((t) => t[0] === tab)) setTab(tabs[0][0]); }, [o.type]); // eslint-disable-line
   const cur = tabs.some((t) => t[0] === tab) ? tab : tabs[0][0];
   return (
@@ -193,7 +214,7 @@ function ObjAttrs({ o, act, issues }) {
         <div className="grow"><b>{OBJ_LABEL[o.type]} [{o.name}]</b><div className="dim">id: <span className="mono">{o.id}</span>{o.parent ? ' · внутри «' + ((objById(core.scene, o.parent) || {}).name || o.parent) + '»' : ''}</div></div>
       </div>
       <div className="c4-atabs">
-        {tabs.map(([id, l]) => <button key={id} className={cur === id ? 'on' : ''} onClick={() => setTab(id)}>{l}</button>)}
+        {tabs.map(([id, l]) => <button key={id} data-learn={'atab-' + id} className={cur === id ? 'on' : ''} onClick={() => setTab(id)}>{l}</button>)}
       </div>
       <Issues list={issues} />
       {cur === 'basic' && <BasicTab o={o} />}
@@ -213,6 +234,8 @@ function ObjAttrs({ o, act, issues }) {
       {cur === 'object' && o.type === 'template' && <TemplateTab o={o} />}
       {cur === 'object' && o.type === 'actor' && <ActorTab o={o} />}
       {cur === 'events' && <ActorEventsTab o={o} />}
+      {cur === 'object' && o.type === 'sky' && <SkyTab o={o} />}
+      {cur === 'links' && <LinksTab o={o} />}
     </>
   );
 }
@@ -237,7 +260,7 @@ function ChanNum({ o, ch, label, hint, step = 1, min, max, unit, int }) {
   const st = keyState(o, [ch], useStudio().time);
   const scrub = useScrub({ value: v, step, onChange: (n) => e.setCh(ch, clampN(n, min, max, int), true), onStart: e.gesture });
   return (
-    <ARow label={label || CHANNEL_LABEL[ch]} hint={hint} keyBtn={e.keyBtn([ch])} scrub={scrub} onReset={() => e.setCh(ch, chanGet(defaultProps(o.type), ch))}>
+    <ARow label={label || CHANNEL_LABEL[ch]} hint={hint} keyBtn={e.keyBtn([ch])} scrub={scrub} link={o.id + '.' + ch} onReset={() => e.setCh(ch, chanGet(defaultProps(o.type), ch))}>
       <Num value={v} step={step} min={min} max={max} unit={unit} int={int} className={st === 'key' ? 'keyed' : st === 'anim' ? 'animated' : ''} onChange={(n) => e.setCh(ch, n)} onScrubStart={e.gesture} />
     </ARow>
   );
@@ -248,7 +271,7 @@ function VecRow({ o, base, label, hint, step = 0.5, labels = ['X', 'Y', 'Z'], co
   const { time } = useStudio();
   const chs = comps.map((c) => base + '.' + c);
   return (
-    <ARow label={label} hint={hint} keyBtn={e.keyBtn(chs)} onReset={() => chs.forEach((ch) => e.setCh(ch, chanGet(defaultProps(o.type), ch) || 0))}>
+    <ARow label={label} hint={hint} learnKey={'attr-' + base} keyBtn={e.keyBtn(chs)} onReset={() => chs.forEach((ch) => e.setCh(ch, chanGet(defaultProps(o.type), ch) || 0))}>
       {chs.map((ch, i) => {
         const st = keyState(o, [ch], time);
         return <Num key={ch} ax={labels[i]} value={chanGet(e.props, ch)} step={step} className={st === 'key' ? 'keyed' : st === 'anim' ? 'animated' : ''} onChange={(n) => e.setCh(ch, n)} onScrubStart={e.gesture} />;
@@ -768,17 +791,161 @@ function MultiAttrs({ objs }) {
 function SceneAttrs({ issues }) {
   const core = useStudio();
   const s = core.scene;
+  const [tab, setTab] = useState('scene');
   const ctx = { hp: core.hp, api: core.api, actors: s.actors, projActors: core.project.actors || [], dialogs: core.dialogs };
   return (
     <>
       <div className="c4-ahead"><TypeIcon type="scene" size={17} /><div className="grow"><b>Сцена [{s.title || s.id}]</b><div className="dim mono">{s.id}.json · {fmtTicks(s.length || 0)}</div></div></div>
-      <div className="c4-atabs"><button className="on">Сцена</button></div>
+      <div className="c4-atabs"><button className={tab === 'scene' ? 'on' : ''} onClick={() => setTab('scene')}>Сцена</button><button className={tab === 'links' ? 'on' : ''} onClick={() => setTab('links')} {...core.hp('Все «Связи» сцены: какое свойство ведёт какое.')}>Связи{(s.links || []).length ? <small>{s.links.length}</small> : null}</button></div>
       <Issues list={issues} />
-      <div className="st-fields">
+      {tab === 'links' ? <LinksTab o={null} /> : <div className="st-fields">
         {SCENE_FIELDS.filter((f) => !f.when || f.when(s)).map((f) => (
           <Field key={f.k} f={f} value={getPath(s, f.k)} ctx={ctx} onChange={(v) => core.edit((sc) => setPath(sc, f.k, v), { key: 's:' + f.k })} />
         ))}
-      </div>
+      </div>}
     </>
+  );
+}
+
+// ---------- «Небо и солнце» (фаза 5) ----------
+// время показывается как ЧЧ:ММ (0 тиков = 06:00); ключи времени идут только вперёд — 18:00 → 06:00 проходит через ночь
+function TimeHM({ value, onChange, onScrubStart, className }) {
+  const [txt, setTxt] = useState(ticksToHM(value));
+  const focused = useRef(false);
+  useEffect(() => { if (!focused.current) setTxt(ticksToHM(value)); }, [value]);
+  const scrub = useScrub({ value, step: 1000 / 60 * 5, onChange: (n) => onChange(Math.round(((n % DAY) + DAY) % DAY)), onStart: onScrubStart });
+  return (
+    <div className={'c4-num hm ' + (className || '')}>
+      <input value={txt} onFocus={(e) => { focused.current = true; e.target.select(); }}
+        onBlur={(e) => { focused.current = false; const t = hmToTicks(e.target.value); if (t != null) onChange(t); setTxt(ticksToHM(value)); }}
+        onChange={(e) => setTxt(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); onChange(Math.round((((Number(value) || 0) + (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 1000 : 250)) % DAY + DAY) % DAY)); } e.stopPropagation(); }} />
+      <span className="unit">{Math.round(value || 0)} т</span>
+      <span className="spin" onMouseDown={scrub} title="Тяни — двигать время (по 5 минут; Shift — по часу)"><i>▲</i><i>▼</i></span>
+    </div>
+  );
+}
+function SkyTab({ o }) {
+  const core = useStudio();
+  const e = useObjEdit(o);
+  const p = e.props;
+  const st = (ch) => { const k = keyState(o, [ch], core.time); return k === 'key' ? 'keyed' : k === 'anim' ? 'animated' : ''; };
+  const row = (ch, label, hint, field) => <ARow label={label} hint={hint} keyBtn={e.keyBtn([ch])} link={o.id + '.' + ch} onReset={() => e.setCh(ch, defaultProps('sky')[ch])}>{field}</ARow>;
+  const presets = [['06:00', 0], ['12:00', 6000], ['18:00', 12000], ['20:00', 14000], ['00:00', 18000]];
+  return (
+    <>
+      <Sec title="Время суток">
+        {row('time', 'Время', 'Время суток в игре. Ставь ключи (◇) — солнце поедет. Между ключами время идёт только вперёд: 18:00 → 06:00 — через ночь. Прокрутка таймлайна показывает время в игре сразу.',
+          <TimeHM value={p.time} className={st('time')} onChange={(v) => e.setCh('time', v)} onScrubStart={e.gesture} />)}
+        <div className="c4-btnrow" style={{ paddingLeft: 8 }}>
+          {presets.map(([l, v]) => <button key={l} className="c4-btn sm" onClick={() => e.setCh('time', v)} {...core.hp('Поставить время ' + l + ' (' + v + ' тиков).')}>{l}</button>)}
+        </div>
+        <ChanNum o={o} ch="sunAngle" step={1} min={-90} max={90} unit="°" hint="Наклон солнца и луны на небе (только картинка у игрока, на время не влияет). 0 — как в игре." />
+        {row('moonPhase', 'Фаза луны', 'Какая луна ночью: 0 — полная … 4 — новолуние. Меняется ступенькой.',
+          <Select value={Math.round(p.moonPhase || 0)} options={['полная', 'убывающая (3/4)', 'последняя четверть', 'убывающий серп', 'новолуние', 'растущий серп', 'первая четверть', 'растущая (3/4)'].map((l, i) => [i, i + ' — ' + l])} onChange={(v) => e.setCh('moonPhase', Number(v))} />)}
+      </Sec>
+      <Sec title="Погода">
+        {row('weather', 'Погода', 'Ясно, дождь или гроза. Ключи погоды — ступенькой (переключается в момент ключа).',
+          <Select value={Math.round(p.weather || 0)} options={WEATHER_RU.map((l, i) => [i, l])} onChange={(v) => e.setCh('weather', Number(v))} />)}
+        <ChanNum o={o} ch="rain" step={0.05} min={0} max={1} hint="Сила дождя на экране игрока: 0 — нет, 1 — ливень. Плавные ключи — дождь нарастает." />
+      </Sec>
+      <Sec title="Туман и цвет неба">
+        <ARow label="Туман" hint="Свой туман сцены (у игрока). Выключено — как в игре."><Check value={!!p.fogOn} onChange={(v) => e.setProp('fogOn', v)} /></ARow>
+        {p.fogOn && <>
+          <ChanNum o={o} ch="fogStart" step={1} min={0} unit="бл" hint="С какого расстояния начинается туман (в блоках)." />
+          <ChanNum o={o} ch="fogEnd" step={1} min={1} unit="бл" hint="Где туман становится сплошным." />
+          {row('fogColor', 'Цвет тумана', 'Цвет тумана. Ключи цвета смешиваются плавно.', <ColorField value={p.fogColor} className={st('fogColor')} onChange={(v) => e.setCh('fogColor', v)} />)}
+        </>}
+        {row('skyColor', 'Оттенок неба', 'Цвет, которым подкрашивается небо (например закатный). Сила — ниже.', <ColorField value={p.skyColor} className={st('skyColor')} onChange={(v) => e.setCh('skyColor', v)} />)}
+        <ChanNum o={o} ch="skyMix" step={0.05} min={0} max={1} hint="Насколько сильно подкрашивать небо: 0 — нет, 1 — полностью." />
+      </Sec>
+      <Sec title="После сцены">
+        <ARow label="Вернуть в конце" hint="Когда сцена кончится (или её пропустят), время и погода вернутся как были до сцены."><Check value={p.restoreAtEnd !== false} onChange={(v) => e.setProp('restoreAtEnd', v)} /></ARow>
+        <ARow label="Показывать в игре" hint="В редакторе: прокрутка таймлайна сразу двигает солнце и погоду в игре (живой показ)."><Check value={p.live !== false} onChange={(v) => e.setProp('live', v)} /></ARow>
+        <div className="c4-ahint">Сейчас в {core.time} т: <b>{ticksToHM(p.time)}</b>, {WEATHER_RU[Math.round(p.weather || 0)]}{p.rain ? ', дождь ' + Math.round(p.rain * 100) + '%' : ''}.</div>
+      </Sec>
+    </>
+  );
+}
+function ColorField({ value, onChange, className }) {
+  return (
+    <div className={'c4-color ' + (className || '')}>
+      <input type="color" value={/^#[0-9a-f]{6}$/i.test(value || '') ? value : '#ffffff'} onChange={(e) => onChange(e.target.value)} />
+      <input className="c4-text mono" value={value || ''} onChange={(e) => /^#[0-9a-f]{6}$/i.test(e.target.value) && onChange(e.target.value.toLowerCase())} onKeyDown={(e) => e.stopPropagation()} />
+    </div>
+  );
+}
+
+// ---------- «Связи»: свойство ведёт свойство (таблица соответствий) ----------
+export function LinksTab({ o }) {
+  const core = useStudio();
+  const s = core.scene;
+  const all = (s.links || []).map((l, i) => ({ l, i }));
+  const mine = o ? all.filter(({ l }) => splitRef(l.from).obj === o.id || splitRef(l.to).obj === o.id) : all;
+  const add = () => {
+    const src = o ? (o.type === 'sky' ? o.id + '.time' : o.id + '.' + (linkableChannels(o)[0] || '')) : '';
+    const sky = s.objects.find((x) => x.type === 'sky');
+    const from = o && o.type !== 'sky' && sky ? sky.id + '.time' : src;
+    const to = o && o.type !== 'sky' ? o.id + '.' + (linkableChannels(o)[0] || '') : '';
+    core.addLink(from, to, true);
+  };
+  return (
+    <Sec title={o ? 'Связи «' + o.name + '»' : 'Связи сцены'}>
+      <div className="c4-ahint">Связь — одно свойство ведёт другое (как XPresso в C4D, но проще): <i>Небо.Время → Свет.Яркость</i> по таблице. Работает и при прокрутке таймлайна, и в игре. Быстро: перетащи подпись свойства (с точками) на другое свойство или на объект в дереве.</div>
+      {mine.map(({ l, i }) => <LinkCard key={i} l={l} i={i} />)}
+      {!mine.length && <div className="c4-ahint">Связей нет.</div>}
+      <div className="c4-btnrow"><button className="c4-btn sm prim" onClick={add} {...core.hp('Новая связь: откуда → куда, таблица значений.')}><I name="links" size={12} /> Связь</button></div>
+    </Sec>
+  );
+}
+function refOptions(scene) {
+  const out = [];
+  for (const x of scene.objects || []) for (const ch of CHANNELS[x.type] || []) if (ch !== 'play') out.push([x.id + '.' + ch, x.name + ' · ' + (CHANNEL_LABEL[ch] || ch)]);
+  return out;
+}
+function LinkCard({ l, i }) {
+  const core = useStudio();
+  const s = core.scene;
+  const set = (patch, key) => core.edit((sc) => ({ ...sc, links: (sc.links || []).map((x, j) => (j === i ? { ...x, ...patch } : x)) }), key ? { key: 'lk' + i + key } : {});
+  const del = () => core.edit((sc) => ({ ...sc, links: (sc.links || []).filter((_, j) => j !== i) }));
+  const opts = refOptions(s);
+  const toOpts = opts.filter(([v]) => { const r = splitRef(v); const ob = objById(s, r.obj); return ob && linkableChannels(ob).includes(r.ch); });
+  const map = Array.isArray(l.map) ? l.map : [];
+  const f = splitRef(l.from);
+  const fo = objById(s, f.obj);
+  const srcNow = fo ? chanGet(propsAt(withLinks(s).objects.find((x) => x.id === fo.id), core.time), f.ch) : undefined;
+  const outNow = mapLink(l, srcNow, splitRef(l.to).ch);
+  const fmtV = (ch, v) => (ch === 'time' && typeof v === 'number' ? ticksToHM(v) + ' (' + Math.round(v) + ')' : typeof v === 'number' ? String(Math.round(v * 100) / 100) : String(v));
+  const iss = core.issues.filter((x) => x.sel && x.sel.link === i);
+  return (
+    <div className={'c4-link' + (l.on === false ? ' off' : '')}>
+      <div className="c4-link-h">
+        <Check value={l.on !== false} onChange={(v) => set({ on: v ? undefined : false })} />
+        <select className="c4-text" value={l.from || ''} onChange={(e) => set({ from: e.target.value })} {...core.hp('Откуда: свойство-источник.')}><option value="">— откуда —</option>{opts.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select>
+        <span className="arr">→</span>
+        <select className="c4-text" value={l.to || ''} onChange={(e) => set({ to: e.target.value })} {...core.hp('Куда: какое свойство вести. Его ключи перестанут действовать.')}><option value="">— куда —</option>{toOpts.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select>
+        <button className="c4-ib" title="Удалить связь" onClick={del}><I name="trash" size={12} /></button>
+      </div>
+      <div className="c4-link-map">
+        <span className="dim" {...core.hp('Таблица: значение источника → значение цели. Между строками — по прямой. Пусто — как есть.')}>Таблица</span>
+        {map.map((r, k) => (
+          <span key={k} className="c4-link-row">
+            {f.ch === 'time' ? <TimeHM value={r[0]} onChange={(v) => set({ map: map.map((x, j) => (j === k ? [v, x[1]] : x)) }, 'm' + k + 'a')} /> : <Num value={r[0]} step={1} onChange={(v) => set({ map: map.map((x, j) => (j === k ? [v, x[1]] : x)) }, 'm' + k + 'a')} />}
+            <span className="arr">→</span>
+            <Num value={r[1]} step={1} onChange={(v) => set({ map: map.map((x, j) => (j === k ? [x[0], v] : x)) }, 'm' + k + 'b')} />
+            <button className="c4-ib" title="Убрать строку" onClick={() => set({ map: map.filter((_, j) => j !== k) })}><I name="close" size={10} /></button>
+          </span>
+        ))}
+        <button className="c4-btn sm" onClick={() => set({ map: [...map, map.length ? [map[map.length - 1][0] + (f.ch === 'time' ? 1000 : 1), map[map.length - 1][1]] : [typeof srcNow === 'number' ? Math.round(srcNow) : 0, typeof outNow === 'number' ? outNow : 0]] })} {...core.hp('Добавить строку таблицы (по умолчанию — текущее значение источника).')}>+ строка</button>
+      </div>
+      <div className="c4-link-opts">
+        <label {...core.hp('Не выходить за края таблицы (иначе крайние отрезки продолжаются).')}><Check value={l.clamp !== false} onChange={(v) => set({ clamp: v })} /> в пределах</label>
+        <label {...core.hp('Наоборот: результат отражается в диапазоне таблицы (без таблицы — 1 − x).')}><Check value={!!l.invert} onChange={(v) => set({ invert: v || undefined })} /> наоборот</label>
+        <span {...core.hp('Умножить результат.')}>×</span><Num value={l.mul == null ? 1 : l.mul} step={0.1} onChange={(v) => set({ mul: v === 1 ? undefined : v }, 'mul')} />
+        <span {...core.hp('Прибавить к результату.')}>+</span><Num value={l.add == null ? 0 : l.add} step={1} onChange={(v) => set({ add: v === 0 ? undefined : v }, 'add')} />
+      </div>
+      <div className="c4-ahint" style={{ margin: '2px 0 0' }}>Сейчас ({core.time} т): {srcNow === undefined ? '—' : fmtV(f.ch, srcNow)} → <b>{outNow === undefined ? '—' : fmtV(splitRef(l.to).ch, outNow)}</b></div>
+      <Issues list={iss} />
+    </div>
   );
 }

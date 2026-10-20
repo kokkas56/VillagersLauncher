@@ -49,6 +49,7 @@ function PopOut({ tab }) {
         <TitleBar max={max} title={'Студия Кокка — ' + label} />
         {core.bootErr ? <div className="c4-soon"><div className="c4-soon-card"><h3>Не открылось</h3><p>{core.bootErr}</p></div></div>
           : !core.boot ? <div className="c4-soon"><span className="dim">Открываю…</span></div>
+          : !core.boot.project ? <div className="c4-soon"><div className="c4-soon-card"><h3>Проект не открыт</h3><p>Открой или создай проект в главном окне Студии (Файл → Открыть проект).</p></div></div>
             : (
                 <div className="c4-docwrap">
                   <div className="studio" style={{ flex: 1 }}>

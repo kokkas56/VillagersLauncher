@@ -9,6 +9,7 @@ import { viewCenter } from './actions.js';
 import { worldPos, propsAt, activeCamera, clonerOutput, actorPosAt, isActive, objById, cameraPose } from '../scene3d.js';
 import { smoothPath } from '../mograph.js';
 import { setChan } from './ops.js';
+import { ENT_TYPES } from '../entities.js';
 
 const r2 = (n) => Math.round(n * 100) / 100;
 const TOOL_RU = { select: 'Выбор', move: 'Перемещение', rotate: 'Поворот', scale: 'Масштаб' };
@@ -185,16 +186,17 @@ function Schematic() {
 
   // вписать всё при открытии сцены
   useEffect(() => {
-    if (!scene || fitted.current === scene.id || !size.w) return;
-    fitted.current = scene.id;
-    const pts = [];
+    const fkey = scene ? scene.id : '_ents:' + core.ents.length;
+    if (fitted.current === fkey || !size.w || (!scene && !core.ents.length)) return;
+    fitted.current = fkey;
+    const pts = core.ents.map((e) => e.pos);
     for (const it of items) { if (it.pos) pts.push(it.pos); (it.points || []).forEach((p) => pts.push(p)); (it.clones || []).slice(0, 200).forEach((c) => pts.push(c.pos)); }
     if (!pts.length) { setView({ cx: 0, cz: 0, k: 6 }); return; }
     const xs = pts.map((p) => p[0]), zs = pts.map((p) => p[2]);
     const x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
     const k = Math.max(1, Math.min(24, Math.min((size.w - 120) / Math.max(8, x1 - x0), (size.h - 100) / Math.max(8, z1 - z0))));
     setView({ cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, k });
-  }, [scene && scene.id, items, size.w]); // eslint-disable-line
+  }, [scene && scene.id, items, size.w, core.ents.length]); // eslint-disable-line
 
   // колесо — масштаб вокруг курсора
   useEffect(() => {
@@ -214,7 +216,8 @@ function Schematic() {
     return () => el.removeEventListener('wheel', onWheel);
   }, [size]);
 
-  if (!scene) return <svg className="schem" ref={ref}><Grid {...{ SX, SZ, WX, WZ, size, view }} /></svg>;
+  const entLayer = <EntLayer SX={SX} SZ={SZ} view={view} />;
+  if (!scene) return <svg className="schem" ref={ref} onMouseDown={(e) => { if (e.button === 1 || e.altKey) { const v0 = view, x0 = e.clientX, y0 = e.clientY; const mv = (ev) => setView({ ...v0, cx: v0.cx - (ev.clientX - x0) / v0.k, cz: v0.cz - (ev.clientY - y0) / v0.k }); const up = () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); }; window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up); } else if (e.button === 0) core.setSelEnt(null); }} {...hp('Схема мира сверху: сущности проекта. Открой сцену (двойной щелчок в «Объектах») — появятся её камеры и объекты.')}><Grid {...{ SX, SZ, WX, WZ, size, view }} />{entLayer}</svg>;
 
   const hit = (sx, sz) => {
     let best = null, bd = 12;
@@ -368,6 +371,7 @@ function Schematic() {
         if (o.type === 'group') return <g key={o.id} opacity={op}><circle cx={x} cy={z} r={5} fill="none" stroke={col} strokeDasharray="2 2" />{lbl(x, z)}</g>;
         return <g key={o.id} opacity={op}><path d={`M${x} ${z - 6} L${x + 5} ${z} L${x} ${z + 6} L${x - 5} ${z}z`} fill={col} />{lbl(x, z)}</g>;
       })}
+      {entLayer}
       <g pointerEvents="none">
         <text x={size.w - 30} y={size.h - 40} fill="#ccc" fontSize="11" textAnchor="middle">С</text>
         <path d={`M${size.w - 30} ${size.h - 36} l-5 12 l5 -3 l5 3z`} fill="#e05050" />
@@ -394,3 +398,50 @@ function Grid({ SX, SZ, WX, WZ, size, view }) {
   );
 }
 
+
+// сущности мира на схеме: зоны — коробками, остальное — значками; щелчок выбирает, перетаскивание двигает по X/Z
+function EntLayer({ SX, SZ, view }) {
+  const core = useStudio();
+  const down = (e, ent) => {
+    if (e.button !== 0 || e.altKey) return;
+    e.stopPropagation();
+    core.setSelEnt(ent.id);
+    const x0 = e.clientX, y0 = e.clientY, p0 = ent.pos.slice();
+    let moved = false;
+    const mv = (ev) => {
+      if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 3) return;
+      if (!moved) { moved = true; core.entGesture(); }
+      let dx = (ev.clientX - x0) / view.k, dz = (ev.clientY - y0) / view.k;
+      const st = (ENT_TYPES[ent.type] || {}).block ? 1 : 0.5;
+      dx = Math.round(dx / st) * st; dz = Math.round(dz / st) * st;
+      core.editEnts((l) => l.map((x) => (x.id === ent.id ? { ...x, pos: [p0[0] + dx, p0[1], p0[2] + dz] } : x)), { silent: true });
+    };
+    const up = () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
+    window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
+  };
+  return (
+    <g>
+      {core.ents.map((ent) => {
+        const d = ENT_TYPES[ent.type] || { color: '#ccc' };
+        const sl = core.selEnt === ent.id;
+        const x = SX(ent.pos[0]), z = SZ(ent.pos[2]);
+        const col = sl ? '#ffd84a' : d.color;
+        const off = ent.enabled === false ? 0.4 : 1;
+        const lbl = <text x={x + 10} y={z - 9} fill={sl ? '#ffe680' : '#e6e6e6'} fontSize="11" style={{ paintOrder: 'stroke' }} stroke="#1e1e1e" strokeWidth="3" pointerEvents="none">{ent.name}</text>;
+        if (ent.type === 'trigger_zone') {
+          const sz = (ent.props && ent.props.size) || [4, 3, 4];
+          return <g key={ent.id} opacity={off} onMouseDown={(e) => down(e, ent)} style={{ cursor: 'move' }}><rect x={SX(ent.pos[0] - sz[0] / 2)} y={SZ(ent.pos[2] - sz[2] / 2)} width={sz[0] * view.k} height={sz[2] * view.k} fill="rgba(224,160,64,0.16)" stroke={col} strokeDasharray="5 3" strokeWidth={sl ? 2 : 1.2} /><circle cx={x} cy={z} r={4} fill={col} />{lbl}</g>;
+        }
+        const yaw = ((ent.rot || [0])[0] || 0) * Math.PI / 180;
+        return (
+          <g key={ent.id} opacity={off} onMouseDown={(e) => down(e, ent)} style={{ cursor: 'move' }}>
+            <rect x={x - 9} y={z - 9} width={18} height={18} rx={4} fill="#1d1f24" stroke={col} strokeWidth={sl ? 2 : 1.3} />
+            <g transform={'translate(' + (x - 7) + ' ' + (z - 7) + ')'}><I name={d.icon} size={14} color={col} sw={2} /></g>
+            {ent.type === 'player_start' && <line x1={x} y1={z} x2={x - Math.sin(yaw) * 20} y2={z + Math.cos(yaw) * 20} stroke={col} strokeWidth="2" />}
+            {lbl}
+          </g>
+        );
+      })}
+    </g>
+  );
+}

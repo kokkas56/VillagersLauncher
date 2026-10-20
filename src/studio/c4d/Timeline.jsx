@@ -88,7 +88,7 @@ export default function Timeline({ act, height }) {
   }, [scene, sel.objs, open, onlySel]);
   const totalH = rows.reduce((a, r) => a + r.h, 0);
 
-  if (!scene) return <div className="c4-tl" style={{ height }} />;
+  if (!scene) return <div className="c4-tl" style={{ height }}><div className="c4-tree-empty" style={{ padding: 18 }}>Сцена не открыта. Таймлайн нужен катсценам: двойной щелчок по сцене в «Объектах» → «Сцены» или «+» вверху. Сущности мира (слева) работают и без сцены.</div></div>;
 
   // ---------- перетаскивание ----------
   const drag = (e, { onMove, onEnd, cursor = 'ew-resize' }) => {
@@ -216,27 +216,29 @@ export default function Timeline({ act, height }) {
   return (
     <div className="c4-tl" style={{ height }}>
       <div className="c4-transport">
-        <button className="c4-ib" onClick={() => core.gameCmd.keyAll()} {...hp('Ключ на все свойства выбранных объектов в момент бегунка (F9, как «Записать» в C4D).')}><I name="key" size={16} color="#e6c23c" /></button>
+        <button className="c4-ib" data-learn="tl-key" onClick={() => core.gameCmd.keyAll()} {...hp('Ключ на все свойства выбранных объектов в момент бегунка (F9, как «Записать» в C4D).')}><I name="key" size={16} color="#e6c23c" /></button>
         <div className="c4-sep" />
         <button className="c4-ib" onClick={() => setTime(0)} {...hp('В начало сцены.')}><I name="first" size={15} /></button>
         <button className="c4-ib" onClick={prevKey} disabled={!keyTimesSel.length} {...hp('К предыдущему ключу выбранных объектов.')}><I name="prevkey" size={15} /></button>
         <button className="c4-ib" onClick={() => setTime(Math.max(0, time - 1))} {...hp('На тик назад (F).')}><I name="prevframe" size={15} /></button>
-        <button className={'c4-ib' + (playing ? ' on' : '')} onClick={() => setPlaying(!playing)} {...hp('Проиграть в Студии (только бегунок и игра в режиме «Смотреть через камеру»). Сыграть сцену целиком — кнопка ▶ «В игре» сверху.')}><I name={playing ? 'pause' : 'play'} size={15} /></button>
+        <button className={'c4-ib' + (playing ? ' on' : '')} data-learn="tl-play" onClick={() => setPlaying(!playing)} {...hp('Проиграть в Студии: бегунок едет, игра показывает позы камер и актёров (и небо). Сыграть сцену целиком как у игрока — «▶ Сцена в игре».')}><I name={playing ? 'pause' : 'play'} size={15} /></button>
         <button className="c4-ib" onClick={() => setTime(Math.min(len, time + 1))} {...hp('На тик вперёд (G).')}><I name="nextframe" size={15} /></button>
         <button className="c4-ib" onClick={nextKey} disabled={!keyTimesSel.length} {...hp('К следующему ключу выбранных объектов.')}><I name="nextkey" size={15} /></button>
         <button className="c4-ib" onClick={() => setTime(len)} {...hp('В конец сцены.')}><I name="last" size={15} /></button>
         <input className="c4-frame" value={time + ' т'} onChange={(e) => { const n = parseInt(e.target.value, 10); if (isFinite(n)) setTime(Math.min(len, Math.max(0, n))); }} onKeyDown={(e) => e.stopPropagation()} {...hp('Текущий момент в тиках (20 тиков = 1 секунда).')} />
         <span className="dim" style={{ minWidth: 52 }}>{fmtTicks(time)}</span>
         <div className="c4-sep" />
-        <button className={'c4-ib c4-rec' + (autoKey ? ' on' : '')} onClick={() => setAutoKey(!autoKey)} {...hp('Автозапись ключей: пока включена, любая правка (в Атрибутах или гизмо в игре) сама ставит ключ в момент бегунка. Как «Автоключ» в C4D.')}><I name="record" size={15} color={autoKey ? '#fff' : '#e0504a'} fill={autoKey ? '#e0504a' : 'none'} /></button>
+        <button data-learn="tl-record" className={'c4-ib c4-rec' + (autoKey ? ' on' : '')} onClick={() => setAutoKey(!autoKey)} {...hp('Автозапись ключей: пока включена, любая правка (в Атрибутах или гизмо в игре) сама ставит ключ в момент бегунка. Как «Автоключ» в C4D.')}><I name="record" size={15} color={autoKey ? '#fff' : '#e0504a'} fill={autoKey ? '#e0504a' : 'none'} /></button>
         <div className="c4-sep" />
         <div className="c4-group">
           <button className={'c4-ib wide' + (mode === 'keys' ? ' on' : '')} onClick={() => setMode('keys')} {...hp('Ключи: ромбы по времени, тяни — сдвинуть.')}><I name="key" size={13} /> Ключи</button>
-          <button className={'c4-ib wide' + (mode === 'curves' ? ' on' : '')} onClick={() => setMode('curves')} {...hp('Кривые (F-кривые): как меняется значение между ключами. Тяни ключи и ручки наклона; правый клик — безье/линейно/ступенька.')}><I name="curves" size={13} /> Кривые</button>
+          <button data-learn="tl-curves" className={'c4-ib wide' + (mode === 'curves' ? ' on' : '')} onClick={() => setMode('curves')} {...hp('Кривые (F-кривые): как меняется значение между ключами. Тяни ключи и ручки наклона; правый клик — безье/линейно/ступенька.')}><I name="curves" size={13} /> Кривые</button>
         </div>
         <button className="c4-ib wide" disabled={!selKeys.length} onClick={() => act.setInterp('bezier')} {...hp('Выбранные ключи — безье (плавно).')}>Безье</button>
         <button className="c4-ib wide" disabled={!selKeys.length} onClick={() => act.setInterp('linear')} {...hp('Выбранные ключи — линейно.')}>Линейно</button>
         <button className="c4-ib wide" disabled={!selKeys.length} onClick={() => act.setInterp('step')} {...hp('Выбранные ключи — ступенькой.')}>Ступенька</button>
+        <div className="c4-sep" />
+        <button className="c4-ib wide c4-play" data-learn="tl-scene-play" disabled={!core.link.connected} onClick={() => core.playInGame(false)} {...hp('▶ Сцена в игре: сыграть только эту сцену целиком, как увидит игрок (без F5 и логики проекта).')}><I name="play" size={13} /> Сцена в игре</button>
         <div className="grow" />
         <span className="dim" {...hp('Какая камера снимает в момент бегунка (по «Монтажу»).')}>{cam ? <>снимает: <b style={{ color: '#cfd6ff' }}>{cam.name}</b></> : 'камер нет'}</span>
         <div className="c4-sep" />
@@ -253,7 +255,7 @@ export default function Timeline({ act, height }) {
           ) : <CurveHeads />}
         </div>
         <div className="c4-tl-lanes">
-          <div className="c4-ruler" ref={rulerRef} onMouseDown={scrubRuler} {...hp('Линейка времени: щёлкни или тяни — переставить бегунок. Колесо — масштаб, Shift+колесо — прокрутка. Золотой флажок — конец сцены (тяни).')}>
+          <div className="c4-ruler" data-learn="tl-ruler" ref={rulerRef} onMouseDown={scrubRuler} {...hp('Линейка времени: щёлкни или тяни — переставить бегунок. Колесо — масштаб, Shift+колесо — прокрутка. Золотой флажок — конец сцены (тяни).')}>
             <svg width={W} height={22}>
               {ticks.map((t) => (
                 <g key={t}>
@@ -274,7 +276,7 @@ export default function Timeline({ act, height }) {
             </svg>
           </div>
           {mode === 'keys' ? (
-            <div className="c4-lanes" ref={lanesRef} onScroll={(e) => { if (headsRef.current) headsRef.current.scrollTop = e.currentTarget.scrollTop; }}
+            <div className="c4-lanes" data-learn="tl-lanes" ref={lanesRef} onScroll={(e) => { if (headsRef.current) headsRef.current.scrollTop = e.currentTarget.scrollTop; }}
               onMouseDown={(e) => { if (e.button === 0 && e.target.tagName === 'svg') { setSelKeys([]); } }}>
               <svg width={W} height={Math.max(totalH, 40)}>
                 <rect x={X(len)} y={0} width={Math.max(0, W - X(len))} height={Math.max(totalH, 40)} fill="rgba(0,0,0,0.22)" />
@@ -296,7 +298,7 @@ export default function Timeline({ act, height }) {
 function RowHead({ row, open, setOpen, act, laneMenu }) {
   const core = useStudio();
   const { hp, sel, setSel } = core;
-  if (row.kind === 'stage') return <div className="c4-lhead obj" style={{ height: row.h }} {...hp('«Монтаж» (Stage в C4D): какая камера снимает сцену в какой момент. Правый клик по дорожке — «с этого места снимает Камера N». Края блоков тянутся.')}><I name="stage" size={13} color="#9fb0ff" /><span className="nm">Монтаж (Stage)</span></div>;
+  if (row.kind === 'stage') return <div className="c4-lhead obj" data-learn="tl-stage" style={{ height: row.h }} {...hp('«Монтаж» (Stage в C4D): какая камера снимает сцену в какой момент. Правый клик по дорожке — «с этого места снимает Камера N». Края блоков тянутся.')}><I name="stage" size={13} color="#9fb0ff" /><span className="nm">Монтаж (Stage)</span></div>;
   if (row.kind === 'grp') return <div className="c4-lhead grp" style={{ height: row.h }} {...hp(row.hint)}>{row.label}</div>;
   if (row.kind === 'note') return <div className="c4-lhead" style={{ height: row.h, color: '#777', fontStyle: 'italic' }}>—</div>;
   if (row.kind === 'obj') {
@@ -422,6 +424,8 @@ function Lane({ row, X, W, view, len, keyDrag, keyMenu, isKeySel, evDrag, evDur,
 }
 
 // ---------- F-кривые ----------
+// время суток (идёт по кругу) и цвета на кривых не показываем — их правят ключами
+const NO_CURVE = ['time', 'fogColor', 'skyColor'];
 function CurveHeads() {
   const core = useStudio();
   const objs = core.sel.objs.map((id) => objById(core.scene, id)).filter(Boolean);
@@ -431,7 +435,7 @@ function CurveHeads() {
       {objs.map((o) => (
         <React.Fragment key={o.id}>
           <div className="c4-lhead obj"><TypeIcon type={o.type} size={12} /><span className="nm">{o.name}</span></div>
-          {Object.keys(o.anim || {}).filter((ch) => isAnimated(o, ch) && !isStepChannel(ch)).map((ch) => (
+          {Object.keys(o.anim || {}).filter((ch) => isAnimated(o, ch) && !isStepChannel(ch) && !NO_CURVE.includes(ch)).map((ch) => (
             <div key={ch} className="c4-lhead ch"><span className="sw" style={{ background: CH_COLOR[ch] || '#888' }} /><span className="nm">{CHANNEL_LABEL[ch] || ch}</span><span className="dim">{o.anim[ch].length}</span></div>
           ))}
         </React.Fragment>
@@ -456,7 +460,7 @@ function Curves({ X, T, W, len, drag, keyMenu, lanesRef }) {
   for (const id of sel.objs) {
     const o = objById(scene, id);
     if (!o) continue;
-    for (const ch of Object.keys(o.anim || {})) if (isAnimated(o, ch) && !isStepChannel(ch) && o.anim[ch].every((k) => typeof k.v === 'number')) curves.push({ o, ch, keys: o.anim[ch] });
+    for (const ch of Object.keys(o.anim || {})) if (isAnimated(o, ch) && !isStepChannel(ch) && !NO_CURVE.includes(ch) && o.anim[ch].every((k) => typeof k.v === 'number')) curves.push({ o, ch, keys: o.anim[ch] });
   }
   // диапазон значений
   let lo = Infinity, hi = -Infinity;

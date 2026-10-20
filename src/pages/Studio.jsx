@@ -153,6 +153,7 @@ function ClassicStudio() {
       try {
         const b = await call('studio:open');
         if (!alive) return;
+        if (!b.project) { setBootErr('Проект не открыт. Открой окно «Студия Кокка» (кнопка «Открыть Студию») и выбери или создай проект — с фазы 5 у каждого проекта свой мир и свои файлы.'); return; }
         setBoot(b); setProject(b.project || { actors: [] }); setList(b.scenes || []); setDialogs(b.dialogs || []); setQuests(b.quests || []);
         if (b.link) setLink(b.link);
       } catch (e) { setBootErr(e.message); }
@@ -593,6 +594,7 @@ export function LinkCard({ link, boot, setBoot, hp, toast, setLink }) {
         <span className="st-led" />
         <span>{link.connected ? 'Игра на связи' : 'Нет связи — запусти игру с режимом разработчика'}</span>
       </div>
+      {!link.connected && link.text && <div className="muted small st-world" {...hp('Почему нет связи — точная причина. Студия пробует снова каждые 2 секунды; все попытки — во вкладке «Журнал».')}>{link.text}</div>}
       {link.connected && (info.world || info.dim) && <div className="muted small st-world">{[info.world, info.dim].filter(Boolean).join(' · ')}</div>}
       <div {...hp('Создаёт файл studio/.dev рядом с игрой. С ним мод Kokk Story у тебя (и только у тебя — в сборку файл не попадает) читает сцены прямо из Студии, открывает связь с лаунчером и включает клавиши F8/F9/F10. Нужен перезапуск игры.')}>
         <Toggle checked={boot.dev} label="Режим разработчика в игре" hint="нужен перезапуск игры"
@@ -600,6 +602,7 @@ export function LinkCard({ link, boot, setBoot, hp, toast, setLink }) {
       </div>
       <div className="row st-link-btns">
         <button className="btn sm ghost" disabled={!link.connected} onClick={() => call('studio:reload').then(() => toast('Игра перечитывает сцены', 'ok')).catch((e) => toast(e.message, 'error'))} {...hp('Попросить игру перечитать все сцены с диска (как /vkokk studio reload).')}><Icon name="refresh" size={11} /> Перечитать</button>
+        <button className="btn sm ghost" onClick={() => call('studio:reconnect').then((st) => st && setLink(st)).catch((e) => toast(e.message, 'error'))} {...hp('Бросить текущую попытку и сразу подключиться заново (127.0.0.1 и localhost, порт из studio/.link).')}><Icon name="refresh" size={11} /> Переподключить</button>
         <button className="btn sm ghost icon-btn" onClick={() => call('shell:openPath', 'studio')} {...hp('Открыть папку проекта Студии: project.json и scenes/*.json.')}><Icon name="folder" size={11} /></button>
         <button className="btn sm ghost icon-btn" onClick={() => setPort(port == null ? String(link.port || 47311) : null)} {...hp('Порт связи с игрой (обычно 47311). Меняй, только если поменял его в конфиге мода.')}><Icon name="gear" size={11} /></button>
       </div>

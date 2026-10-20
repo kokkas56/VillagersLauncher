@@ -17,6 +17,10 @@ const isP3 = (p) => Array.isArray(p) && p.length === 3 && p.every((v) => typeof 
 export const REGION_RU = { fill: 'Заполнить', replace: 'Заменить', clear: 'Очистить', copy: 'Копировать', cut: 'Вырезать', paste: 'Вставить', rotate: 'Повернуть', mirror: 'Отразить', capture: 'Сохранить как шаблон', structure: 'Постройка', brush: 'Кисть', bake: 'Запекание' };
 import { selToPos } from '../fields.jsx';
 import { addObject, patchObj, setChan, keyAllSelected } from './ops.js';
+import { makeEntity, validateEntities, ENT_TYPES, entLabel, mergeGameTypes } from '../entities.js';
+import { viewCenter as viewCenterRef } from './actions.js';
+import { learnMark } from '../learn/index.jsx';
+import { skyAt } from '../scene3d.js';
 
 export const StudioCtx = createContext(null);
 export const useStudio = () => useContext(StudioCtx);
@@ -69,6 +73,13 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
   const [brushOn, setBrushOn] = useState(false);
   const [brushState, setBrushState] = useState(null); // что сообщила игра о кисти (размер после Ctrl+колеса)
   const [clipboard, setClipboard] = useState(null); // буфер копии в игре: { size, blocks, entities }
+  // фаза 5: сущности мира проекта (entities.json), выбранная сущность, ▶ Играть, режим редактора в игре
+  const [ents, setEntsState] = useState([]);
+  const [selEnt, setSelEntState] = useState(null);
+  const [playState, setPlayState] = useState({ state: 'editor', at: 0, from: null });
+  const [editorOn, setEditorOnState] = useState(() => lsGet('editorOn', true));
+  const [worldMatch, setWorldMatch] = useState(null);
+  const [gameEnts, setGameEnts] = useState(null); // последний entitiesResult игры
   const [, force] = useState(0);
 
   const sceneRef = useRef(null);
@@ -76,6 +87,12 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
   const timeRef = useRef(0);
   const linkRef = useRef(link);
   const hist = useRef({ past: [], future: [], key: null, at: 0 });
+  // общая история: кто правился (сцена или сущности) — Ctrl+Z отменяет последнее, где бы оно ни было
+  const domains = useRef({ past: [], future: [] });
+  const entHist = useRef({ past: [], future: [], key: null, at: 0 });
+  const entsRef = useRef([]);
+  const entDirty = useRef(false);
+  const entTimer = useRef(null);
   const dirty = useRef(false);
   const saveTimer = useRef(null);
   const lastTool = useRef('move');
@@ -85,9 +102,17 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
   autoKeyRef.current = autoKey;
 
   const hp = useCallback((text) => (text ? { title: text, onMouseEnter: () => setHint(text) } : {}), []);
-  const addLog = useCallback((level, text) => setLogs((l) => [...l.slice(-299), { at: Date.now(), level, text }]), []);
+  // одинаковые строки подряд склеиваются («×N»): попытки связи раз в 2 с не забивают журнал
+  const addLog = useCallback((level, text) => setLogs((l) => {
+    const last = l[l.length - 1];
+    if (last && last.text === text && last.level === level) return [...l.slice(0, -1), { ...last, at: Date.now(), n: (last.n || 1) + 1 }];
+    const norm = (x) => String(x || '').replace(/попытка \d+/, 'попытка');
+    if (last && last.level === level && norm(last.text) === norm(text) && /попытка \d+/.test(text)) return [...l.slice(0, -1), { ...last, at: Date.now(), text, n: (last.n || 1) + 1 }];
+    return [...l.slice(-299), { at: Date.now(), level, text }];
+  }), []);
   const setTime = useCallback((t) => { const v = Math.max(0, Math.round(t)); timeRef.current = v; setTimeState(v); }, []);
-  const setSel = useCallback((s) => { const v = { objs: [], ev: null, stage: null, ...s }; selRef.current = v; setSelState(v); }, []);
+  // выбор в сцене снимает выбор сущности мира (и наоборот — setSelEnt)
+  const setSel = useCallback((s) => { const v = { objs: [], ev: null, stage: null, ...s }; selRef.current = v; setSelState(v); setSelEntState(null); }, []);
   const setTool = useCallback((t) => { setToolState((cur) => { if (cur !== t) lastTool.current = cur; return t; }); lsSet('tool', t); }, []);
   const toggleLastTool = useCallback(() => setTool(lastTool.current || 'move'), [setTool]);
 
@@ -104,8 +129,10 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
   }), [link.connected, toast]);
 
   // ---------- сохранение и история ----------
+  const flushAllRef = useRef(null);
   const flush = useCallback(async () => {
     clearTimeout(saveTimer.current);
+    if (flushAllRef.current) await flushAllRef.current();
     const s = sceneRef.current;
     if (!s || !dirty.current) return;
     dirty.current = false;
@@ -132,21 +159,73 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
     const h = hist.current;
     if (!opt.silent) {
       const now = Date.now();
-      if (!(opt.key && opt.key === h.key && now - h.at < 1500)) { h.past.push(prev); if (h.past.length > 300) h.past.shift(); }
+      if (!(opt.key && opt.key === h.key && now - h.at < 1500)) { h.past.push(prev); if (h.past.length > 300) h.past.shift(); domains.current.past.push('scene'); }
       h.key = opt.key || null; h.at = now; h.future = [];
+      domains.current.future = domains.current.future.filter((d) => d !== 'scene');
     }
     setScene(next);
     markDirty();
     return next;
   }, [markDirty]);
-  const gesture = useCallback(() => { const h = hist.current; if (!sceneRef.current) return; h.past.push(sceneRef.current); h.future = []; h.key = null; }, []);
+  const gesture = useCallback(() => { const h = hist.current; if (!sceneRef.current) return; h.past.push(sceneRef.current); h.future = []; h.key = null; domains.current.past.push('scene'); }, []);
   const fixSel = () => {
     const s = sceneRef.current;
     const cur = selRef.current;
     setSel({ objs: cur.objs.filter((id) => objById(s, id)), ev: cur.ev && getItem(s, cur.ev) ? cur.ev : null, stage: cur.stage != null && (s.stage || [])[cur.stage] ? cur.stage : null });
   };
-  const undo = useCallback(() => { const h = hist.current; if (!h.past.length) return; h.future.push(sceneRef.current); setScene(h.past.pop()); h.key = null; fixSel(); markDirty(); force((n) => n + 1); }, [markDirty]); // eslint-disable-line
-  const redo = useCallback(() => { const h = hist.current; if (!h.future.length) return; h.past.push(sceneRef.current); setScene(h.future.pop()); h.key = null; fixSel(); markDirty(); force((n) => n + 1); }, [markDirty]); // eslint-disable-line
+  const sceneUndo = () => { const h = hist.current; if (!h.past.length) return false; h.future.push(sceneRef.current); setScene(h.past.pop()); h.key = null; fixSel(); markDirty(); return true; };
+  const sceneRedo = () => { const h = hist.current; if (!h.future.length) return false; h.past.push(sceneRef.current); setScene(h.future.pop()); h.key = null; fixSel(); markDirty(); return true; };
+  const entUndo = () => { const h = entHist.current; if (!h.past.length) return false; h.future.push(entsRef.current); applyEnts(h.past.pop()); h.key = null; return true; };
+  const entRedo = () => { const h = entHist.current; if (!h.future.length) return false; h.past.push(entsRef.current); applyEnts(h.future.pop()); h.key = null; return true; };
+  const undo = useCallback(() => {
+    const d = domains.current;
+    const dom = d.past.pop() || (entHist.current.past.length && !hist.current.past.length ? 'ent' : 'scene');
+    const ok = dom === 'ent' ? entUndo() : sceneUndo();
+    if (ok) d.future.push(dom);
+    force((n) => n + 1);
+  }, [markDirty]); // eslint-disable-line
+  const redo = useCallback(() => {
+    const d = domains.current;
+    const dom = d.future.pop() || (entHist.current.future.length ? 'ent' : 'scene');
+    const ok = dom === 'ent' ? entRedo() : sceneRedo();
+    if (ok) d.past.push(dom);
+    force((n) => n + 1);
+  }, [markDirty]); // eslint-disable-line
+
+  // ---------- сущности мира (entities.json): своя история и автосохранение ----------
+  const flushEnts = useCallback(async () => {
+    clearTimeout(entTimer.current);
+    if (!entDirty.current) return;
+    entDirty.current = false;
+    setSaveState('saving');
+    try { await call('studio:entitiesSave', entsRef.current); setSaveState(dirty.current ? 'dirty' : 'saved'); } catch (e) { entDirty.current = true; setSaveState('error'); toast('Сущности не сохранились: ' + e.message, 'error', 8000); }
+  }, [toast]);
+  const applyEnts = (list) => {
+    entsRef.current = list;
+    setEntsState(list);
+    entDirty.current = true;
+    setSaveState('dirty');
+    clearTimeout(entTimer.current);
+    entTimer.current = setTimeout(flushEnts, 700);
+  };
+  // правка сущностей: fn(старый список) → новый; opt.key — слить с прошлой правкой того же поля; opt.silent — без истории
+  const editEnts = useCallback((fn, opt = {}) => {
+    const prev = entsRef.current;
+    const next = fn(prev);
+    if (!next || next === prev) return prev;
+    const h = entHist.current;
+    if (!opt.silent) {
+      const now = Date.now();
+      if (!(opt.key && opt.key === h.key && now - h.at < 1500)) { h.past.push(prev); if (h.past.length > 300) h.past.shift(); domains.current.past.push('ent'); }
+      h.key = opt.key || null; h.at = now; h.future = [];
+      domains.current.future = domains.current.future.filter((d) => d !== 'ent');
+    }
+    applyEnts(next);
+    force((n) => n + 1);
+    return next;
+  }, []); // eslint-disable-line
+  const entGesture = useCallback(() => { entHist.current.past.push(entsRef.current); entHist.current.future = []; entHist.current.key = null; domains.current.past.push('ent'); }, []);
+  const setSelEnt = useCallback((id) => { setSelEntState(id || null); if (id) { setSelState({ objs: [], ev: null, stage: null }); selRef.current = { objs: [], ev: null, stage: null }; } }, []);
 
   // ---------- загрузка ----------
   const openScene = useCallback(async (id) => {
@@ -155,8 +234,9 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
       const raw = await call('studio:read', id);
       const s = prepareObjScene(raw, id);
       hist.current = { past: [], future: [], key: null, at: 0 };
+      domains.current = { past: domains.current.past.filter((d) => d !== 'scene'), future: domains.current.future.filter((d) => d !== 'scene') };
       setScene(s); setSel({}); setSelKeys([]); setTime(0); setPlaying(false);
-      lsSet('last', id);
+      lsSet('last:' + ((bootRef.current && bootRef.current.projectId) || ''), id);
     } catch (e) { toast(e.message, 'error', 8000); }
   }, [flush, toast, setTime, setSel]);
   const reloadList = useCallback(async () => { const l = (await call('studio:list')) || []; setList(l); return l; }, []);
@@ -196,24 +276,29 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
     toast('Переменная «' + name + '» заведена', 'ok', 3000);
   }, [saveProject, toast]);
 
+  const bootRef = useRef(null);
+  bootRef.current = boot;
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         const b = await call('studio:open');
         if (!alive) return;
+        bootRef.current = b;
         setBoot(b); setProject(b.project || { actors: [] }); setList(b.scenes || []); setDialogs(b.dialogs || []); setQuests(b.quests || []); setSchemes(b.schemes || []); setStructures(b.structures || []);
+        entsRef.current = Array.isArray(b.entities) ? b.entities : []; setEntsState(entsRef.current);
         if (b.link) setLink(b.link);
-        if (withScene) {
-          const last = lsGet('last', null);
-          const pick = (b.scenes || []).find((x) => x.id === last) || (b.scenes || [])[0];
+        // «двойной щелчок по сцене — открыть»: сцена открывается, только если автор сам её открывал в этом проекте
+        if (withScene && b.project) {
+          const last = lsGet('last:' + b.projectId, null);
+          const pick = (b.scenes || []).find((x) => x.id === last);
           if (pick) openScene(pick.id);
         }
       } catch (e) { setBootErr(e.message); }
-      call('studio:link', true, who).then((st) => st && alive && setLink(st)).catch(() => {});
+      call('studio:link', true, who).then((st) => st && alive && setLink((old) => ({ ...old, ...st }))).catch(() => {});
       call('studio:winState').then((w) => { if (!alive || !w) return; if (w.embed) setEmbed(w.embed); if (w.pops) setPops(w.pops); }).catch(() => {});
     })();
-    const onUnload = () => { flush(); };
+    const onUnload = () => { flush(); flushEnts(); };
     window.addEventListener('beforeunload', onUnload);
     return () => { alive = false; window.removeEventListener('beforeunload', onUnload); flush(); call('studio:link', false, who).catch(() => {}); };
   }, []); // eslint-disable-line
@@ -229,7 +314,34 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
     const s = sceneRef.current;
     switch (m.t) {
       case 'log': addLog(m.level || 'info', m.text || ''); break;
-      case 'hello': addLog('ok', 'Игра: ' + [m.world, m.dim, m.ver && 'версия ' + m.ver].filter(Boolean).join(' · ')); break;
+      case 'hello': if (!m.refresh) addLog('ok', 'Игра: ' + [m.world, m.dim, m.ver && 'версия ' + m.ver].filter(Boolean).join(' · ')); refreshWorldMatch(); break;
+      // ▶ Играть: игра сообщает {t:'playtest', state:'playing'|'stopped'|'error', from?, error?, restored?}
+      // ▶ Играть: {t:'playtest', state:'running'|'stopped'|'error', from?, startedAt?, seconds?, restored?:{blocks, recorded, removed, entities, unloaded, failed}}
+      case 'playtest': {
+        const run = m.state === 'running' || m.state === 'playing';
+        const st = run ? 'playing' : m.state === 'error' ? 'error' : 'editor';
+        setPlayState((p) => ({ state: st, from: m.from || p.from, at: run ? (typeof m.startedAt === 'number' && m.startedAt > 1e12 ? m.startedAt : typeof m.seconds === 'number' ? Date.now() - m.seconds * 1000 : p.state === 'playing' ? p.at : Date.now()) : 0, error: m.error || null }));
+        if (run) addLog('ok', 'Игра: идёт игра' + (m.from === 'camera' ? ' (с камеры)' : ' (от старта игрока)'));
+        else if (m.state === 'error') { addLog('error', 'Игра не началась: ' + (m.error || '?')); toast('Игра: ' + (m.error || 'не вышло'), 'error', 8000); } else if (m.state === 'stopped') {
+          const r = m.restored || {};
+          addLog('ok', 'Игра остановлена — мир вернулся' + (m.seconds != null ? ' (играли ' + Math.round(m.seconds) + ' с)' : '') + (typeof r === 'object' ? ': блоков ' + (r.blocks || 0) + ', убрано существ ' + (r.removed || 0) + ', возвращено ' + (r.entities || 0) + (r.unloaded ? ', не тронуто (чанки выгружены) ' + r.unloaded : '') + (r.failed ? ', не вышло ' + r.failed : '') : ''));
+          learnMark('stop');
+        }
+        break;
+      }
+      case 'editor': setEditorOnState(!!m.on); if (m.error) addLog('warn', 'Редактор: ' + m.error); break;
+      // ответ на {t:'project'}: совпадает ли мир игры с миром проекта
+      case 'project':
+        if (m.ok === false) { addLog('error', 'Игра не открыла проект: ' + (m.error || '?')); break; }
+        setWorldMatch((w) => ({ ...(w || {}), match: m.inWorld === false ? false : m.worldMatch !== false, world: m.world, game: { inWorld: m.inWorld !== false, world: m.gameWorld } }));
+        addLog('ok', 'Игра открыла проект «' + (m.name || m.id) + '»' + (m.inWorld === false ? ' (загрузится вместе с миром)' : m.worldMatch === false ? ' — но она в другом мире' : '') + (m.note ? ' — ' + m.note : ''));
+        break;
+      case 'entitiesResult':
+        setGameEnts(m);
+        addLog(m.errors ? 'error' : m.warnings ? 'warn' : 'ok', 'Игра: объектов мира ' + (m.count || 0) + ', выходов ' + (m.outputs || 0) + (m.errors ? ', ошибок ' + m.errors : '') + (m.warnings ? ', предупреждений ' + m.warnings : ''));
+        break;
+      case 'entityTypes': { const n = mergeGameTypes(m); if (n) { addLog('info', 'Каталог объектов мира из игры: ' + n + ' видов'); force((x) => x + 1); } break; }
+      case 'learnHint': if (m.ok === false && m.error) addLog('warn', 'Подсказка в игре: ' + m.error); break;
       case 'played':
         addLog(m.ok ? 'ok' : 'error', (m.ok ? 'Сыграно: ' : 'Не сыграло: ') + (m.scene || '') + (m.error ? ' — ' + m.error : ''));
         if (!m.ok) { setPlaying(false); toast('Игра: ' + (m.error || 'сцена не сыграла'), 'error', 8000); }
@@ -286,8 +398,12 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
       case 'baked': addLog(m.ok === false ? 'error' : 'ok', m.ok === false ? 'Запекание не удалось: ' + (m.error || '?') : 'Запечено в мир: ' + (m.count || 0) + ' блоков'); break;
       case 'undone': addLog(m.ok === false ? 'error' : 'ok', m.ok === false ? 'Отмена запекания не удалась: ' + (m.error || '?') : 'Запекание отменено'); break;
       case 'select': {
-        if (!s) break;
+        // сущность мира, выбранная в игре
+        const eid = (Array.isArray(m.ids) ? m.ids : m.id ? [m.id] : []).find((id) => entsRef.current.some((e) => e.id === id));
+        if (eid) { setSelEnt(eid); break; }
+        if (!s) { if (!m.add) setSelEntState(null); break; }
         const ids = (Array.isArray(m.ids) ? m.ids : m.id ? [m.id] : []).filter((id) => objById(s, id));
+        if (ids.length || !m.add) setSelEntState(null);
         if (m.add) {
           const cur = selRef.current.objs;
           const next = cur.slice();
@@ -298,6 +414,7 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
         break;
       }
       case 'transform': {
+        if (entsRef.current.some((e) => e.id === m.id)) { entTransform(m); break; }
         if (!s) break;
         applyTransform(m);
         break;
@@ -309,6 +426,7 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
           break;
         }
         if (!s) { toast('Открой сцену, чтобы ставить ключи из игры', 'warn'); break; }
+        if (m.name === 'playtest') { addLog('info', 'F5 в игре' + (m.shift ? ' (с камеры)' : '')); if (!m.playing) learnMark('playtest'); break; }
         if (m.name === 'camKey') camKeyFromGame(m.view);
         else if (m.name === 'pathPoint') pathPointFromGame(m);
         else if (m.name === 'playStop') setPlaying((p) => !p);
@@ -320,16 +438,22 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
   useEffect(() => on('studio-link', (d) => {
     if (!d) return;
     if (d.type === 'state') {
-      setLink((old) => {
-        if (old.connected !== d.connected) addLog(d.connected ? 'ok' : 'warn', d.connected ? 'Игра на связи' : 'Связь с игрой пропала');
-        return { connected: d.connected, info: d.info, port: d.port };
-      });
+      const { type, ...st } = d; // eslint-disable-line no-unused-vars
+      setLink((old) => ({ ...old, ...st }));
       return;
     }
+    if (d.type === 'log') { addLog(d.level || 'info', d.text || ''); return; }
     if (d.msg && onMsgRef.current) onMsgRef.current(d.msg);
   }), [addLog]);
   useEffect(() => on('studio-embed', (e) => { if (e) { setEmbed(e); if (e.why) addLog(e.mode === 'embedded' ? 'ok' : 'warn', e.why); } }), [addLog]);
-  useEffect(() => on('studio-win', (w) => { if (w && w.type === 'pops') setPops(w.pops || []); }), []);
+  useEffect(() => on('studio-win', (w) => {
+    if (!w) return;
+    if (w.type === 'pops') setPops(w.pops || []);
+    // проект сменили (в этом или другом окне) — перечитать окно целиком: только открытый проект загружен
+    if (w.type === 'project' && (w.id || null) !== ((bootRef.current && bootRef.current.projectId) || null)) {
+      Promise.all([flush(), flushEnts()]).finally(() => window.location.reload());
+    }
+  }), []); // eslint-disable-line
 
   // игра двигает гизмо: { id, pos:[x,y,z] (мировые), rot:[yaw,pitch,roll], point?, final } — не чаще раза в 50 мс;
   // в историю правок жест попадает одной записью (в начале), final:true — отпустили мышь
@@ -378,6 +502,14 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
       if (rot && cur.type === 'camera') for (const k of ['h', 'p', 'b']) if (typeof rot[k] === 'number') x = setChan(x, o.id, 'rot.' + k, t, r2(rot[k]), ak);
       return x;
     }, { silent: true });
+  };
+  // гизмо в игре двигает сущность мира
+  const entDrag = useRef(new Set());
+  const entTransform = (m) => {
+    if (!entDrag.current.has(m.id)) { entGesture(); entDrag.current.add(m.id); }
+    if (m.final) entDrag.current.delete(m.id);
+    const rot = Array.isArray(m.rot) ? m.rot : null;
+    editEnts((l) => l.map((e) => (e.id === m.id ? { ...e, ...(Array.isArray(m.pos) ? { pos: m.pos.map(r2) } : {}), ...(rot ? { rot: [r2(rot[0] || 0), 0, 0] } : {}) } : e)), { silent: true });
   };
   // F8 в игре: ключ выбранной (или активной) камеры из вида игрока
   const camKeyFromGame = async (view) => {
@@ -447,6 +579,9 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
   const lazyScene = useDeferredValue(scene);
   const issues = useMemo(() => (lazyScene ? validateScene(lazyScene, { project, ids: list.map((x) => x.id), dialogIds: dialogs.map((x) => x.id) }) : []), [lazyScene, project, list, dialogs]);
   const nErr = issues.filter((x) => x.sev === ERR).length;
+  const lazyEnts = useDeferredValue(ents);
+  const entIssues = useMemo(() => (boot && boot.project ? validateEntities(lazyEnts, { scenes: list.map((x) => x.id), quests: quests.map((x) => x.id), schemes: schemes.map((x) => x.id), dialogs: dialogs.map((x) => x.id), structures: structures.map((x) => x.id), vars: (project.vars || []).map((v) => v && v.name) }) : []), [lazyEnts, list, quests, schemes, dialogs, structures, project, boot]);
+  const entErr = entIssues.filter((x) => x.sev === ERR).length;
 
   // ---------- проигрывание ----------
   useEffect(() => {
@@ -469,7 +604,7 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
     if (!s) return false;
     if (!linkRef.current.connected) { toast('Нет связи с игрой — запусти игру с режимом разработчика', 'warn', 6000); return false; }
     if (nErr && !forceIt) return 'issues';
-    try { await call('studio:play', normalizeScene(s)); setTime(0); setPlaying(true); addLog('info', 'Отправил в игру: ' + s.id); return true; } catch (e) { toast(e.message, 'error'); return false; }
+    try { await call('studio:play', normalizeScene(s)); learnMark('scenePlay'); setTime(0); setPlaying(true); addLog('info', 'Отправил в игру: ' + s.id); return true; } catch (e) { toast(e.message, 'error'); return false; }
   }, [nErr, toast, setTime, addLog]);
   const stopInGame = useCallback(async () => { setPlaying(false); try { await call('studio:stop'); } catch (_) {} }, []);
 
@@ -482,7 +617,7 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
     const tm = setTimeout(() => {
       const t = timeRef.current;
       const cam = activeCamera(scene, t);
-      send({ t: 'objects', data: { scene: scene.id, time: t, length: scene.length, active: cam ? cam.id : null, objects: objectsSnapshot(scene, t, selRef.current.objs) } });
+      send({ t: 'objects', data: { scene: scene.id, time: t, length: scene.length, active: cam ? cam.id : null, objects: objectsSnapshot(scene, t, selRef.current.objs), links: (scene.links || []).filter((l) => l && l.on !== false) } });
     }, 150);
     return () => clearTimeout(tm);
   }, [connected, scene, selKey, time, playing, send]);
@@ -496,7 +631,7 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
     }, playing ? 0 : 30);
     return () => clearTimeout(tm);
   }, [connected, scene, time, playing, send]);
-  useEffect(() => { if (connected) send({ t: 'select', ids: sel.objs }); }, [connected, selKey, send]); // eslint-disable-line
+  useEffect(() => { if (connected) send({ t: 'select', ids: selEnt ? [selEnt] : sel.objs }); }, [connected, selKey, selEnt, send]); // eslint-disable-line
   // snap для игры — шаг в блоках (0 — без привязки), rotSnap — шаг поворота в градусах
   useEffect(() => { if (connected) send({ t: 'tool', tool, axes, space, snap: snap ? 1 : 0, rotSnap: snap ? 15 : 0 }); }, [connected, tool, axes, space, snap, send]);
   // призраки клонеров (props.preview): обновляются после правок; выключенный клонер — убрать
@@ -517,6 +652,88 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
     }, 300);
     return () => clearTimeout(tm);
   }, [connected, scene]);
+
+  // ---------- фаза 5: ▶ Играть (F5) / ▶ с камеры (Shift+F5) / ■ Стоп ----------
+  const playtest = useCallback(async (from) => {
+    if (!linkRef.current.connected) { toast('Нет связи с игрой — ' + (linkRef.current.text || 'запусти игру'), 'warn', 6000); return false; }
+    await flush(); await flushEnts();
+    try {
+      setPlaying(false);
+      await call('studio:playtest', { on: true, from: from === 'camera' ? 'camera' : 'start' });
+      setPlayState({ state: 'starting', from, at: Date.now() });
+      learnMark('playtest');
+      addLog('info', from === 'camera' ? '▶ Играть с камеры (Shift+F5)' : '▶ Играть от старта игрока (F5)');
+      return true;
+    } catch (e) { toast(e.message, 'error'); return false; }
+  }, [flush, flushEnts, toast, addLog]);
+  const stopPlaytest = useCallback(async () => {
+    learnMark('stop');
+    try { await call('studio:playtest', { on: false }); addLog('info', '■ Стоп — игра возвращает мир как был'); } catch (e) { toast(e.message, 'error'); }
+    setPlayState((p) => ({ ...p, state: p.state === 'editor' ? 'editor' : 'stopping' }));
+  }, [toast, addLog]);
+  const setEditorOn = useCallback((on) => { setEditorOnState(on); lsSet('editorOn', on); if (linkRef.current.connected) call('studio:editor', on).catch(() => {}); }, []);
+  // при связи: режим редактора и сущности в игру
+  useEffect(() => {
+    if (!link.connected || !(boot && boot.project)) return;
+    call('studio:editor', editorOn).catch(() => {});
+    call('studio:send', { t: 'entityTypes' }).catch(() => {});
+    setPlayState({ state: 'editor', at: 0, from: null });
+  }, [link.connected, boot]); // eslint-disable-line
+  useEffect(() => {
+    if (!link.connected || !(boot && boot.project)) return undefined;
+    const tm = setTimeout(() => send({ t: 'entities', project: boot.projectId, data: ents }), 300);
+    return () => clearTimeout(tm);
+  }, [link.connected, ents, boot, send]);
+  const refreshWorldMatch = useCallback(() => { call('studio:worldMatch').then((w) => setWorldMatch(w)).catch(() => {}); }, []);
+  useEffect(() => { refreshWorldMatch(); }, [link.connected, boot, refreshWorldMatch]);
+  // небо сцены: игра сама показывает небо объектов в момент шкалы ({t:'objects'} + {t:'time'}); здесь — вкл/выкл живого показа
+  const skyLive = !!(scene && scene.objects.some((o) => o.type === 'sky' && o.props.live !== false && o.enabled !== false));
+  const skyWas = useRef(false);
+  useEffect(() => {
+    if (!connected) { skyWas.current = false; return; }
+    if (skyLive !== skyWas.current) { send(skyLive ? { t: 'skyPreview', on: true } : { t: 'skyPreview', on: false, restore: true }); skyWas.current = skyLive; }
+  }, [connected, skyLive, send]);
+  // поставить сущность: в точку под прицелом в игре (над блоком; кнопка/рычаг/плита — в сам блок) или в центр схемы
+  const placeEntity = useCallback(async (type, opt = {}) => {
+    const def = ENT_TYPES[type];
+    if (!def) return null;
+    if (def.one && entsRef.current.some((e) => e.type === type)) {
+      const ex = entsRef.current.find((e) => e.type === type);
+      if (!opt.force) { setSelEnt(ex.id); toast('«' + def.label + '» в проекте один — выбрал его. Двигай гизмо в игре или поле «Позиция».', 'warn', 5000); return ex.id; }
+    }
+    let pos = opt.pos || null;
+    let yaw = 0;
+    if (!pos && linkRef.current.connected) {
+      try {
+        const sl = await call('studio:getSel');
+        const p = selToPos(sl, true);
+        if (p) pos = def.block ? p.map(Math.floor) : [Math.floor(p[0]) + 0.5, Math.floor(p[1]) + 1, Math.floor(p[2]) + 0.5];
+        try { const v = await call('studio:getView'); if (v && typeof v.yaw === 'number') yaw = Math.round(((v.yaw + 180) % 360) / 15) * 15 - 180; } catch (_) {}
+      } catch (_) {}
+    }
+    if (!pos) { pos = [Math.round(viewCenterRef.pos[0]) + 0.5, viewCenterRef.pos[1], Math.round(viewCenterRef.pos[2]) + 0.5]; if (opt.toast !== false) toast(linkRef.current.connected ? 'В игре прицел ни на что не наведён — поставил в центр схемы' : 'Нет связи с игрой — поставил в центр схемы', 'warn', 3500); }
+    let id = null;
+    editEnts((l) => { const e = makeEntity(l, type, { pos, yaw: type === 'player_start' ? yaw : 0, props: opt.props, name: opt.name }); id = e.id; return [...l, e]; });
+    setSelEnt(id);
+    setHint(def.label + ': ' + def.hint);
+    return id;
+  }, [editEnts, setSelEnt, toast]);
+  const removeEnt = useCallback((id) => {
+    const e = entsRef.current.find((x) => x.id === id);
+    if (!e) return;
+    const refs = entsRef.current.filter((x) => x.id !== id && (x.outputs || []).some((o) => o.target === id)).length;
+    if (refs && !window.confirm('На «' + e.name + '» ссылаются выходы других сущностей (' + refs + '). Удалить всё равно? Эти выходы станут ошибками.')) return;
+    editEnts((l) => l.filter((x) => x.id !== id));
+    setSelEntState(null);
+  }, [editEnts]);
+  const dupEnt = useCallback((id) => {
+    const e = entsRef.current.find((x) => x.id === id);
+    if (!e) return;
+    if ((ENT_TYPES[e.type] || {}).one) { toast('«' + entLabel(e.type) + '» в проекте один', 'warn'); return; }
+    let nid = null;
+    editEnts((l) => { const c = makeEntity(l, e.type, { pos: [e.pos[0] + 1, e.pos[1], e.pos[2]], props: e.props }); nid = c.id; return [...l, { ...c, name: e.name + ' (копия)', rot: e.rot, outputs: JSON.parse(JSON.stringify(e.outputs || [])) }]; });
+    setSelEnt(nid);
+  }, [editEnts, setSelEnt, toast]);
 
   // ---------- команды редактора в игре ----------
   const gameCmd = useMemo(() => ({
@@ -565,10 +782,22 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
 
   const baseRefs = useMemo(() => ({ actors: project.actors || [], vars: project.vars || [], scenes: list, dialogs, quests, schemes, structures, addVar, talkPriority: project.talkPriority || 0 }), [project, list, dialogs, quests, schemes, structures, addVar]);
 
+  // «Связи»: from/to — «объект.свойство»; force — добавить даже неполную (кнопка «+ Связь»)
+  const addLink = useCallback((from, to, force) => {
+    const sc = sceneRef.current;
+    if (!sc) { toast('Связи живут в сцене — открой сцену', 'warn'); return; }
+    if (!force && (!from || !to || from === to)) return;
+    edit((x) => ({ ...x, links: [...(x.links || []), { id: 'lnk' + Date.now().toString(36), from: from || '', to: to || '', map: [], clamp: true }] }));
+    if (!force) toast('Связь: ' + from + ' → ' + to + '. Таблица — во вкладке «Связи».', 'ok', 3500);
+  }, [edit, toast]);
+  flushAllRef.current = flushEnts;
   return {
+    addLink, ents, editEnts, entGesture, selEnt, setSelEnt, placeEntity, removeEnt, dupEnt, entIssues, entErr, flushEnts,
+    playState, playtest, stopPlaytest, gameEnts, editorOn, setEditorOn, worldMatch, refreshWorldMatch,
+    projectId: boot && boot.projectId, hasProject: !!(boot && boot.project),
     boot, setBoot, bootErr, project, saveProject, list, setList, dialogs, quests, schemes, structures, reloadList, reloadAny, patchList, baseRefs, addVar,
     gameBlocks, setGameBlocks, buildSel, setBuildSel, regionOp, buildOps, undoBuild, noteBuildOp, brushOn, setBrushOn, brushState, clipboard,
-    scene, sceneRef, edit, gesture, undo, redo, canUndo: hist.current.past.length > 0, canRedo: hist.current.future.length > 0, flush, saveState,
+    scene, sceneRef, edit, gesture, undo, redo, canUndo: hist.current.past.length > 0 || entHist.current.past.length > 0, canRedo: hist.current.future.length > 0 || entHist.current.future.length > 0, flush, saveState,
     openScene, createScene, setScene: (s) => { setScene(s); }, markDirty,
     sel, setSel, selRef, selKeys, setSelKeys, time, setTime, timeRef, playing, setPlaying, autoKey, setAutoKey,
     tool, setTool, toggleLastTool, axes, setAxes, space, setSpace, snap: snap, setSnap: (v) => { setSnap(v); lsSet('snap', v); },

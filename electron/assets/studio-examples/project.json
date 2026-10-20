@@ -1,0 +1,34 @@
+{
+  "v": 1,
+  "name": "Пример проекта",
+  "actors": [
+    {
+      "id": "levan",
+      "base": "valley",
+      "who": 3,
+      "name": "Леван"
+    },
+    {
+      "id": "miron",
+      "base": "valley",
+      "who": 0,
+      "name": "Мирон"
+    }
+  ],
+  "vars": [
+    {
+      "name": "miron_asked_work",
+      "type": "bool",
+      "init": false,
+      "note": "игрок спросил Мирона о работе"
+    },
+    {
+      "name": "bread_brought",
+      "type": "int",
+      "init": 0,
+      "note": "сколько раз игрок приносил хлеб",
+      "scope": "player"
+    }
+  ],
+  "templates": []
+}

@@ -26,7 +26,7 @@ export const VERBS = {
     particles: { need: ['name', 'pos'] }, story_fx: { need: ['name'] }, title: { need: ['text'] }
   },
   sound: { sound: { need: ['id'] }, music: { need: ['id'] }, music_fade: { need: [] } },
-  world: { time: { need: ['value'] }, weather: { need: ['value'] }, block: { need: ['pos', 'state'] }, var: { need: ['name'] }, dialog: { need: ['id'] }, bake: { need: ['placements'] } }
+  world: { time: { need: ['value'] }, weather: { need: ['value'] }, block: { need: ['pos', 'state'] }, var: { need: ['name'] }, dialog: { need: ['id'] }, bake: { need: ['placements'] }, mark: { need: ['name'] } }
 };
 
 export const TRACK_LABEL = { camera: 'Камера', actor: 'Актёр', fx: 'Эффекты', sound: 'Звук', subtitles: 'Субтитры', world: 'Мир' };
@@ -350,7 +350,17 @@ export function normalizeScene(scene) {
 
 export function normalizeProject(p) {
   const s = strip(p || {});
-  return { v: 1, name: s.name || 'Сюжет', actors: s.actors || [], vars: (s.vars || []).map((v) => ({ scope: 'world', ...v })), templates: s.templates || [], talkPriority: isNum(s.talkPriority) ? s.talkPriority : 0, ui: { ...DEFAULT_UI, ...(s.ui || {}) } };
+  const out = { v: s.v === 2 ? 2 : 1, name: s.name || 'Сюжет', actors: s.actors || [], vars: (s.vars || []).map((v) => ({ scope: 'world', ...v })), templates: s.templates || [], talkPriority: isNum(s.talkPriority) ? s.talkPriority : 0, ui: { ...DEFAULT_UI, ...(s.ui || {}) } };
+  // фаза 4: пределы схем; фаза 5: проект-карта — id, мир (папка saves или "*" — любой), старт, настройки игры (F5)
+  if (s.schemes && typeof s.schemes === 'object') out.schemes = s.schemes;
+  if (s.v === 2) {
+    out.id = s.id;
+    out.world = s.world || null;
+    out.worlds = Array.isArray(s.worlds) ? s.worlds : s.world ? [s.world] : [];
+    if (s.start) out.start = s.start;
+    if (s.play && typeof s.play === 'object') out.play = s.play;
+  }
+  return out;
 }
 
 // ======================= Фаза 2: диалоги, задания, переменные =======================

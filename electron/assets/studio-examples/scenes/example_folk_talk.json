@@ -1,0 +1,266 @@
+{
+  "v": 1,
+  "id": "example_folk_talk",
+  "title": "Житель подходит и говорит",
+  "note": "Пример: Леван (житель долины, who=3) подходит к точке (0, 72, 0), машет и говорит; рядом бродит курица. Если Леван уже живёт в мире — играет он сам.",
+  "world": {
+    "dim": "minecraft:overworld",
+    "anchor": null
+  },
+  "preload": {
+    "radius": 2,
+    "alongCamera": true
+  },
+  "options": {
+    "letterbox": true,
+    "hideHud": true,
+    "lockInput": true,
+    "skippable": true,
+    "music": null,
+    "endPlayer": {
+      "mode": "back"
+    }
+  },
+  "actors": [
+    {
+      "id": "levan",
+      "kind": "valley",
+      "who": 3,
+      "name": "Леван",
+      "spawn": {
+        "pos": [
+          8.5,
+          72,
+          0.5
+        ],
+        "yaw": 90
+      },
+      "existing": false,
+      "despawnAtEnd": true
+    },
+    {
+      "id": "hen",
+      "kind": "entity",
+      "type": "minecraft:chicken",
+      "name": "Пеструшка",
+      "spawn": {
+        "pos": [
+          2.5,
+          72,
+          3.5
+        ],
+        "yaw": 0
+      }
+    },
+    {
+      "id": "me",
+      "kind": "player"
+    }
+  ],
+  "length": 260,
+  "tracks": [
+    {
+      "kind": "camera",
+      "keys": [
+        {
+          "t": 0,
+          "pos": [
+            -3.5,
+            73.6,
+            -4.5
+          ],
+          "yaw": 0,
+          "pitch": 0,
+          "fov": 60,
+          "look": "actor:levan",
+          "ease": "smooth"
+        },
+        {
+          "t": 80,
+          "pos": [
+            -2.5,
+            73.4,
+            -3.0
+          ],
+          "yaw": 0,
+          "pitch": 0,
+          "fov": 55,
+          "look": "actor:levan",
+          "ease": "smooth"
+        },
+        {
+          "t": 200,
+          "pos": [
+            -1.0,
+            73.6,
+            -2.0
+          ],
+          "yaw": 0,
+          "pitch": 0,
+          "fov": 50,
+          "look": "actor:levan",
+          "ease": "out"
+        },
+        {
+          "t": 250,
+          "pos": [
+            -1.0,
+            74.5,
+            -2.0
+          ],
+          "yaw": 0,
+          "pitch": 10,
+          "fov": 50,
+          "look": "actor:levan",
+          "ease": "smooth"
+        }
+      ]
+    },
+    {
+      "kind": "actor",
+      "actor": "levan",
+      "events": [
+        {
+          "t": 0,
+          "do": "walk",
+          "path": [
+            [
+              5.5,
+              72,
+              0.5
+            ],
+            [
+              1.5,
+              72,
+              0.5
+            ]
+          ],
+          "speed": 0.6
+        },
+        {
+          "t": 70,
+          "do": "look",
+          "at": "player"
+        },
+        {
+          "t": 75,
+          "do": "anim",
+          "name": "wave"
+        },
+        {
+          "t": 80,
+          "do": "face",
+          "name": "smile"
+        },
+        {
+          "t": 90,
+          "do": "say",
+          "text": "Доброго вечера! Не ждали гостей так поздно.",
+          "ticks": 70
+        },
+        {
+          "t": 130,
+          "do": "anim",
+          "name": "none"
+        },
+        {
+          "t": 165,
+          "do": "hold",
+          "main": "minecraft:lantern"
+        },
+        {
+          "t": 170,
+          "do": "say",
+          "text": "Вот, возьми фонарь — дорога к мельнице тёмная.",
+          "ticks": 70
+        },
+        {
+          "t": 175,
+          "do": "anim",
+          "name": "offer"
+        }
+      ]
+    },
+    {
+      "kind": "actor",
+      "actor": "hen",
+      "events": [
+        {
+          "t": 20,
+          "do": "walk",
+          "path": [
+            [
+              3.5,
+              72,
+              2.5
+            ],
+            [
+              4.5,
+              72,
+              4.5
+            ],
+            [
+              2.5,
+              72,
+              5.5
+            ]
+          ],
+          "speed": 0.3
+        },
+        {
+          "t": 120,
+          "do": "look",
+          "at": "actor:levan"
+        }
+      ]
+    },
+    {
+      "kind": "actor",
+      "actor": "me",
+      "events": [
+        {
+          "t": 60,
+          "do": "look",
+          "at": "actor:levan"
+        }
+      ]
+    },
+    {
+      "kind": "subtitles",
+      "events": [
+        {
+          "t": 240,
+          "who": "",
+          "text": "Леван ушёл в дом, а фонарь остался у вас.",
+          "ticks": 40
+        }
+      ]
+    },
+    {
+      "kind": "fx",
+      "events": [
+        {
+          "t": 0,
+          "do": "fade_in",
+          "ticks": 20
+        },
+        {
+          "t": 235,
+          "do": "fade_out",
+          "ticks": 20
+        }
+      ]
+    },
+    {
+      "kind": "world",
+      "events": [
+        {
+          "t": 0,
+          "do": "var",
+          "name": "met_levan",
+          "value": true
+        }
+      ]
+    }
+  ]
+}

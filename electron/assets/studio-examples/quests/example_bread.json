@@ -1,0 +1,70 @@
+{
+  "v": 1,
+  "id": "example_bread",
+  "title": "Хлеб для Мирона",
+  "desc": "Мирон голоден, а отойти от верстака не может. Принеси ему три буханки хлеба.",
+  "giver": "actor:miron",
+  "start": {
+    "auto": false,
+    "when": []
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "title": "Найди 3 хлеба",
+      "goal": {
+        "type": "item",
+        "item": "minecraft:bread",
+        "count": 3,
+        "consume": false
+      },
+      "marker": null,
+      "onDone": []
+    },
+    {
+      "id": "s2",
+      "title": "Отнеси хлеб Мирону",
+      "goal": {
+        "type": "talk",
+        "speaker": "actor:miron",
+        "dialog": "example_miron_bread_done"
+      }
+    },
+    {
+      "id": "s3",
+      "title": "Дойди до мельницы",
+      "goal": {
+        "type": "reach",
+        "pos": [
+          40,
+          72,
+          -12
+        ],
+        "radius": 6
+      },
+      "marker": {
+        "pos": [
+          40,
+          72,
+          -12
+        ]
+      },
+      "onDone": [
+        {
+          "memory": "saw_mill_wheel"
+        }
+      ]
+    }
+  ],
+  "rewards": [
+    {
+      "give": "minecraft:emerald",
+      "count": 3
+    },
+    {
+      "xp": 20
+    }
+  ],
+  "repeatable": false,
+  "journal": true
+}

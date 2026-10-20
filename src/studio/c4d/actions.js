@@ -20,7 +20,8 @@ export const TYPE_HINT = {
   effector: 'Эффектор: меняет копии клонера — сдвиг, шаг, случайность, шум (рельеф), маска. Положи внутрь клонера или добавь в его список.',
   block: 'Блок: что клонирует клонер. Лежит внутри клонера. Можно задать состояние (axis=y, facing=north…).',
   template: 'Шаблон постройки внутри клонера: клонер расставит копии постройки из библиотеки.',
-  structure: 'Постройка из библиотеки «Строительство» (studio/structures): ставится целиком, поворот по 90°, отражение. Призрак в игре, «Запечь в мир», может появляться во время сцены.'
+  structure: 'Постройка из библиотеки «Строительство» (studio/structures): ставится целиком, поворот по 90°, отражение. Призрак в игре, «Запечь в мир», может появляться во время сцены.',
+  sky: 'Небо и солнце (как Sky/Sun в C4D): время суток, погода, дождь, туман, оттенок неба. Ставь ключи — 18:00 → 06:00 проходит через ночь. Прокрутка таймлайна двигает солнце в игре. Одно на сцену.'
 };
 
 async function placeHere(core) {
@@ -41,7 +42,7 @@ export function makeActions(core) {
       let parent = opts.parent;
       if (parent === undefined && ['block', 'effector', 'template'].includes(type) && sel1 && sel1.type === 'cloner') parent = sel1.id;
       if (parent === undefined && sel1 && sel1.type === 'group' && opts.intoGroup) parent = sel1.id;
-      const at = ['block', 'effector', 'template'].includes(type) ? null : opts.at || (await placeHere(core));
+      const at = ['block', 'effector', 'template', 'sky'].includes(type) ? null : opts.at || (await placeHere(core));
       let id = null;
       edit((s) => {
         let r = addObject(s, type, { parent: parent || null, at, props: opts.props, name: opts.name });
@@ -174,6 +175,7 @@ export function createItems(core, act) {
     { label: 'Метка', icon: 'marker', hint: TYPE_HINT.marker, run: () => act.create('marker') },
     { label: 'Путь (сплайн)', icon: 'path', hint: TYPE_HINT.path, run: () => act.create('path') },
     { label: 'Группа', icon: 'group', kb: 'Alt+G', hint: TYPE_HINT.group, run: () => act.create('group', { intoGroup: true }) },
+    { label: 'Небо и солнце', icon: 'sky', hint: TYPE_HINT.sky, disabled: !!(s && (s.objects || []).some((o) => o.type === 'sky')), run: () => act.create('sky') },
     { sep: true },
     { label: 'Клонер', icon: 'cloner', hint: TYPE_HINT.cloner, sub: CLONER_MODES.map((m) => ({ label: CLONER_MODE_LABEL[m], icon: 'cloner', hint: TYPE_HINT.cloner, run: () => act.create('cloner', { props: { mode: m } }) })) },
     { label: 'Эффектор', icon: 'effector', hint: TYPE_HINT.effector, sub: EFFECTOR_KINDS.map((k) => ({ label: EFFECTOR_LABEL[k], icon: 'effector', hint: TYPE_HINT.effector, run: () => act.create('effector', { props: { kind: k }, name: EFFECTOR_LABEL[k] }) })) },
