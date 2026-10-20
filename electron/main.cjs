@@ -125,6 +125,8 @@ const authorOnly = (name, fn) => handle(name, (...a) => {
   return fn(...a);
 });
 const studioApi = require('./studio.cjs')({ handle: authorOnly, send, store, getGame: () => game });
+require('./studio-cine.cjs').setup({ handle: authorOnly, store }); // запекание сцен и видео (фаза 6, трек A)
+require('./studio-ai.cjs')({ handle: authorOnly, store }); // «Жители»: файлы ИИ жителей в проекте и их сборка (фаза 6, трек B)
 // отдельное окно «Студия Кокка» и встраивание окна игры в него
 studioWins = require('./studio-window.cjs')({
   handle: authorOnly, store, dev: DEV, getGame: () => game, linkInfo: () => studioApi.info(), mainWindow: () => win, holdLink: (on) => studioApi.hold('studio-window', on),

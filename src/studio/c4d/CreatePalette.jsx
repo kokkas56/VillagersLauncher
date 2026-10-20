@@ -11,6 +11,7 @@ import { EntIcon } from './EntityAttrs.jsx';
 import { uniqueId } from '../model.js';
 import { useBuild } from './Build.jsx';
 import { learnMark } from '../learn/index.jsx';
+import { FxPalette } from './Cine.jsx'; // фаза 6: вкладка «Эффекты»
 
 export const CREATE_TABS = [
   ['cams', 'Камеры', 'camera', 'Камеры, пути, метки и группы — всё для съёмки сцены.'],
@@ -19,6 +20,7 @@ export const CREATE_TABS = [
   ['cloners', 'Клонеры', 'cloner', 'Клонеры раскладывают копии блоков, построек и актёров: линией, сеткой, по кругу, по пути, случайно.'],
   ['effectors', 'Эффекторы', 'effector', 'Эффекторы меняют копии клонера: сдвиг, шаг, случайность, шум, маска.'],
   ['build', 'Постройки', 'structure', 'Постройки из библиотеки «Строительства» и 3D-модели, превращённые в блоки.'],
+  ['fx', 'Эффекты', 'rocket', 'Эффекты и действия для таймлайна: экран, мир, существа, жесты актёров, звук. Перетащи на дорожку или щёлкни — встанет в момент бегунка.'],
   ['world', 'Мир', 'world', 'Сущности мира проекта (работают и без сцены): старт игрока, зоны, кнопки, таймеры… Их «Выходы» связывают логику.']
 ];
 
@@ -112,6 +114,7 @@ export default function CreatePalette({ act, layout }) {
           <button key={id} data-learn={'ctab-' + id} className={tab === id ? 'on' : ''} onClick={() => setTab(id)} {...hp(l + ': ' + h)}><I name={icon} size={13} color={tab === id ? '#fff' : TYPE_COLOR[icon] || '#aab4c8'} />{l}</button>
         ))}
       </div>
+      {tab === 'fx' ? <FxPalette /> : <>
       <div className="c4-create-sub dim">{tabInfo[3]}</div>
       <div className="c4-create-grid">
         {tiles.map((t) => (
@@ -125,6 +128,7 @@ export default function CreatePalette({ act, layout }) {
           </button>
         ))}
       </div>
+      </>}
     </div>
   );
 }

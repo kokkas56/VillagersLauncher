@@ -158,7 +158,7 @@ function migrate(root, opts = {}) {
 // ---------- список проектов ----------
 function countDocs(dir) {
   const c = {};
-  for (const k of DOC_DIRS) { try { c[k] = fs.readdirSync(path.join(dir, k)).filter((f) => f.endsWith('.json')).length; } catch (_) { c[k] = 0; } }
+  for (const k of DOC_DIRS) { try { c[k] = fs.readdirSync(path.join(dir, k)).filter((f) => f.endsWith('.json') && !f.endsWith('.bake.json')).length; } catch (_) { c[k] = 0; } }
   try { const e = readJson(path.join(dir, 'entities.json')); c.entities = Array.isArray(e) ? e.length : 0; } catch (_) { c.entities = 0; }
   return c;
 }

@@ -10,6 +10,7 @@ import { stageCutAt, setKeyField, keyAllSelected, shiftKeys, liveKeys, deleteKey
 import { keyClipInfo } from './actions.js';
 import { TRACKS, VERB_DEFS, summary } from '../schema.js';
 import { fmtTicks, newEvent } from '../model.js';
+import { dropFx } from './Cine.jsx'; // фаза 6: эффекты из палитры «Эффекты» бросают на дорожки
 
 const ROW = 20;
 const STAGE_H = 24;
@@ -272,7 +273,10 @@ export default function Timeline({ act, height }) {
     if (row.kind === 'ev') {
       const kind = row.track;
       const defs = VERB_DEFS[kind] || {};
-      openMenu(e, [{ head: 'Добавить в ' + t + ' т' }, ...Object.entries(defs).filter(([v]) => v !== 'bake').map(([v, d]) => ({ label: d.label, hint: d.hint, run: () => addEvent(row.key, v, t) }))]);
+      const own = Object.entries(defs).filter(([v, d]) => v !== 'bake' && !d.lib);
+      const lib = Object.entries(defs).filter(([, d]) => d.lib);
+      openMenu(e, [{ head: 'Добавить в ' + t + ' т' }, ...own.map(([v, d]) => ({ label: d.label, hint: d.hint, run: () => addEvent(row.key, v, t) })),
+        ...(lib.length ? [{ sep: true }, { label: 'Библиотека эффектов', icon: 'rocket', hint: 'Эффекты фазы 6: ' + lib.map(([, d]) => d.label).join(', ') + '. Все — и в палитре «Создать» → «Эффекты».', sub: lib.map(([v, d]) => ({ label: d.label, hint: d.hint, run: () => addEvent(row.key, v, t) })) }] : [])]);
       return;
     }
     if (row.kind === 'obj' || row.kind === 'ch') {
@@ -359,6 +363,8 @@ export default function Timeline({ act, height }) {
           </div>
           {mode === 'keys' ? (
             <div className="c4-lanes" data-learn="tl-lanes" ref={lanesRef} onScroll={(e) => { if (headsRef.current) headsRef.current.scrollTop = e.currentTarget.scrollTop; }}
+              onDragOver={(e) => { if (e.dataTransfer.types.includes('text/c4fx')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } }}
+              onDrop={(e) => { if (!e.dataTransfer.types.includes('text/c4fx')) return; const r = e.currentTarget.getBoundingClientRect(); const y = e.clientY - r.top + e.currentTarget.scrollTop; const row = rows.find((q) => y >= q.y && y < q.y + q.h); dropFx(core, e, Math.max(0, Math.min(len, Math.round(T(e.clientX - r.left)))), row && row.kind === 'ev' ? row.key : null); }}
               onMouseDown={(e) => { if (e.button === 0 && (e.target.tagName === 'svg' || (e.target.getAttribute && e.target.getAttribute('data-bg')))) marquee(e); }}
               {...hp('Дорожки: тяни по пустому месту — рамка выбора ключей (Shift — добавить, Ctrl — переключить). Тяни ключ — едут все выбранные. Правый клик — меню.')}>
               <svg width={W} height={Math.max(totalH, 40)}>

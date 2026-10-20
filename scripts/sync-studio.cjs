@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const root = path.join(__dirname, '..');
-const FILES = ['mograph.js', 'scene3d.js', 'validate.js', 'scheme.js', 'entities.js'];
+const FILES = ['mograph.js', 'scene3d.js', 'fxlib.js', 'validate.js', 'scheme.js', 'entities.js'];
 const all = [];
 let out = '// АВТОГЕНЕРАЦИЯ из src/studio/' + FILES.join(', ') + ' (node scripts/sync-studio.cjs) — не править руками.\n\'use strict\';\n';
 for (const f of FILES) {

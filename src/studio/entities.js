@@ -9,6 +9,7 @@
 // Вход (input) и выход (on) — машинные id игры; у сцены-точки выход метки — "mark:<имя>".
 // Встроенный каталог ниже — запасной: когда игра на связи, её {t:'entityTypes'} перекрывает его (mergeGameTypes).
 import { ERR, WARN } from './validate.js';
+import { FX_LIB, checkFxEvent } from './fxlib.js';
 
 const isNum = (v) => typeof v === 'number' && isFinite(v);
 const isP3 = (p) => Array.isArray(p) && p.length === 3 && p.every(isNum);
@@ -106,10 +107,17 @@ export const ENT_TYPES = {
   },
   teleport: {
     label: 'Телепорт', icon: 'ent_teleport', color: '#d070e0',
-    hint: 'Переносит игрока в точку назначения (можно в другое измерение), после переноса может сыграть сцену.',
+    hint: 'Переносит игрока в точку назначения (можно в другое измерение). Может быть переходом: пока играет видео сцены, место грузится за кадром.',
     outputs: [['done', 'Перенёс', '']],
     inputs: [['teleport', 'Телепорт игрока', '']],
-    props: { dest: [0, 64, 0], dim: 'minecraft:overworld', yaw: 0, pitch: 0, scene: '' }
+    props: { dest: [0, 64, 0], dim: 'minecraft:overworld', yaw: 0, pitch: 0, scene: '', video: '', transition: false, loadWhile: true, maxWait: 15 }
+  },
+  fx: {
+    label: 'Эффект', icon: 'rocket', color: '#c59cf0',
+    hint: 'Эффект из библиотеки в точке объекта: салют, молния, взрыв, частицы, обломки, цвет экрана… Вход «Запустить».',
+    outputs: [],
+    inputs: [['play', 'Запустить', '', P.text('Другой эффект', 'Необязательно: id эффекта библиотеки вместо выбранного.')]],
+    props: { fx: 'fireworks', count: 3, shape: 'large_ball', colors: ['#ff5040', '#ffd040', '#40a0ff'], to: 'near', radius: 48 }
   },
   sound: {
     label: 'Звук', icon: 'sound', color: '#7cc4f5',
@@ -195,7 +203,7 @@ export function mergeGameTypes(msg) {
 }
 // жители долины по номеру who (как в моде Villagers)
 export const VALLEY_NAMES = ['Мирон', 'Таисия', 'Марта', 'Леван', 'Броня', 'Аглая', 'Егор', 'Глеб', 'Неля', 'Рада', 'Ярина', 'Данила', 'Савелий', 'Тим', 'Маг'];
-export const ENT_TOOL_ORDER = ['player_start', 'trigger_zone', 'actor', 'button', 'lever', 'pressure_plate', 'scene_point', 'timer', 'relay', 'counter', 'teleport', 'sound', 'light', 'particles', 'message', 'structure', 'quest_giver', 'var_set'];
+export const ENT_TOOL_ORDER = ['player_start', 'trigger_zone', 'actor', 'button', 'lever', 'pressure_plate', 'scene_point', 'timer', 'relay', 'counter', 'teleport', 'sound', 'light', 'particles', 'fx', 'message', 'structure', 'quest_giver', 'var_set'];
 
 // входы целей, которые не сущности
 export const TARGET_KINDS = {
@@ -328,6 +336,12 @@ export function validateEntities(ents, ctx) {
         if (!isP3(p.dest)) add(ERR, 'Телепорт ' + nm + ': куда — три числа x y z', e.id);
         if (p.dim && !RES.test(p.dim)) add(ERR, 'Телепорт ' + nm + ': измерение пиши вида minecraft:the_nether', e.id);
         if (p.scene && !has(c.scenes, p.scene)) add(WARN, 'Телепорт ' + nm + ': сцены «' + p.scene + '» нет', e.id);
+        if (p.video && !has(c.scenes, p.video)) add(ERR, 'Телепорт ' + nm + ': видео записывается со сцены, а сцены «' + p.video + '» нет', e.id);
+        if (p.maxWait !== undefined && !(isNum(p.maxWait) && p.maxWait >= 1 && p.maxWait <= 120)) add(ERR, 'Телепорт ' + nm + ': ждать мир — от 1 до 120 секунд', e.id);
+        break;
+      case 'fx':
+        if (!FX_LIB[p.fx] || FX_LIB[p.fx].track === 'actor' || p.fx === 'slowmo') add(ERR, 'Эффект ' + nm + ': выбери эффект библиотеки (экран, мир или звук)', e.id);
+        else checkFxEvent(p.fx, { ...p, pos: p.pos || e.pos }, 'Эффект ' + nm, (sev, msg) => add(sev, msg, e.id), null, ERR, WARN, { structures: c.structures });
         break;
       case 'sound':
         if (!RES.test(p.sound || '')) add(ERR, 'Звук ' + nm + ': id звука пиши вида minecraft:block.bell.use', e.id);

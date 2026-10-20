@@ -66,7 +66,8 @@ const DEFAULTS = {
     'config/betterfpsdist.json', 'config/DistantHorizons.toml', 'config/bobby.toml', 'config/iris.properties', 'config/oculus.properties',
     'config/fancymenu/user_variables.db', 'config/voicechat/username-cache.json', 'config/sounds/chat.json', 'config/fml.toml',
     'kubejs/fenix_dump/**', 'kubejs/exported/**', 'kubejs/fenix_night_spawn_status.json',
-    'config/skinkokk-client.toml', 'server/**'
+    'config/skinkokk-client.toml', 'server/**',
+    'kokkstory-videos/**' // записанные в Студии видео сцен: игрокам уезжают только отмеченные, через config/kokkstory/studio/<проект>/videos
   ],
   // Версии игры, которые ставятся, пока сборка не опубликована
   minecraftVersion: '1.21.1',
@@ -112,6 +113,9 @@ try {
 } catch (e) {
   console.error('settings read failed', e);
 }
+
+// фаза 6: записи видео Студии никогда не публикуются как есть — маска и у тех, у кого список игнора уже сохранён
+if (Array.isArray(settings.ignore) && !settings.ignore.includes('kokkstory-videos/**')) settings.ignore = [...settings.ignore, 'kokkstory-videos/**'];
 
 function save() {
   const tmp = SETTINGS_FILE + '.tmp';

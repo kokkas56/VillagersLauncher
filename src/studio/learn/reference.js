@@ -10,10 +10,12 @@ import { SCHEME_DEFS, EVENT_HINT } from '../schemeKit.js';
 import { EVENT_LABEL, SCHEME_ACTION_EXTRA_LABEL, SCHEME_COND_EXTRA_LABEL } from '../scheme.js';
 import { ACTION_LABEL, COND_LABEL } from '../validate.js';
 import { TUTORIALS } from './tutorials.js';
+import { aiArticles } from './articlesAi.js'; // фаза 6, трек B: «Жители»
+import { cineArticles } from './articlesCine.js'; // фаза 6, трек A: запекание, видео, переходы, эффекты
 
 export const CATS = [
   ['tool', 'Инструменты и кнопки'], ['entity', 'Сущности мира'], ['io', 'Входы и выходы'], ['object', 'Объекты сцены'],
-  ['attr', 'Свойства и атрибуты'], ['track', 'Дорожки и события сцены'], ['scheme', 'Схемы: узлы и события'], ['logic', 'Условия и действия'], ['ui', 'Окно Студии']
+  ['attr', 'Свойства и атрибуты'], ['track', 'Дорожки и события сцены'], ['scheme', 'Схемы: узлы и события'], ['logic', 'Условия и действия'], ['ui', 'Окно Студии'], ['ai', 'Жители и их ИИ'], ['cine', 'Запекание, видео и эффекты']
 ];
 
 const T = (...ids) => ids;
@@ -95,6 +97,8 @@ export function buildArticles() {
   for (const [k, l] of Object.entries({ ...ACTION_LABEL, ...SCHEME_ACTION_EXTRA_LABEL })) out.push({ id: 'act:' + k, cat: 'logic', title: 'Действие «' + l + '»', look: 'scheme', color: '#4f9cf5', what: 'Действие для диалогов, заданий и схем.', why: '', example: '', tutorials: T('schemes', 'dialog_choice') });
   // уникальные id
   const seen = new Set();
+  out.push(...aiArticles()); // фаза 6, трек B: «Жители»
+  out.push(...cineArticles()); // фаза 6, трек A
   return out.filter((a) => (seen.has(a.id) ? false : seen.add(a.id)));
 }
 

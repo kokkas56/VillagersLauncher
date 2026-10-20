@@ -243,6 +243,27 @@ export function Field({ f, value, onChange, ctx }) {
     case 'vec3': input = <Vec3 value={value} onChange={onChange} />; break;
     case 'target': input = <Target value={value} onChange={onChange} actors={actors} api={api} f={f} />; break;
     case 'path': input = <PathField value={value} onChange={onChange} api={api} />; break;
+    // фаза 6: цвет, список цветов, постройка из библиотеки
+    case 'color': input = (
+      <div className="row" style={{ gap: 6 }}>
+        <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(String(value || '')) ? value : '#000000'} onChange={(e) => onChange(e.target.value)} style={{ width: 34, height: 22, padding: 0, border: 'none', background: 'none' }} />
+        <input className="input sm mono" value={value == null ? '' : value} placeholder="#rrggbb" spellCheck={false} onChange={(e) => onChange(e.target.value.trim())} />
+      </div>
+    ); break;
+    case 'colors': input = (
+      <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+        {(Array.isArray(value) ? value : []).map((c, i) => <span key={i} title={c} style={{ width: 14, height: 14, borderRadius: 3, background: c, border: '1px solid #0006' }} />)}
+        <input className="input sm mono" style={{ flex: 1, minWidth: 120 }} defaultValue={(Array.isArray(value) ? value : []).join(', ')} placeholder="#ff5040, #ffd040" spellCheck={false}
+          onBlur={(e) => onChange(e.target.value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean).map((x) => (x.startsWith('#') ? x : '#' + x)))} />
+      </div>
+    ); break;
+    case 'structRef': input = (
+      <select className="input sm" value={value || ''} onChange={(e) => onChange(e.target.value)}>
+        <option value="">— постройка из библиотеки —</option>
+        {(ctx.structures || []).map((st) => <option key={st.id} value={st.id}>{(st.name || st.id) + (st.size ? ' · ' + st.size.join('×') : '')}</option>)}
+        {value && !(ctx.structures || []).some((st) => st.id === value) && <option value={value}>{value} (нет в библиотеке!)</option>}
+      </select>
+    ); break;
     default: input = <span className="muted small">?</span>;
   }
   if (f.type === 'bool') {

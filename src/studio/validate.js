@@ -4,6 +4,7 @@
 // Импорт разрешён только из scene3d.js и mograph.js (sync-studio.cjs склеивает их в один файл).
 
 import { compileScene, sceneForDisk, validateObjects, hasObjects } from './scene3d.js';
+import { fxVerbs, fxLabels, checkFxEvent, checkTransition, videoOpts } from './fxlib.js';
 
 export const ERR = 'ошибка';
 export const WARN = 'предупреждение';
@@ -38,6 +39,9 @@ export const VERB_LABEL = {
   sound: 'Звук', music: 'Музыка', music_fade: 'Музыка затихает',
   time: 'Время суток', weather: 'Погода', block: 'Блок', var: 'Переменная', dialog: 'Открыть диалог', bake: 'Клонер появляется'
 };
+// фаза 6: библиотека эффектов (fxlib.js) — её глаголы на дорожках «Эффекты», «Мир», «Звук» и у актёров
+for (const [k, m] of Object.entries(fxVerbs())) Object.assign(VERBS[k], m);
+Object.assign(VERB_LABEL, fxLabels());
 export const FIELD_LABEL = {
   path: 'путь', name: 'название', at: 'на кого смотреть', text: 'текст', pos: 'место', id: 'звук', value: 'значение', state: 'блок'
 };
@@ -123,6 +127,11 @@ export function validateScene(scene, ctx) {
   if (ep.mode === 'tp' && !isPos(ep.pos)) add(ERR, 'Конец сцены: выбран перенос игрока, но не задано место (x y z)');
   const pre = scene.preload || {};
   if (pre.radius !== undefined && (!isNum(pre.radius) || pre.radius < 0 || pre.radius > 12)) add(WARN, 'Подгрузка чанков: радиус лучше от 0 до 12');
+  // фаза 6: ожидание подгрузки, видео, переход
+  if (pre.maxWait !== undefined && (!isNum(pre.maxWait) || pre.maxWait < 1 || pre.maxWait > 120)) add(ERR, 'Подгрузка: ждать — от 1 до 120 секунд');
+  if (opt.video !== undefined && (opt.video === null || typeof opt.video !== 'object')) add(ERR, 'Видео сцены: настройки повреждены');
+  else if (opt.video) { const v = videoOpts(scene); if (opt.video.quality !== undefined && opt.video.quality !== v.quality) add(WARN, 'Видео: качество бывает 480, 720 или 1080 — будет ' + v.quality); }
+  if (opt.transition && opt.transition.on) checkTransition({ ...opt.transition, scene: scene.id }, 'Переход сцены', (sev, msg) => add(sev, msg), ERR, WARN, {});
 
   // актёры
   const actors = Array.isArray(scene.actors) ? scene.actors : [];
@@ -195,6 +204,7 @@ export function validateScene(scene, ctx) {
       }
       const spec = VERBS[tr.kind][ev.do];
       if (!spec) { add(ERR, tname + ' (' + tsec(ev.t) + '): неизвестное действие «' + ev.do + '»', sel); return; }
+      if (fxLabels()[ev.do]) { checkFxEvent(ev.do, ev, where, add, sel, ERR, WARN, { actorIds, structures: ctx.structures }); return; } // фаза 6
       for (const f of spec.need) {
         const v = ev[f];
         const empty = v === undefined || v === null || (typeof v === 'string' && !v.trim()) || (Array.isArray(v) && !v.length);

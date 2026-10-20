@@ -17,6 +17,8 @@ import DialogTab from '../DialogTab.jsx';
 import QuestTab from '../QuestTab.jsx';
 import VarsTab from '../VarsTab.jsx';
 import SchemeTab from '../SchemeTab.jsx';
+import VillagersTab from '../villagers/VillagersTab.jsx'; // фаза 6, трек B: «Жители»
+import { cinePrebuild, CineReport, VideosModal } from './Cine.jsx'; // фаза 6, трек A: запекание перед сборкой, «Видео проекта»
 import { BuildProvider, BlockPalette, BuildDock, useBuild } from './Build.jsx';
 import Voxelizer from './Voxelizer.jsx';
 import StartTab from './Start.jsx';
@@ -37,7 +39,8 @@ export const LAYOUTS = [
   ['dialogs', 'Диалоги', 'Разговоры с ветками: граф из реплик, выборов, условий и действий.'],
   ['quests', 'Задания', 'Задания по шагам и награды.'],
   ['vars', 'Переменные', 'Память сюжета: что игрок уже сделал.'],
-  ['schemes', 'Схемы', 'Логика мира узлами: «событие → условие → действие» (как блюпринты). Живая трасса из игры.']
+  ['schemes', 'Схемы', 'Логика мира узлами: «событие → условие → действие» (как блюпринты). Живая трасса из игры.'],
+  ['villagers', 'Жители', 'ИИ жителей: кто что делает и почему, веса и пороги, новые дела и реакции, реплики ru/en.']
 ];
 const TOOLS = [
   ['select', 'select', 'Выбор', 'Q', 'Выбор (Q): щёлкни объект в игре или на схеме — ничего не сдвинется. Пробел — прошлый инструмент.'],
@@ -88,6 +91,7 @@ function StudioMain() {
   core.openSceneTab = (id) => { setLayout('scene'); core.openScene(id); };
   core.newSceneModal = () => setModal('newScene');
   core.openLearn = () => setModal('learn');
+  core.openVideos = () => setModal('videos');
   core.openRef = openRef;
   core.dropCreate = (item, at) => runCreate(core, act, bc, item, at);
   const popped = (id) => core.pops.includes(id);
@@ -118,7 +122,7 @@ function StudioMain() {
   };
   core.openProjectWorld = openProjectWorld;
   const build = async () => {
-    try { await core.flush(); await core.flushEnts(); const r = await call('studio:build'); setReport(r); setModal('report'); if (r && r.ok) learnMark('build'); } catch (e) { toast(e.message, 'error', 8000); }
+    try { await core.flush(); await core.flushEnts(); let pre = null; try { pre = await cinePrebuild(core); } catch (e) { pre = null; } const r = await call('studio:build'); if (r) r.pre = pre; if (r && r.ok) { try { r.ai = await call('studio:aiBuild'); } catch (e) { r.aiError = e.message; } } setReport(r); setModal('report'); if (r && r.ok) learnMark('build'); } catch (e) { toast(e.message, 'error', 8000); }
   };
   const popOut = (tab) => call('studio:popout', tab).catch((e) => toast(e.message, 'error'));
   const run = {
@@ -181,6 +185,7 @@ function StudioMain() {
       { sep: true },
       { label: 'Проверить', icon: 'warn', disabled: !core.hasProject, hint: 'Ошибки сцены и сущностей мира — во вкладке «Проверка» справа.', run: () => setModal(core.entIssues.length && !core.issues.length ? 'entIssues' : 'issues') },
       { label: 'Собрать проект', icon: 'build', learn: 'mi-build', disabled: !core.hasProject, hint: 'Проверить всё и положить готовый проект в config/kokkstory/studio/<проект>/ — игроки получат его со следующей публикацией сборки.', run: build },
+      { label: 'Видео проекта…', icon: 'film', learn: 'mi-videos', disabled: !core.hasProject, hint: 'Записанные видео сцен: размер, свежесть, «Отдавать игрокам», удалить. Лежат отдельно от проекта — в kokkstory-videos.', run: () => setModal('videos') },
       { label: 'Свойства проекта…', icon: 'gear', disabled: !core.hasProject, hint: 'Название, «Мир» при игре (время, погода, правила), заметка.', run: () => setModal('props') },
       { label: 'Открыть мир проекта', icon: 'world', disabled: !core.hasProject || !(core.project && core.project.world), hint: 'Игра уйдёт в меню и откроет мир проекта; если игра не запущена — лаунчер запустит её сразу в этом мире.', run: openProjectWorld },
       { label: 'Открыть папку проекта', icon: 'folder', disabled: !core.hasProject, run: () => call('shell:openPath', 'studio/projects/' + (core.projectId || '')) },
@@ -408,9 +413,14 @@ function StudioMain() {
           <button className="c4-btn prim" onClick={() => setModal(null)}>Понятно</button>
         </>}>
           {report.ok ? <p>Проект собран: сцен <b>{report.count}</b>, диалогов <b>{report.dialogs || 0}</b>, заданий <b>{report.quests || 0}</b>, схем <b>{report.schemes || 0}</b>, построек <b>{report.structures || 0}</b>, сущностей <b>{report.entities || 0}</b>. Лежат в <span className="mono">{report.dir}</span> и уйдут игрокам со следующей публикацией сборки.</p> : <p>Ошибок: <b>{report.errors}</b>. Пока они есть, ничего не записано.</p>}
+          <CineReport report={report} />
+          {report.ai && <p>ИИ жителей: параметров <b>{report.ai.params}</b>, поведений <b>{report.ai.scripts}</b>{report.ai.skipped && report.ai.skipped.length ? ' (с ошибками не собраны: ' + report.ai.skipped.join(', ') + ')' : ''}, реплик <b>{report.ai.lines}</b> → <span className="mono">config/villagerskokk/</span>.</p>}
+          {report.aiError && <p className="dim">ИИ жителей не собран: {report.aiError}</p>}
+          {report.ai && (report.ai.issues || []).slice(0, 20).map((x, i) => <div key={'ai' + i} className="c4-issrow"><span className="sv" style={{ background: x.sev === 'error' ? '#e0504a' : '#e0a030' }} /><b className="mono" style={{ fontSize: 11 }}>{x.doc}</b> {x.msg}</div>)}
           {(report.issues || []).slice(0, 80).map((x, i) => <div key={i} className="c4-issrow"><span className="sv" style={{ background: x.sev === ERR ? '#e0504a' : '#e0a030' }} />{(x.doc || x.scene) ? <b className="mono" style={{ fontSize: 11 }}>{x.doc || x.scene}</b> : null} {x.msg}</div>)}
         </Modal>}
         {modal === 'newScene' && <NewSceneModal onClose={() => setModal(null)} />}
+        {modal === 'videos' && <VideosModal Modal={Modal} onClose={() => setModal(null)} />}
         {bc.vox && <Voxelizer onClose={() => bc.setVox(false)} />}
         <Toasts />
       </div>
@@ -595,6 +605,7 @@ function DocLayout({ layout, shared, goto, popped, popOut }) {
         {layout === 'quests' && <QuestTab shared={shared} goto={goto} />}
         {layout === 'vars' && <VarsTab shared={shared} goto={goto} />}
         {layout === 'schemes' && <SchemeTab shared={shared} goto={goto} />}
+        {layout === 'villagers' && <VillagersTab />}
       </div>
     </div>
   );

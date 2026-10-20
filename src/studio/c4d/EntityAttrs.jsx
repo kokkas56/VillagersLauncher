@@ -11,6 +11,8 @@ import {
 } from '../entities.js';
 import { ERR } from '../validate.js';
 import { selToPos } from '../fields.jsx';
+import { FxFields, SCHEME_FX, fxPreview } from './Cine.jsx'; // фаза 6: сущность «Эффект», переход у «Телепорта»
+import { FX_LIB } from '../fxlib.js';
 
 const r2 = (n) => Math.round(n * 100) / 100;
 export function EntIcon({ type, size = 15 }) {
@@ -144,7 +146,20 @@ function EntProps({ e }) {
       {sel('dim', 'Измерение', 'В каком измерении точка назначения.', [['minecraft:overworld', 'Обычный мир'], ['minecraft:the_nether', 'Незер'], ['minecraft:the_end', 'Край']])}
       {num('yaw', 'Смотреть', 'Куда смотрит игрок после переноса (yaw).', { step: 15, unit: '°' })}
       {num('pitch', 'Наклон взгляда', '0 — прямо, + — вниз.', { step: 5, unit: '°' })}
-      {sel('scene', 'Сцена после переноса', 'Катсцена сразу после переноса (необязательно).', docOpts(core.list, '— нет —'))}
+      {sel('scene', p.transition || p.video ? 'Сцена перехода' : 'Сцена после переноса', p.transition || p.video ? 'Если видео у игрока нет — эта сцена играет вживую, потом перенос за экраном «загрузка».' : 'Катсцена сразу после переноса (необязательно).', docOpts(core.list, '— нет —'))}
+      <div className="cine-sep" style={{ margin: '6px 0 2px' }}>Переход</div>
+      {chk('transition', 'Как переход', 'Включи — перенос идёт «за кадром»: игрок видит видео (или сцену, или экран «загрузка»), пока место назначения грузится; картинка проявляется, когда мир готов.')}
+      {(p.transition || p.video) && sel('video', 'Видео', 'Видео какой сцены играть, пока грузится место (у кого оно есть). Записывается в атрибутах сцены.', docOpts(core.list, '— без видео —'))}
+      {(p.transition || p.video) && chk('loadWhile', 'Грузить во время', 'Переносить сразу, пока идёт видео (мир грузится за кадром). Выключи — перенос после видео.')}
+      {(p.transition || p.video) && num('maxWait', 'Ждать мир, с', 'Сколько ждать загрузку места, прежде чем показать как есть.', { min: 1, max: 120, step: 1, unit: 'с' })}
+    </>; break;
+    case 'fx': body = <>
+      <ARow label="Эффект" hint="Эффект из библиотеки (экран, мир, звук). Его поля — ниже."><Select value={p.fx || ''} options={SCHEME_FX} onChange={(v) => u.patch((x) => ({ ...x, props: { ...JSON.parse(JSON.stringify((FX_LIB[v] || {}).def || {})), pos: undefined, fx: v, to: (x.props || {}).to, radius: (x.props || {}).radius } }))} /></ARow>
+      <FxFields a={p} set={(np) => { for (const k of Object.keys(np)) if (np[k] !== p[k]) u.setProp(k, np[k]); }} refs={{ structures: core.structures, api: core.api }} hp={core.hp} api={core.api} hide={['pos']} />
+      <div className="c4-ahint">Место эффекта — позиция самой сущности («Основное»).</div>
+      {sel('to', 'Кому показать', 'Экранные эффекты и частицы: тому, кто вызвал, или всем рядом.', [['near', 'Всем рядом'], ['activator', 'Тому, кто вызвал']])}
+      {p.to !== 'activator' && num('radius', 'Радиус', 'В блоках.', { min: 1, int: true })}
+      <div className="c4-btnrow"><button className="c4-btn sm" disabled={!core.link.connected || !FX_LIB[p.fx]} onClick={() => fxPreview(core, FX_LIB[p.fx].track, { t: 0, do: p.fx, ...p, pos: e.pos })} {...core.hp('Показать эффект в игре в точке объекта.')}><I name="play" size={12} /> Показать в игре</button></div>
     </>; break;
     case 'sound': body = <>{txt('sound', 'Звук', 'id звука, например minecraft:block.bell.use.', { mono: true, list: 'sl-sounds' })}{num('vol', 'Громкость', '1 — обычно.', { step: 0.05, min: 0 })}{num('pitch', 'Высота', '0.5 — низко, 2 — высоко.', { step: 0.05, min: 0.5, max: 2 })}{num('radius', 'Слышно, блоков', '', { min: 1, int: true })}{num('every', 'Повтор, секунд', '0 — один раз; иначе — снова каждые N секунд до «Остановить».', { min: 0, step: 0.5 })}</>; break;
     case 'light': body = <>{num('level', 'Яркость', '0–15. Свет горит, пока объект включён (галочка «Включена» или входы «Включить/Выключить»).', { min: 0, max: 15, int: true })}</>; break;
