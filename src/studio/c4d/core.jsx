@@ -671,6 +671,18 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
     try { await call('studio:playtest', { on: false }); addLog('info', '■ Стоп — игра возвращает мир как был'); } catch (e) { toast(e.message, 'error'); }
     setPlayState((p) => ({ ...p, state: p.state === 'editor' ? 'editor' : 'stopping' }));
   }, [toast, addLog]);
+  // «ЗАПУСК…» / «ОТКАТ…» не может висеть вечно: игра не ответила за 15 с — объясняем и возвращаем кнопки
+  useEffect(() => {
+    if (!playState || !['starting', 'stopping'].includes(playState.state)) return undefined;
+    const st = playState.state;
+    const tm = setTimeout(() => {
+      setPlayState((p) => (p && p.state === st ? { ...p, state: st === 'starting' ? 'editor' : 'editor' } : p));
+      const why = 'игра не ответила за 15 с. Частая причина — открыто меню паузы в окне игры (оно останавливает мир). Закрой его («Вернуться к игре») и нажми ещё раз.';
+      addLog('warn', (st === 'starting' ? '▶ Запуск' : '■ Откат') + ': ' + why);
+      toast((st === 'starting' ? 'Запуск: ' : 'Откат: ') + why, 'warn', 9000);
+    }, 15000);
+    return () => clearTimeout(tm);
+  }, [playState && playState.state, addLog, toast]); // eslint-disable-line
   const setEditorOn = useCallback((on) => { setEditorOnState(on); lsSet('editorOn', on); if (linkRef.current.connected) call('studio:editor', on).catch(() => {}); }, []);
   // при связи: режим редактора и сущности в игру
   useEffect(() => {
