@@ -1,18 +1,20 @@
-// «Студия Кокка», фаза 3: сцена как дерево объектов (как в Cinema 4D) с анимацией по свойствам.
+// «Студия Кокка», фаза 3: сцена как дерево объектов с анимацией по свойствам.
 // Чистые функции без зависимостей, кроме mograph.js. Этот файл попадает и в главный процесс
 // (electron/studio-validate.cjs собирается scripts/sync-studio.cjs) — сборка и «Проиграть» используют один компилятор.
 //
 // Сцена (файл studio/scenes/<id>.json) дополнительно хранит:
 //   objects: [{ id, type, name, parent, enabled, visible, props:{…}, anim:{ "<канал>": [{ t, v, interp, in?, out? }] } }]
-//   stage:   [{ t0, t1, cam }]  — «Монтаж»: какая камера активна с t0 по t1 (как Stage в C4D)
+//   объект «Монтаж» (type:'stage', один на сцену): анимируемое свойство camera — ключи-ступеньки с id камеры,
+//   какая камера снимает с момента ключа. Старое поле stage: [{ t0, t1, cam }] при открытии переезжает в эти ключи
+//   (в файле остаётся пустой stage: [] — по нему видно сцену редактора).
 // Игра (фаза 1) понимает только старый формат, поэтому compileScene() делает из объектов дорожку камеры
 // (ключи берутся у активной по «Монтажу» камеры) и события света/звука/клонеров. Сгенерированное помечено gen:true.
 import { clonerPlacements } from './mograph.js';
 
-export const OBJ_TYPES = ['camera', 'actor', 'light', 'sound', 'marker', 'path', 'group', 'cloner', 'effector', 'block', 'template', 'structure', 'sky'];
+export const OBJ_TYPES = ['camera', 'actor', 'light', 'sound', 'marker', 'path', 'group', 'cloner', 'effector', 'block', 'template', 'structure', 'sky', 'stage'];
 export const OBJ_LABEL = {
   camera: 'Камера', actor: 'Актёр', light: 'Свет', sound: 'Звук', marker: 'Метка', path: 'Путь', group: 'Группа',
-  cloner: 'Клонер', effector: 'Эффектор', block: 'Блок', template: 'Шаблон', structure: 'Постройка', sky: 'Небо и солнце'
+  cloner: 'Клонер', effector: 'Эффектор', block: 'Блок', template: 'Шаблон', structure: 'Постройка', sky: 'Небо и солнце', stage: 'Монтаж'
 };
 export const INTERPS = ['bezier', 'linear', 'step'];
 export const INTERP_LABEL = { bezier: 'Безье (плавно)', linear: 'Линейно', step: 'Ступенька' };
@@ -28,12 +30,14 @@ export const CHANNELS = {
   cloner: ['pos.x', 'pos.y', 'pos.z'],
   effector: ['strength'],
   structure: ['pos.x', 'pos.y', 'pos.z'],
-  // фаза 5: «Небо и солнце» (как Sky/Sun в C4D) — время суток, погода, туман, оттенок неба
+  // фаза 5: «Небо и солнце» — время суток, погода, туман, оттенок неба
   sky: ['time', 'sunAngle', 'moonPhase', 'weather', 'rain', 'fogStart', 'fogEnd', 'fogColor', 'skyColor', 'skyMix'],
+  // «Монтаж»: какая камера снимает (ключи-ступеньки с id камеры)
+  stage: ['camera'],
   actor: [], block: [], template: []
 };
 // каналы-«переключатели»: всегда ступенькой
-export const STEP_CHANNELS = ['on', 'level', 'play', 'look', 'weather', 'moonPhase'];
+export const STEP_CHANNELS = ['on', 'level', 'play', 'look', 'weather', 'moonPhase', 'camera'];
 // каналы-цвета (#rrggbb): между ключами цвет плавно смешивается
 export const COLOR_CHANNELS = ['fogColor', 'skyColor'];
 // время суток (тики 0–24000, 0 = 06:00): ключи идут только вперёд, через полночь (18:00 → 06:00 — через ночь)
@@ -45,7 +49,7 @@ export const CHANNEL_LABEL = {
   'pos.x': 'Позиция X', 'pos.y': 'Позиция Y', 'pos.z': 'Позиция Z', 'rot.h': 'Поворот H (yaw)', 'rot.p': 'Наклон P (pitch)', 'rot.b': 'Крен B (roll)',
   fov: 'Угол обзора', shake: 'Дрожание', on: 'Включён', level: 'Яркость', play: 'Играть', vol: 'Громкость', strength: 'Сила', look: 'Смотреть на',
   time: 'Время суток', sunAngle: 'Наклон солнца', moonPhase: 'Фаза луны', weather: 'Погода', rain: 'Сила дождя', fogStart: 'Туман: начало', fogEnd: 'Туман: конец',
-  fogColor: 'Цвет тумана', skyColor: 'Оттенок неба', skyMix: 'Сила оттенка'
+  fogColor: 'Цвет тумана', skyColor: 'Оттенок неба', skyMix: 'Сила оттенка', camera: 'Камера'
 };
 
 // тики дня → «ЧЧ:ММ» (0 тиков = 06:00, 6000 = 12:00, 18000 = 00:00)
@@ -90,6 +94,8 @@ export function defaultProps(type) {
     // небо: time — тики дня (6000 — полдень), weather 0 ясно / 1 дождь / 2 гроза, rain 0–1 (сила дождя на экране),
     // туман fogOn + начало/конец (блоки) + цвет, оттенок неба skyColor + skyMix 0–1; restoreAtEnd — вернуть время и погоду в конце
     case 'sky': return { time: 6000, sunAngle: 0, moonPhase: 0, weather: 0, rain: 0, fogOn: false, fogStart: 32, fogEnd: 192, fogColor: '#c0d0e0', skyColor: '#ffffff', skyMix: 0, restoreAtEnd: true, live: true };
+    // «Монтаж»: camera — какая камера снимает, пока ключей нет (null — первая камера сцены)
+    case 'stage': return { camera: null };
     default: return {};
   }
 }
@@ -123,7 +129,7 @@ export function isStepChannel(ch) { return STEP_CHANNELS.includes(ch); }
 function autoSlope(keys, i) {
   const k = keys[i];
   const a = keys[i - 1], b = keys[i + 1];
-  if (!a || !b) return 0; // концы — мягко (как «авто» в C4D)
+  if (!a || !b) return 0; // концы — мягко
   if (!isNum(a.v) || !isNum(b.v) || !isNum(k.v)) return 0;
   if ((k.v - a.v) * (b.v - k.v) <= 0) return 0; // вершина — без перелёта
   const s = (b.v - a.v) / Math.max(1e-6, b.t - a.t);
@@ -212,7 +218,7 @@ export function propsAt(obj, t, depth) {
   return p;
 }
 
-// ---------------- «Связи» (как XPresso-lite в C4D) ----------------
+// ---------------- «Связи» ----------------
 // scene.links: [{ id, from:"<id объекта>.<канал>", to:"<id объекта>.<канал>", map:[[вход, выход], …], clamp:true, invert:false, mul:1, add:0, on:true }]
 // Значение источника → таблица (по точкам, линейно; без таблицы — как есть) → invert (1 − x для 0..1, иначе −x)? → × mul + add.
 // Таблица с clamp:false продолжает крайние отрезки. Для «Включён» (on) результат > 0.5 — включён; для «Погода» и «Яркость» — округление.
@@ -256,7 +262,7 @@ export function mapLink(link, v, ch) {
 export function linkableChannels(o) {
   if (!o) return [];
   const base = CHANNELS[o.type] || [];
-  return base.filter((ch) => !COLOR_CHANNELS.includes(ch) && ch !== 'play');
+  return base.filter((ch) => !COLOR_CHANNELS.includes(ch) && ch !== 'play' && ch !== 'camera');
 }
 // сцена → копия, где у объектов-целей прикреплены «водители» связей (неперечисляемое поле: в JSON не попадает)
 export function withLinks(scene) {
@@ -315,7 +321,7 @@ export function removeKey(obj, ch, t) {
   const keys = obj.anim[ch].filter((k) => k.t !== t);
   const anim = { ...obj.anim };
   if (keys.length) anim[ch] = keys; else delete anim[ch];
-  // последний ключ ушёл — значение остаётся в props (как в C4D)
+  // последний ключ ушёл — значение остаётся в props
   const props = keys.length ? obj.props : chanSet(obj.props, ch, chanGet(propsAt(obj, t), ch));
   return { ...obj, anim, props };
 }
@@ -370,13 +376,70 @@ export function worldPos(scene, obj, t) {
 }
 
 // ---------------- «Монтаж» ----------------
+export const STAGE_ID = 'stage';
+export function stageObj(scene) { return ((scene && scene.objects) || []).find((o) => o && o.type === 'stage') || null; }
+// ключи «Монтажа» по порядку: [{ t, v: id камеры, interp:'step' }]
+export function stageKeys(scene) {
+  const o = stageObj(scene);
+  const k = o && o.anim && Array.isArray(o.anim.camera) ? o.anim.camera : [];
+  return k.filter((x) => x && isNum(x.t)).slice().sort((a, b) => a.t - b.t);
+}
+// блоки для дорожки «Монтаж»: от ключа до следующего ключа (последний — до конца сцены)
+export function stageBlocks(scene) {
+  const keys = stageKeys(scene);
+  const len = isNum(scene && scene.length) && scene.length > 0 ? scene.length : 200;
+  if (!keys.length) {
+    // ключей нет — снимает camera из свойств «Монтажа» (или старый stage, если сцена ещё не переехала)
+    const old = Array.isArray(scene && scene.stage) ? scene.stage.filter((b) => b && isNum(b.t0) && isNum(b.t1)) : [];
+    if (old.length) return old.slice().sort((a, b) => a.t0 - b.t0);
+    return [];
+  }
+  return keys.map((k, i) => ({ t0: Math.max(0, Math.round(k.t)), t1: i < keys.length - 1 ? Math.round(keys[i + 1].t) : Math.max(Math.round(k.t) + 1, len), cam: k.v, key: i }));
+}
+// блоки → ключи (концы блоков берутся началом следующего: дырок нет, держится прошлая камера)
+export function stageKeysFromBlocks(blocks) {
+  const st = (blocks || []).filter((b) => b && isNum(b.t0) && b.cam).slice().sort((a, b) => a.t0 - b.t0);
+  const keys = [];
+  for (const b of st) {
+    const t = Math.max(0, Math.round(b.t0));
+    if (keys.length && keys[keys.length - 1].t === t) keys[keys.length - 1] = { t, v: b.cam, interp: 'step' };
+    else if (!keys.length || keys[keys.length - 1].v !== b.cam) keys.push({ t, v: b.cam, interp: 'step' });
+  }
+  return keys;
+}
+// сцена с объектом «Монтаж» (создать, если нет; перенести старые блоки stage в ключи)
+export function ensureStage(scene) {
+  const s = scene;
+  const objs = Array.isArray(s.objects) ? s.objects : [];
+  let st = objs.find((o) => o && o.type === 'stage');
+  const stages = objs.filter((o) => o && o.type === 'stage');
+  let out = objs;
+  if (stages.length > 1) out = objs.filter((o) => !(o && o.type === 'stage' && o !== stages[0]));
+  if (!st) {
+    const id = out.some((o) => o && o.id === STAGE_ID) ? uniqueObjId({ objects: out }, 'stage') : STAGE_ID;
+    st = makeObject('stage', id, 'Монтаж');
+    out = [st, ...out];
+  }
+  const old = Array.isArray(s.stage) ? s.stage : [];
+  const has = st.anim && Array.isArray(st.anim.camera) && st.anim.camera.length;
+  if (old.length && !has) {
+    const keys = stageKeysFromBlocks(old);
+    const nst = { ...st, parent: null, anim: { ...(st.anim || {}), camera: keys } };
+    out = out.map((o) => (o === st ? nst : o));
+    st = nst;
+  } else if (st.parent) {
+    const nst = { ...st, parent: null };
+    out = out.map((o) => (o === st ? nst : o));
+  }
+  return { ...s, objects: out, stage: [] };
+}
 export function stageAt(scene, t) {
-  const st = Array.isArray(scene.stage) ? scene.stage : [];
+  const bl = stageBlocks(scene);
   let hit = null;
-  for (const b of st) if (t >= b.t0 && t < b.t1) hit = b;
-  if (!hit && st.length) { // в «дырке» держим последнюю камеру до этого момента
-    const prev = st.filter((b) => b.t0 <= t).sort((a, b) => b.t0 - a.t0)[0];
-    hit = prev || st.slice().sort((a, b) => a.t0 - b.t0)[0];
+  for (const b of bl) if (t >= b.t0 && t < b.t1) hit = b;
+  if (!hit && bl.length) { // до первого ключа — первая камера, после конца — последняя
+    const prev = bl.filter((b) => b.t0 <= t).sort((a, b) => b.t0 - a.t0)[0];
+    hit = prev || bl[0];
   }
   return hit;
 }
@@ -384,6 +447,9 @@ export function activeCamera(scene, t) {
   const b = stageAt(scene, t);
   const c = b && objById(scene, b.cam);
   if (c && c.type === 'camera') return c;
+  const so = stageObj(scene);
+  const def = so && so.props && so.props.camera ? objById(scene, so.props.camera) : null;
+  if (def && def.type === 'camera') return def;
   return (scene.objects || []).find((o) => o.type === 'camera') || null;
 }
 export function cameraPose(scene, cam, t) {
@@ -395,10 +461,11 @@ export function cameraPose(scene, cam, t) {
 
 // ---------------- старая сцена → объекты ----------------
 const EASE2INTERP = { smooth: 'bezier', linear: 'linear', in: 'bezier', out: 'bezier' };
-// сцена редактора: есть и objects, и stage (у собранной для игры stage нет, а objects — только светильники)
-export function hasObjects(scene) { return !!scene && Array.isArray(scene.objects) && Array.isArray(scene.stage); }
+// сцена редактора: есть и objects, и stage (у собранной для игры stage нет, а objects — только светильники и небо)
+export function hasObjects(scene) { return !!scene && Array.isArray(scene.objects) && (Array.isArray(scene.stage) || scene.objects.some((o) => o && o.type === 'stage')); }
 
-// Открыть сцену в новой Студии: старые сцены превращаются в объекты (камера-дорожка → объект «Камера 1» + «Монтаж»).
+// Открыть сцену в новой Студии: старые сцены превращаются в объекты (камера-дорожка → объект «Камера 1» + «Монтаж»),
+// старый «Монтаж» блоками (stage) — в ключи объекта «Монтаж».
 export function toObjectScene(raw) {
   const s = clone(raw || {});
   s.tracks = (Array.isArray(s.tracks) ? s.tracks : []).map((tr) => {
@@ -444,6 +511,7 @@ export function toObjectScene(raw) {
     }
     s.actors.forEach((a) => { if (a && a.id) s.objects.push(makeObject('actor', 'a_' + a.id, a.name || a.id, { actor: a.id })); });
     s.tracks = s.tracks.filter((tr) => tr.kind !== 'camera');
+    return ensureStage(s);
   } else {
     if (!Array.isArray(s.stage)) s.stage = [];
     s.tracks = s.tracks.filter((tr) => tr.kind !== 'camera');
@@ -454,7 +522,7 @@ export function toObjectScene(raw) {
     const ids = new Set(s.actors.map((a) => a && a.id));
     s.objects = s.objects.filter((o) => o.type !== 'actor' || ids.has(o.actor));
   }
-  return s;
+  return ensureStage(s);
 }
 
 // ---------------- компиляция для игры (формат фазы 1) ----------------
@@ -464,9 +532,9 @@ export function compileCamera(scene, opts) {
   const len = Math.max(1, Math.round(scene.length || 1));
   const cams = (scene.objects || []).filter((o) => o.type === 'camera' && isActive(scene, o));
   if (!cams.length) return [];
-  let stage = (Array.isArray(scene.stage) ? scene.stage : []).filter((b) => b && cams.some((c) => c.id === b.cam) && isNum(b.t0) && isNum(b.t1) && b.t1 > b.t0)
+  let stage = stageBlocks(scene).filter((b) => b && cams.some((c) => c.id === b.cam) && isNum(b.t0) && isNum(b.t1) && b.t1 > b.t0)
     .map((b) => ({ t0: Math.max(0, Math.round(b.t0)), t1: Math.min(len, Math.round(b.t1)), cam: b.cam })).filter((b) => b.t1 > b.t0).sort((a, b) => a.t0 - b.t0);
-  if (!stage.length) stage = [{ t0: 0, t1: len, cam: cams[0].id }];
+  if (!stage.length) { const def = activeCamera(scene, 0); stage = [{ t0: 0, t1: len, cam: def && cams.some((c) => c.id === def.id) ? def.id : cams[0].id }]; }
   // дырки: держим предыдущую камеру; до первого блока — первая камера
   const blocks = [];
   let cur = 0;
@@ -600,7 +668,7 @@ export function clonerOutput(scene, cl, t) {
 }
 
 // Главное: сцена с объектами → сцена для игры: дорожка камеры по «Монтажу», звуки и «bake» клонеров в событиях,
-// из объектов остаются только светильники (их игра обрабатывает сама), stage убирается.
+// из объектов остаются только светильники и небо (их игра обрабатывает сама), stage убирается.
 export function compileScene(scene) {
   if (!hasObjects(scene)) return scene;
   const s = toObjectScene(scene); // снять старые gen-события, привести объекты
@@ -730,7 +798,7 @@ export function gameObject(scene, o, t, selected) {
 export function objectsSnapshot(scene0, t, selIds) {
   const scene = withLinks(scene0);
   const sel = new Set(selIds || []);
-  return (scene.objects || []).filter((o) => !['block', 'template'].includes(o.type)).map((o) => gameObject(scene, o, t, sel.has(o.id)));
+  return (scene.objects || []).filter((o) => !['block', 'template', 'stage'].includes(o.type)).map((o) => gameObject(scene, o, t, sel.has(o.id)));
 }
 // позы для {t:'time', poses}: камеры, актёры и всё, что анимировано (само или через группу)
 export function posesAt(scene0, t) {
@@ -738,7 +806,7 @@ export function posesAt(scene0, t) {
   const poses = {};
   for (const o of scene.objects || []) {
     if (!isActive(scene, o)) continue;
-    if (o.type === 'sky') continue; // небо — отдельным сообщением {t:'sky'}
+    if (o.type === 'sky' || o.type === 'stage') continue; // небо — отдельным сообщением {t:'sky'}; «Монтаж» — только в Студии
     const moving = o.type === 'camera' || o.type === 'actor' || Object.keys(o.anim || {}).length || (o[DRV] && o[DRV].length) || ancestors(scene, o).some((a) => Object.keys(a.anim || {}).length);
     if (!moving) continue;
     const g = gameObject(scene, o, t, false).props;
@@ -810,6 +878,7 @@ export function validateObjects(scene, add, E, W) {
         prev = k.t;
         if (isNum(len) && k.t > len) add(W, 'Объект ' + nm + ': ключ «' + (CHANNEL_LABEL[ch] || ch) + '» после конца сцены (' + k.t + ' т)', sel);
         if (k.interp && !INTERPS.includes(k.interp)) add(W, 'Объект ' + nm + ': неизвестная интерполяция «' + k.interp + '»', sel);
+        if (ch === 'camera') { const c = objById(scene, k.v); if (!c || c.type !== 'camera') add(E, '«Монтаж»: в ключе ' + k.t + ' т нет камеры «' + k.v + '»', sel); else if (!isActive(scene, c)) add(W, '«Монтаж»: камера «' + (c.name || c.id) + '» выключена — с ' + k.t + ' т снимать некому', sel); continue; }
         if (ch !== 'look' && !isNum(k.v) && typeof k.v !== 'boolean' && !(COLOR_CHANNELS.includes(ch) && isColor(k.v))) add(E, 'Объект ' + nm + ': значение ключа «' + (CHANNEL_LABEL[ch] || ch) + '» — не число', sel);
       }
     }
@@ -869,17 +938,10 @@ export function validateObjects(scene, add, E, W) {
     }
   }
   validateLinks(scene, add, E, W);
-  const st = Array.isArray(scene.stage) ? scene.stage : [];
   const cams = objs.filter((o) => o && o.type === 'camera');
-  if (!cams.length) add(W, 'В сцене нет ни одной камеры — сцена пойдёт глазами игрока. Создай камеру: Создать → Камера');
-  st.forEach((b, i) => {
-    const sel = { stage: i };
-    if (!b || !isNum(b.t0) || !isNum(b.t1) || b.t1 <= b.t0) { add(E, '«Монтаж»: блок №' + (i + 1) + ' — конец должен быть позже начала', sel); return; }
-    const c = objById(scene, b.cam);
-    if (!c || c.type !== 'camera') add(E, '«Монтаж»: блок №' + (i + 1) + ' — нет камеры «' + b.cam + '»', sel);
-    else if (!isActive(scene, c)) add(W, '«Монтаж»: камера «' + (c.name || c.id) + '» выключена — блок пропустится', sel);
-    const o = st.find((x, j) => j !== i && x && isNum(x.t0) && x.t0 < b.t1 && x.t1 > b.t0);
-    if (o) add(W, '«Монтаж»: блоки камер перекрываются — сыграет более поздний', sel);
-  });
-  if (cams.length > 1 && !st.length) add(W, 'Камер несколько, а «Монтаж» пуст — будет первая камера. Перетащи камеры на дорожку «Монтаж»');
+  if (!cams.length) add(W, 'В сцене нет ни одной камеры — сцена пойдёт глазами игрока. Создай камеру: «Создать» справа → «Камеры»');
+  const stObjs = objs.filter((o) => o && o.type === 'stage');
+  if (stObjs.length > 1) add(W, '«Монтаж» в сцене один — сыграет первый');
+  const keys = stageKeys(scene);
+  if (cams.length > 1 && !keys.length) add(W, 'Камер несколько, а у «Монтажа» нет ключей — снимает одна камера. Выбери «Монтаж» и поставь ключ ◇ с нужной камерой');
 }

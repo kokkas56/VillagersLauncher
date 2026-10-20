@@ -1,11 +1,11 @@
 // Правки сцены-из-объектов в окне Студии: всё неизменяемо (возвращает новую сцену).
 import {
   makeObject, uniqueObjId, objById, childrenOf, isDescendant, setChannel, setKey, removeKey, keyAt, isAnimated,
-  propsAt, chanGet, CHANNELS, moveKeys, defaultProps, OBJ_LABEL
+  propsAt, chanGet, CHANNELS, moveKeys, defaultProps, OBJ_LABEL, stageObj, stageBlocks, stageKeysFromBlocks, ensureStage
 } from '../scene3d.js';
 import { uniqueId } from '../model.js';
 
-export const ID_BASE = { camera: 'cam', light: 'light', sound: 'snd', marker: 'mark', path: 'path', group: 'grp', cloner: 'clon', effector: 'eff', block: 'blk', template: 'tpl', structure: 'str', actor: 'a_', sky: 'sky' };
+export const ID_BASE = { camera: 'cam', light: 'light', sound: 'snd', marker: 'mark', path: 'path', group: 'grp', cloner: 'clon', effector: 'eff', block: 'blk', template: 'tpl', structure: 'str', actor: 'a_', sky: 'sky', stage: 'stage' };
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
 export function nameFor(scene, type, base) {
@@ -34,8 +34,8 @@ export function addObject(scene, type, opts = {}) {
   if (type === 'path' && opts.at) props.pos = [0, 0, 0];
   const o = makeObject(type, id, opts.name || nameFor(scene, type), { parent: opts.parent || null, props, ...(opts.actor ? { actor: opts.actor } : {}) });
   let next = { ...scene, objects: [...(scene.objects || []), o] };
-  // первая камера сразу попадает в «Монтаж»
-  if (type === 'camera' && !(scene.stage || []).length) next = { ...next, stage: [{ t0: 0, t1: scene.length || 200, cam: id }] };
+  // первая камера сразу попадает в «Монтаж» (ключ в 0)
+  if (type === 'camera' && !stageBlocks(scene).length) next = stageWrite(next, [{ t0: 0, t1: scene.length || 200, cam: id }]);
   return { scene: next, id };
 }
 
@@ -50,16 +50,17 @@ export function addActorObject(scene, actor, parent) {
 // удалить объекты вместе с детьми; актёр уходит из сцены вместе с дорожкой; камеры — из «Монтажа»
 export function removeObjects(scene, ids) {
   const kill = new Set();
-  for (const id of ids) { kill.add(id); for (const o of scene.objects) if (isDescendant(scene, o.id, id)) kill.add(o.id); }
+  // «Монтаж» не удаляется (он один на сцену и нужен всегда)
+  for (const id of ids) { const ob = objById(scene, id); if (ob && ob.type === 'stage') continue; kill.add(id); for (const o of scene.objects) if (isDescendant(scene, o.id, id)) kill.add(o.id); }
   const gone = scene.objects.filter((o) => kill.has(o.id));
   const actorIds = new Set(gone.filter((o) => o.type === 'actor').map((o) => o.actor));
-  return {
+  return stageEdit({
     ...scene,
     objects: scene.objects.filter((o) => !kill.has(o.id)).map((o) => (o.type === 'cloner' && (o.props.effectors || []).some((e) => kill.has(e)) ? { ...o, props: { ...o.props, effectors: o.props.effectors.filter((e) => !kill.has(e)), path: kill.has(o.props.path) ? null : o.props.path } } : o.type === 'cloner' && kill.has(o.props.path) ? { ...o, props: { ...o.props, path: null } } : o)),
-    stage: (scene.stage || []).filter((b) => !kill.has(b.cam)),
+    stage: [],
     actors: (scene.actors || []).filter((a) => !actorIds.has(a.id)),
     tracks: (scene.tracks || []).filter((tr) => !(tr.kind === 'actor' && actorIds.has(tr.actor)))
-  };
+  }, (bl) => bl.filter((b) => !kill.has(b.cam)));
 }
 
 // Ctrl+D: копии с детьми, рядом (+1 по X)
@@ -69,7 +70,7 @@ export function cloneObjects(scene, ids) {
   const top = ids.filter((id) => !ids.some((p) => p !== id && isDescendant(scene, id, p)));
   for (const id of top) {
     const src = objById(s, id);
-    if (!src) continue;
+    if (!src || src.type === 'stage') continue;
     const family = [src, ...s.objects.filter((o) => isDescendant(s, o.id, id))];
     const map = {};
     for (const o of family) { map[o.id] = uniqueObjId(s, ID_BASE[o.type] || o.type); s = { ...s, objects: [...s.objects, { id: map[o.id], type: '_reserve' }] }; }
@@ -130,6 +131,8 @@ export function intoCloner(scene, ids, mode) {
 // перетаскивание в дереве: mode = 'into' | 'before' | 'after'
 export function moveInTree(scene, id, targetId, mode) {
   if (id === targetId) return scene;
+  const mo = objById(scene, id), tg = targetId ? objById(scene, targetId) : null;
+  if ((mo && mo.type === 'stage') || (tg && tg.type === 'stage' && mode === 'into')) return scene; // «Монтаж» всегда в корне
   if (targetId && isDescendant(scene, targetId, id)) return scene; // нельзя в собственного потомка
   const o = objById(scene, id);
   if (!o) return scene;
@@ -163,7 +166,7 @@ export function keyState(o, chs, t) {
 }
 // F9: ключ на все анимируемые каналы выбранных
 export function keyAllSelected(scene, ids, t) {
-  return patchObjs(scene, ids, (o) => (CHANNELS[o.type] || []).filter((ch) => ch !== 'play' && chanGet(propsAt(o, t), ch) !== undefined).reduce((acc, ch) => setKey(acc, ch, t), o));
+  return patchObjs(scene, ids, (o) => (CHANNELS[o.type] || []).filter((ch) => ch !== 'play' && chanGet(propsAt(o, t), ch) != null).reduce((acc, ch) => setKey(acc, ch, t), o));
 }
 export function retimeKey(scene, id, ch, from, to) { return patchObj(scene, id, (o) => moveKeys(o, ch, from, to)); }
 export function retimeAllKeys(scene, id, from, to) { return patchObj(scene, id, (o) => Object.keys(o.anim || {}).reduce((acc, ch) => moveKeys(acc, ch, from, to), o)); }
@@ -175,29 +178,58 @@ export function setKeyField(scene, id, ch, t, patch) {
   });
 }
 
-// «Монтаж»
-export function stageSet(scene, i, patch) { return { ...scene, stage: (scene.stage || []).map((b, j) => (j === i ? { ...b, ...patch } : b)) }; }
-export function stageAdd(scene, cam, t0, t1) {
-  const st = (scene.stage || []).slice();
-  st.push({ t0, t1, cam });
-  st.sort((a, b) => a.t0 - b.t0);
-  return { ...scene, stage: st };
+// «Монтаж»: блоки считаются из ключей объекта «Монтаж» (camera), правка блоков пишется обратно ключами
+export function stageWrite(scene, blocks) {
+  let s = ensureStage(scene);
+  const st = stageObj(s);
+  const keys = stageKeysFromBlocks(blocks);
+  const anim = { ...(st.anim || {}) };
+  if (keys.length) anim.camera = keys; else delete anim.camera;
+  s = patchObj(s, st.id, { anim });
+  return s;
 }
-export function stageRemove(scene, i) { return { ...scene, stage: (scene.stage || []).filter((_, j) => j !== i) }; }
-// камера встаёт с момента t до конца следующего блока: предыдущий блок укорачивается
+export function stageEdit(scene, fn) { return stageWrite(scene, fn(stageBlocks(scene).map((b) => ({ t0: b.t0, t1: b.t1, cam: b.cam })))); }
+export function stageSet(scene, i, patch) { return stageEdit(scene, (bl) => bl.map((b, j) => (j === i ? { ...b, ...patch } : b))); }
+export function stageAdd(scene, cam, t0, t1) { return stageEdit(scene, (bl) => [...bl, { t0, t1, cam }]); }
+export function stageRemove(scene, i) { return stageEdit(scene, (bl) => bl.filter((_, j) => j !== i)); }
+// камера снимает с момента t (ключ «Монтажа» в t)
 export function stageCutAt(scene, cam, t) {
-  const len = scene.length || 200;
-  let st = (scene.stage || []).map((b) => ({ ...b }));
-  const hit = st.find((b) => t >= b.t0 && t < b.t1);
-  if (hit) {
-    const end = hit.t1;
-    if (t <= hit.t0) { hit.cam = cam; return { ...scene, stage: st }; }
-    hit.t1 = t;
-    st.push({ t0: t, t1: end, cam });
-  } else {
-    const next = st.filter((b) => b.t0 > t).sort((a, b) => a.t0 - b.t0)[0];
-    st.push({ t0: t, t1: next ? next.t0 : len, cam });
+  return stageEdit(scene, (bl) => [...bl.filter((b) => b.t0 !== t), { t0: t, t1: t + 1, cam }]);
+}
+
+// сдвинуть выбранные ключи [{ obj, ch, t }] на dt тиков (и dv по значению — в кривых); на месте прибытия чужие ключи
+// заменяются (как при перетаскивании одного ключа). Время не уходит меньше 0.
+export function shiftKeys(scene, keys, dt, dv) {
+  const by = new Map();
+  for (const k of keys || []) { const id = k.obj + '\u0000' + k.ch; if (!by.has(id)) by.set(id, { obj: k.obj, ch: k.ch, ts: new Set() }); by.get(id).ts.add(k.t); }
+  let s = scene;
+  for (const g of by.values()) {
+    s = patchObj(s, g.obj, (o) => {
+      if (!isAnimated(o, g.ch)) return o;
+      const moved = o.anim[g.ch].filter((k) => g.ts.has(k.t)).map((k) => ({ ...k, t: Math.max(0, k.t + dt), ...(dv && typeof k.v === 'number' ? { v: Math.round((k.v + dv) * 1000) / 1000 } : {}) }));
+      const land = new Set(moved.map((k) => k.t));
+      const rest = o.anim[g.ch].filter((k) => !g.ts.has(k.t) && !land.has(k.t));
+      return { ...o, anim: { ...o.anim, [g.ch]: [...rest, ...moved].sort((a, b) => a.t - b.t) } };
+    });
   }
-  st = st.sort((a, b) => a.t0 - b.t0);
-  return { ...scene, stage: st };
+  return s;
+}
+// ключи, которые есть в сцене (после правок выбор может указывать на пропавшие)
+export function liveKeys(scene, keys) {
+  return (keys || []).filter((k) => { const o = objById(scene, k.obj); return o && isAnimated(o, k.ch) && o.anim[k.ch].some((x) => x.t === k.t); });
+}
+// вставить скопированные ключи: items [{ obj, ch, dt, k }] в момент t; to — другой объект (тот же набор свойств)
+export function pasteKeys(scene, items, t, to) {
+  let s = scene;
+  for (const it of items) {
+    const id = to || it.obj;
+    const o = objById(s, id);
+    if (!o || !(CHANNELS[o.type] || []).concat(['look']).includes(it.ch)) continue;
+    const tt = Math.max(0, t + it.dt);
+    s = patchObj(s, id, (x) => {
+      const keys = isAnimated(x, it.ch) ? x.anim[it.ch].filter((k) => k.t !== tt) : [];
+      return { ...x, anim: { ...(x.anim || {}), [it.ch]: [...keys, { ...it.k, t: tt }].sort((a, b) => a.t - b.t) } };
+    });
+  }
+  return s;
 }

@@ -106,6 +106,17 @@ export function validateScene(scene, ctx) {
   const w = scene.world || {};
   if (w.dim && !isResId(w.dim)) add(ERR, 'Измерение записано неправильно: нужно вида minecraft:overworld');
   const opt = scene.options || {};
+  if (opt.letterbox !== undefined && typeof opt.letterbox !== 'boolean') {
+    const lb = opt.letterbox;
+    if (!lb || typeof lb !== 'object') add(ERR, 'Кинорамка: настройки повреждены');
+    else {
+      if (lb.aspect !== undefined && !(isNum(lb.aspect) && lb.aspect >= 0 && lb.aspect <= 5)) add(ERR, 'Кинорамка: пропорция кадра — число от 1 до 5 (например 2,39)');
+      else if (lb.on && isNum(lb.aspect) && lb.aspect > 0 && lb.aspect <= 16 / 9 + 0.01) add(WARN, 'Кинорамка: при 16:9 и уже полос на обычном экране не будет');
+      if (lb.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(String(lb.color))) add(ERR, 'Кинорамка: цвет пиши вида #000000');
+      if (lb.opacity !== undefined && !(isNum(lb.opacity) && lb.opacity >= 0 && lb.opacity <= 1)) add(ERR, 'Кинорамка: непрозрачность — от 0 до 1');
+      for (const k of ['inTicks', 'outTicks']) if (lb[k] !== undefined && !(isNum(lb[k]) && lb[k] >= 0)) add(ERR, 'Кинорамка: время появления и ухода — тики, 0 и больше');
+    }
+  }
   if (opt.music && !isResId(opt.music)) add(ERR, 'Музыка сцены: id звука нужно писать вида мод:имя, например minecraft:music.game');
   const ep = opt.endPlayer || {};
   if (ep.mode && !END_MODES.includes(ep.mode)) add(ERR, 'Конец сцены: непонятно, что делать с игроком («' + ep.mode + '»)');
@@ -297,12 +308,37 @@ export function cleanProject(p) { return strip(p); }
 export const DEFAULT_UI = { hud: true, markers: true, chat: false };
 export function defaultProject() { return { v: 1, name: 'Мой сюжет', actors: [], vars: [], templates: [], talkPriority: 0, ui: { ...DEFAULT_UI } }; }
 
+// «Кинорамка» (чёрные полосы) — options.letterbox: { on, aspect, color, opacity, inTicks, outTicks }.
+// aspect — ширина к высоте кадра (2.39 → 2,39:1); 0 или 16/9 и меньше — полос нет. Старое true/false: true → 2,39:1.
+// Новые сцены — без рамки. Рамка не трогает угол обзора камеры: она просто закрывает верх и низ экрана.
+export const LETTERBOX_DEFAULT = { on: false, aspect: 2.39, color: '#000000', opacity: 1, inTicks: 20, outTicks: 20 };
+export const LETTERBOX_ASPECTS = [[2.39, '2,39:1 — широкий кинокадр'], [2, '2:1 — Univisium'], [1.85, '1,85:1 — кино'], [1.7778, '16:9 — без полос']];
+export function letterboxOf(v) {
+  if (v === true) return { ...LETTERBOX_DEFAULT, on: true };
+  if (!v || typeof v !== 'object') return { ...LETTERBOX_DEFAULT, on: false };
+  const n = (x, d) => (typeof x === 'number' && isFinite(x) ? x : d);
+  return {
+    on: v.on !== false && v.on !== undefined ? true : false,
+    aspect: Math.max(0, n(v.aspect, LETTERBOX_DEFAULT.aspect)),
+    color: /^#[0-9a-fA-F]{6}$/.test(String(v.color || '')) ? String(v.color).toLowerCase() : LETTERBOX_DEFAULT.color,
+    opacity: Math.max(0, Math.min(1, n(v.opacity, 1))),
+    inTicks: Math.max(0, Math.round(n(v.inTicks, LETTERBOX_DEFAULT.inTicks))),
+    outTicks: Math.max(0, Math.round(n(v.outTicks, LETTERBOX_DEFAULT.outTicks)))
+  };
+}
+// доля высоты кадра под каждую полосу (сверху и снизу) в окне w×h; 0 — полос нет
+export function letterboxBar(lb, w, h) {
+  const a = Number(lb && lb.aspect) || 0;
+  if (!lb || !lb.on || a <= 0 || !w || !h || w / h >= a) return 0;
+  return Math.max(0, (h - w / a) / 2 / h);
+}
+
 export function defaultScene(id, title) {
   return {
     v: 1, id, title: title || id, note: '',
     world: { dim: 'minecraft:overworld', anchor: null },
     preload: { radius: 3, alongCamera: true, extra: [] },
-    options: { letterbox: true, hideHud: true, lockInput: true, skippable: true, music: null, endPlayer: { mode: 'back' } },
+    options: { letterbox: { ...LETTERBOX_DEFAULT }, hideHud: true, lockInput: true, skippable: true, music: null, endPlayer: { mode: 'back' } },
     actors: [], length: 200,
     tracks: [{ kind: 'camera', keys: [] }]
   };
@@ -322,7 +358,7 @@ export function normalizeScene(scene) {
     v: 1, id: s.id, title: s.title || s.id,
     world: { ...d.world, ...(s.world || {}) },
     preload: { ...d.preload, ...(s.preload || {}) },
-    options: { ...d.options, ...(s.options || {}), endPlayer: { ...d.options.endPlayer, ...((s.options || {}).endPlayer || {}) } },
+    options: { ...d.options, ...(s.options || {}), letterbox: letterboxOf((s.options || {}).letterbox === undefined ? d.options.letterbox : s.options.letterbox), endPlayer: { ...d.options.endPlayer, ...((s.options || {}).endPlayer || {}) } },
     actors: (s.actors || []).map((a) => ({ despawnAtEnd: true, existing: false, ...a })),
     length: Math.max(1, Math.round(s.length || 1)),
     tracks: []

@@ -1,4 +1,4 @@
-// Иконки окна Студии в духе Cinema 4D (контурные, 24×24). Цветные — для видов объектов, как в менеджере объектов C4D.
+// Иконки окна Студии (контурные, 24×24). Цветные — для видов объектов в менеджере объектов.
 import React from 'react';
 
 const P = {
@@ -12,9 +12,10 @@ const P = {
   restore: <><rect x="5" y="9" width="10" height="10" /><path d="M9 9V5h10v10h-4" /></>,
   menu: <path d="M4 7h16M4 12h16M4 17h16" />,
   select: <><path d="M6 4v13l4-3 3 6 2-1-3-6h5z" /><circle cx="17" cy="6" r="2.5" strokeDasharray="2 1.5" /></>,
-  move: <><path d="M12 3v18M3 12h18" /><path d="m9 6 3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3" /></>,
-  rotate: <><path d="M19 12a7 7 0 1 1-2.05-4.95" /><path d="M19 4v4h-4" /></>,
-  scale: <><rect x="4" y="10" width="10" height="10" /><path d="M11 13 20 4M14 4h6v6" /></>,
+  // перемещение — четыре стрелки; поворот — две круговые стрелки; масштаб — коробка со стрелками из углов
+  move: <><path d="M12 5.5v13M5.5 12h13" /><path d="M12 2 9 5.5h6zM12 22l-3-3.5h6zM2 12l3.5-3v6zM22 12l-3.5-3v6z" fill="currentColor" /></>,
+  rotate: <><path d="M5.2 9.5A7.3 7.3 0 0 1 18 7.4" /><path d="M18.8 14.5A7.3 7.3 0 0 1 6 16.6" /><path d="M19.6 3.6l-.3 4.9-4.8-.9zM4.4 20.4l.3-4.9 4.8.9z" fill="currentColor" /><circle cx="12" cy="12" r="1.6" fill="currentColor" /></>,
+  scale: <><rect x="7.5" y="7.5" width="9" height="9" rx="0.8" /><path d="M7 7 3 3M17 7l4-4M7 17l-4 4M17 17l4 4" /><path d="M2.5 6.5V2.5h4M21.5 6.5V2.5h-4M2.5 17.5v4h4M21.5 17.5v4h-4" /></>,
   camera: <><rect x="3" y="7" width="12" height="10" rx="1.5" /><path d="m15 11 6-3v8l-6-3" /></>,
   path: <><path d="M4 18C8 18 6 6 12 6s4 12 8 12" /><circle cx="4" cy="18" r="1.6" /><circle cx="12" cy="6" r="1.6" /><circle cx="20" cy="18" r="1.6" /></>,
   actor: <><circle cx="12" cy="7" r="3" /><path d="M6 21v-4a6 6 0 0 1 12 0v4" /></>,
@@ -82,7 +83,7 @@ const P = {
   grid: <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />,
   layers: <><path d="m12 4 9 5-9 5-9-5z" /><path d="m3 14 9 5 9-5" /></>,
   top: <><rect x="4" y="4" width="16" height="16" /><path d="M12 8v8M8 12h8" /></>,
-  // фаза 5: сущности мира (как точечные сущности Hammer), небо, проекты, выходы
+  // фаза 5: сущности мира (точечные сущности), небо, проекты, выходы
   ent_start: <><circle cx="9" cy="5" r="2.2" /><path d="M9 7.5v6M6 10h6M9 13.5l-3 6M9 13.5l3 6" /><path d="M15 12h6M18.5 9.5 21 12l-2.5 2.5" /></>,
   ent_zone: <><path d="M4 8 12 4l8 4v8l-8 4-8-4z" strokeDasharray="2.4 1.8" /><path d="M4 8l8 4 8-4M12 12v8" strokeDasharray="2.4 1.8" /></>,
   ent_actor: <><circle cx="12" cy="6" r="3" /><path d="M6 21v-5a6 6 0 0 1 12 0v5" /><path d="M16 4h5v3h-2l-1 1.5V7h-2z" /></>,
@@ -106,7 +107,7 @@ const P = {
 
 export const TYPE_COLOR = {
   camera: '#a6b4c8', actor: '#e8a05a', light: '#f2d76b', sound: '#7cc4f5', marker: '#e57373', path: '#9ed2ff',
-  group: '#d0d0d0', cloner: '#7fd36b', effector: '#b38cf0', block: '#c6a46b', template: '#d4b483', structure: '#e7a96a', scene: '#c8c8c8', sky: '#ffc861'
+  group: '#d0d0d0', cloner: '#7fd36b', effector: '#b38cf0', block: '#c6a46b', template: '#d4b483', structure: '#e7a96a', scene: '#c8c8c8', sky: '#ffc861', stage: '#9fb0ff'
 };
 
 export default function I({ name, size = 18, color, sw = 1.6, fill }) {

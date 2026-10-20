@@ -1,4 +1,4 @@
-// Менеджер объектов (как в C4D), фаза 5 — дерево всего проекта:
+// Менеджер объектов, фаза 5 — дерево всего проекта:
 //   «Мир» — сущности мира (entities.json: старт игрока, зоны, актёры, кнопки…),
 //   «Сцены» — файлы сцен; открытая сцена раскрыта деревом своих объектов (камеры, свет, небо, клонеры…),
 //   «Диалоги», «Задания», «Схемы» — папки документов (двойной щелчок — открыть в своём макете).
@@ -110,7 +110,9 @@ function ProjectTree({ act, openDoc }) {
           <input className="c4-search" placeholder="Найти…" value={filter} onChange={(e) => setFilter(e.target.value)} {...hp('Показать только то, в имени чего есть эти буквы.')} />
         </div>
       </div>
-      <div className="c4-tree" onContextMenu={(e) => { if (e.target === e.currentTarget) e.preventDefault(); }}>
+      <div className="c4-tree" onContextMenu={(e) => { if (e.target === e.currentTarget) e.preventDefault(); }}
+        onDragOver={(e) => { if (e.dataTransfer.types.includes('text/c4create')) e.preventDefault(); }}
+        onDrop={(e) => { const cr = e.dataTransfer.getData('text/c4create'); if (!cr || e.defaultPrevented) return; e.preventDefault(); try { core.dropCreate && core.dropCreate(JSON.parse(cr)); } catch (_) {} }}>
         {GROUPS.map(([k, label, icon, hint]) => {
           const open = !closed[k] || !!f;
           return (
@@ -217,6 +219,8 @@ function SceneObjects({ act, depth0, filter }) {
       }
     };
     walk(null, depth0);
+    // «Монтаж» — всегда первым
+    out.sort((a, b) => (b.o.type === 'stage') - (a.o.type === 'stage'));
     for (const o of scene.objects) if (o.parent && !objById(scene, o.parent)) out.push({ o, depth: depth0, kids: 0 });
     return out;
   }, [scene, closed, filter, depth0]);
@@ -234,6 +238,15 @@ function SceneObjects({ act, depth0, filter }) {
   };
   const ctx = (e, o) => {
     if (o && !selSet.has(o.id)) setSel({ objs: [o.id] });
+    if (o && o.type === 'stage') {
+      openMenu(e, [
+        { head: '«Монтаж» — кто снимает' },
+        ...scene.objects.filter((c) => c.type === 'camera').map((c) => ({ label: 'С ' + core.time + ' т снимает «' + c.name + '»', icon: 'camera', hint: 'Ключ «Монтажа» в момент бегунка.', run: () => act.stageCut(c.id) })),
+        { sep: true },
+        { label: 'Переименовать', kb: 'двойной щелчок', run: () => setRenaming(o.id) }
+      ]);
+      return;
+    }
     const isCam = o && o.type === 'camera';
     const items = [
       { label: 'Создать дочерний', icon: 'plus', sub: createItems(core, act).filter((x) => !x.sep).map((it) => (it.sub ? it : { ...it, run: () => act.create(it.icon, { parent: o.id }) })) },
@@ -246,8 +259,8 @@ function SceneObjects({ act, depth0, filter }) {
       { label: o.parent ? 'Вынуть из «' + ((objById(scene, o.parent) || {}).name || '') + '»' : 'Вынуть из родителя', disabled: !o.parent, run: () => edit((s) => moveInTree(s, o.id, o.parent, 'after')) },
       { sep: true },
       { label: 'Показать в игре', icon: 'frame', kb: 'H', hint: 'Камера Студии в игре подлетит к объекту.', run: () => core.gameCmd.frame() },
-      isCam && { label: 'Смотреть через камеру', icon: 'look', checked: core.game.lookThrough === o.id, hint: 'Камера Студии в игре встанет на место этой камеры и будет ехать с ней при прокрутке таймлайна.', run: () => core.gameCmd.lookThrough(core.game.lookThrough === o.id ? null : o.id) },
-      isCam && { label: 'В «Монтаж» с текущего кадра', icon: 'stage', hint: 'С момента бегунка сцену снимает эта камера (как Stage в C4D).', run: () => act.stageCut(o.id) },
+      isCam && { label: 'Смотреть через камеру', icon: 'look', checked: core.game.lookThrough === o.id, hint: 'Вид в игре становится этой камерой: двигаешь вид — двигается камера, прокрутка таймлайна ведёт её по ключам. Esc — выйти.', run: () => core.gameCmd.lookThrough(core.game.lookThrough === o.id ? null : o.id) },
+      isCam && { label: 'В «Монтаж» с текущего кадра', icon: 'stage', hint: 'Ключ «Монтажа»: с момента бегунка сцену снимает эта камера.', run: () => act.stageCut(o.id) },
       (o.type === 'cloner' || o.type === 'structure') && { sep: true },
       (o.type === 'cloner' || o.type === 'structure') && { label: 'Запечь в мир', icon: 'bake', hint: 'Поставить блоки в мир по-настоящему (можно отменить).', disabled: !core.link.connected, run: () => act.bake(o.id) },
       (o.type === 'cloner' || o.type === 'structure') && { label: 'Отменить запекание', icon: 'unbake', disabled: !core.link.connected || !(scene.bakes || []).some((b) => b.obj === o.id), run: () => act.unbake(o.id) }
@@ -265,6 +278,7 @@ function SceneObjects({ act, depth0, filter }) {
   const onDragOver = (e, o) => {
     e.preventDefault();
     if (e.dataTransfer.types.includes('text/c4link')) { setDrop({ id: o.id, mode: 'link' }); return; }
+    if (e.dataTransfer.types.includes('text/c4create')) { setDrop({ id: o && o.type === 'group' ? o.id : null, mode: 'root' }); return; }
     if (e.dataTransfer.types.includes('text/c4block')) { setDrop(o && (o.type === 'block' || o.type === 'cloner') ? { id: o.id, mode: 'into' } : null); return; }
     if (e.dataTransfer.types.includes('text/c4struct')) { setDrop({ id: o && o.type === 'group' ? o.id : null, mode: 'root' }); return; }
     const r = e.currentTarget.getBoundingClientRect();
@@ -274,6 +288,8 @@ function SceneObjects({ act, depth0, filter }) {
   const onDrop = (e, o) => {
     e.preventDefault();
     if (e.dataTransfer.types.includes('text/c4link')) { setDrop(null); linkDrop(e, o); return; }
+    const cr = e.dataTransfer.getData('text/c4create');
+    if (cr) { setDrop(null); try { const it = JSON.parse(cr); if (it.kind === 'obj' && o && o.type === 'group') act.create(it.type, { props: it.props, name: it.name, parent: o.id }); else if (core.dropCreate) core.dropCreate(it); } catch (_) {} return; }
     const blk = e.dataTransfer.getData('text/c4block');
     if (blk) {
       const t = drop && drop.id && objById(scene, drop.id);
@@ -301,15 +317,19 @@ function SceneObjects({ act, depth0, filter }) {
         const on = o.enabled !== false;
         const vis = o.visible !== false;
         const d = drop && drop.id === o.id ? ' drop-' + drop.mode : '';
+        const isStage = o.type === 'stage';
+        const lt = o.type === 'camera' && core.game.lookThrough === o.id;
+        const toggleLook = (e) => { e.stopPropagation(); core.gameCmd.lookThrough(lt ? null : o.id); };
         return (
-          <div key={o.id} className={'c4-row' + (selSet.has(o.id) ? ' sel' : '') + (on ? '' : ' off') + d} style={{ paddingLeft: depth * 14 - 8 }}
-            draggable={renaming !== o.id}
+          <div key={o.id} className={'c4-row' + (selSet.has(o.id) ? ' sel' : '') + (on ? '' : ' off') + (isStage ? ' stage-row' : '') + d} style={{ paddingLeft: depth * 14 - 8 }}
+            data-learn={isStage ? 'obj-stage' : o.type === 'camera' ? 'obj-camera' : undefined}
+            draggable={renaming !== o.id && !isStage}
             onDragStart={(e) => { e.dataTransfer.setData('text/c4obj', o.id); e.dataTransfer.effectAllowed = 'move'; }}
             onDragOver={(e) => onDragOver(e, o)} onDragLeave={() => setDrop(null)} onDrop={(e) => onDrop(e, o)}
             onClick={(e) => click(e, o)} onDoubleClick={() => setRenaming(o.id)} onContextMenu={(e) => ctx(e, o)}
             onMouseEnter={() => core.setHint((OBJ_LABEL[o.type] || o.type) + ' «' + o.name + '». ' + (TYPE_HINT[o.type] || ''))}>
             <span className="tw" onClick={(e) => { e.stopPropagation(); if (kids) setClosed((c) => ({ ...c, [o.id]: !c[o.id] })); }}>{kids ? (closed[o.id] ? '▸' : '▾') : ''}</span>
-            <span className="oi"><TypeIcon type={o.type} /></span>
+            <span className="oi" onDoubleClick={o.type === 'camera' ? (e) => { e.stopPropagation(); toggleLook(e); } : undefined} title={o.type === 'camera' ? 'Двойной щелчок по значку — смотреть через камеру' : undefined}><TypeIcon type={o.type === 'stage' ? 'stage' : o.type} /></span>
             <span className="nm">
               {renaming === o.id
                 ? <input autoFocus defaultValue={o.name} onFocus={(e) => e.target.select()} onClick={(e) => e.stopPropagation()}
@@ -319,19 +339,20 @@ function SceneObjects({ act, depth0, filter }) {
             </span>
             <span className="tags">
               {o.type === 'camera' && act1 && act1.id === o.id && <span className="tag" style={{ background: '#3e4dae' }} title="Эта камера снимает сцену в момент бегунка (по «Монтажу»)">▶</span>}
-              {o.type === 'camera' && core.game.lookThrough === o.id && <span className="tag" style={{ background: '#2e7d4f' }} title="Через эту камеру смотрит камера Студии в игре">👁</span>}
+              {isStage && (() => { const ac = act1; return <span className="tag" style={{ background: '#3e4dae' }} title="Какая камера снимает в момент бегунка">{ac ? ac.name : 'нет камер'}</span>; })()}
               {hasAnim(o) && <span className="tag" title="Анимирован: есть ключи" style={{ color: '#e6c23c' }}>◆</span>}
               {(scene.links || []).some((l) => l && typeof l.to === 'string' && l.to.startsWith(o.id + '.')) && <span className="tag" title="Свойство ведёт «Связь»" style={{ color: '#9fd0ff' }}>⇢</span>}
               {o.type === 'cloner' && <span className="tag" style={{ background: TYPE_COLOR.cloner, color: '#1d3313' }} title={'Режим: ' + CLONER_MODE_LABEL[o.props.mode]}>{(CLONER_MODE_LABEL[o.props.mode] || '?')[0]}</span>}
               {o.type === 'effector' && <span className="tag" style={{ background: TYPE_COLOR.effector, color: '#2a1840' }} title={EFFECTOR_LABEL[o.props.kind]}>{(EFFECTOR_LABEL[o.props.kind] || '?')[0]}</span>}
               {o.type === 'cloner' && (scene.bakes || []).some((b) => b.obj === o.id) && <span className="tag" style={{ background: '#8a5a20' }} title="Запечён в мир (можно отменить)">З</span>}
             </span>
-            <span className="flags">
+            {o.type === 'camera' && <span className={'eye' + (lt ? ' on' : '')} data-learn="cam-eye" onClick={toggleLook} onDoubleClick={(e) => e.stopPropagation()} {...hp(lt ? 'Смотрю через «' + o.name + '». Щёлкни — выйти (или Esc).' : 'Смотреть через камеру «' + o.name + '»: вид в игре станет этой камерой. Двигаешь вид (Alt+мышь, ПКМ+WASD, Ctrl+колесо — угол обзора) — двигается камера; с записью ● ставятся ключи, F9 — ключ вручную. Ещё щелчок или Esc — выйти.')}><I name="eye" size={14} /></span>}
+            {!isStage && <span className="flags">
               <span className="vis" onClick={(e) => { e.stopPropagation(); act.toggleVisible(o.id); }} title={vis ? 'Виден в игре (гизмо). Щёлкни — спрятать' : 'Спрятан в игре. Щёлкни — показать'}>
                 <i className={vis ? '' : 'v-off'} /><i className={vis ? '' : 'v-off'} />
               </span>
               <span className={'chk ' + (on ? 'on' : 'no')} onClick={(e) => { e.stopPropagation(); act.toggleEnabled(o.id); }} title={on ? 'Включён. Щёлкни — выключить (не попадёт в сцену)' : 'Выключен — в сцену не попадёт. Щёлкни — включить'}>{on ? '✓' : '✕'}</span>
-            </span>
+            </span>}
           </div>
         );
       })}

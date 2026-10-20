@@ -91,9 +91,19 @@ export function LearnOverlay({ learn }) {
   useEffect(() => { setMore(false); }, [key]);
   useEffect(() => {
     if (!step) return undefined;
+    let asked = false;
+    let scrolled = null;
     const find = () => {
       let el = null;
-      try { for (const sel of String(step.target || '').split(',')) { el = document.querySelector(sel.trim()); if (el && el.getBoundingClientRect().width) break; } } catch (_) { el = null; }
+      // первая видимая цель; не нашлась — попросить панели показать её (палитра «Создать» откроет нужную вкладку)
+      const vis = (x) => { if (!x) return false; const r = x.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+      try {
+        const sels = String(step.target || '').split(',').map((x) => x.trim()).filter(Boolean);
+        if (!asked && sels.length && !vis(document.querySelector(sels[0]))) { asked = true; window.dispatchEvent(new CustomEvent('c4-learn-need', { detail: step.target })); }
+        for (const sel of sels) { const x = document.querySelector(sel); if (vis(x)) { el = x; break; } }
+      } catch (_) { el = null; }
+      // цель в прокручиваемой панели (дерево, атрибуты) — прокрутить к ней, один раз на шаг
+      if (el && scrolled !== el) { scrolled = el; try { el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) {} }
       const r = el ? el.getBoundingClientRect() : null;
       setRect((old) => (r && r.width ? (old && Math.abs(old.x - r.x) + Math.abs(old.y - r.y) + Math.abs(old.width - r.width) + Math.abs(old.height - r.height) < 1 ? old : { x: r.x, y: r.y, width: r.width, height: r.height }) : null));
     };
@@ -170,7 +180,7 @@ export function LearnOverlay({ learn }) {
           <p className="what"><b>Что делаем.</b> {step.text}</p>
           {step.why && <p className="why"><b>Зачем.</b> {step.why}</p>}
           {step.game && <p className="game"><I name="look" size={11} /> В игре: {step.game.text}</p>}
-          {!rect && step.target && <p className="dim small">Кнопки сейчас не видно{step.layout ? ' — она в макете «' + step.layout + '»' : ''}.</p>}
+          {!rect && step.target && <p className="dim small">Нужное место откроется само, когда будет открыта сцена{step.layout ? ' в макете «' + step.layout + '»' : ''}.</p>}
           {step.more && <button className="c4-learn-more" onClick={() => setMore(!more)}>{more ? '▾' : '▸'} Подробнее</button>}
           {more && step.more && <div className="moreb">{step.more.svg && <Illus look={step.more.svg} />}{step.more.text && <p>{step.more.text}</p>}</div>}
         </div>
