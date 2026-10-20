@@ -18,7 +18,7 @@ module.exports = function setupStudioWindow({ handle, store, dev, getGame, linkI
 
   function all() { return [studio, ...pops.values()].filter((w) => w && !w.isDestroyed()); }
   function forward(ch, data) { if (!FORWARD.includes(ch)) return; for (const w of all()) w.webContents.send(ch, data); }
-  function embState() { return { mode: emb.mode, method: emb.method, prefer: embMethod(), want: emb.want, why: emb.why, hwnd: emb.hwnd, helper: process.platform !== 'win32' ? 'unsupported' : helper.available() ? 'ok' : 'missing', platform: process.platform, game: gameInfo() }; }
+  function embState() { return { mode: emb.mode, method: emb.method, prefer: embMethod(), auto: store.get().studioAutoEmbed !== false, want: emb.want, why: emb.why, hwnd: emb.hwnd, helper: process.platform !== 'win32' ? 'unsupported' : helper.available() ? 'ok' : 'missing', platform: process.platform, game: gameInfo() }; }
   function emitEmb() { forward('studio-embed', embState()); }
   function emitWin() { forward('studio-win', { type: 'pops', pops: [...pops.keys()].filter((k) => pops.get(k) && !pops.get(k).isDestroyed()) }); }
   function gameInfo() { const g = getGame(); const li = linkInfo() || {}; return { running: !!g, pid: (g && g.proc && g.proc.pid) || li.pid || null, linked: !!li.t }; }
@@ -230,6 +230,33 @@ module.exports = function setupStudioWindow({ handle, store, dev, getGame, linkI
     }
     return true;
   }
+
+  // ---------- игра, запущенная при открытой Студии, сразу встраивается в видовое окно ----------
+  // (один раз на запуск игры: если автор сам отстыковал или разложил окна рядом — больше не трогаем)
+  const auto = { pid: null, done: false, since: 0, busy: false };
+  function autoOn() { return store.get().studioAutoEmbed !== false; }
+  setInterval(async () => {
+    try {
+      const g = getGame();
+      const pid = g && g.proc && g.proc.pid;
+      if (!pid) { auto.pid = null; auto.done = false; return; }
+      if (auto.pid !== pid) { auto.pid = pid; auto.done = false; auto.since = Date.now(); }
+      if (auto.done || auto.busy || !autoOn() || process.platform !== 'win32') return;
+      if (!studio || studio.isDestroyed() || studio.isMinimized()) return;
+      if (emb.mode !== 'off' || emb.want === 'side') { auto.done = true; return; }
+      if (Date.now() - auto.since > 5 * 60 * 1000) { auto.done = true; return; }
+      if (!helper.available()) { auto.done = true; return; }
+      auto.busy = true;
+      let hwnd = null;
+      try { hwnd = await findGame(); } catch (_) { hwnd = null; }
+      if (hwnd) {
+        auto.done = true;
+        log && log('авто-встраивание: окно игры найдено — встраиваю');
+        await embed().catch(() => {});
+      }
+    } catch (_) { /* следующая попытка через секунду */ } finally { auto.busy = false; }
+  }, 1200);
+  handle('studio:autoEmbed', (on) => { if (on === true || on === false) store.set({ studioAutoEmbed: on }); emitEmb(); return autoOn(); });
 
   handle('studio:openWindow', () => openStudio());
   handle('studio:popout', (tab) => openPop(String(tab)));
