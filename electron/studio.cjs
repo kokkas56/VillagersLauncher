@@ -275,6 +275,36 @@ module.exports = function setupStudio({ handle, send, store }) {
     else if (on === false && fs.existsSync(devFile())) fs.unlinkSync(devFile());
     return devOn();
   });
+  // тестовые миры для вкладки «Старт»: одиночные миры из <игра>/saves (имя из level.dat, когда играли, значок icon.png)
+  function worldInfo(saves, folder) {
+    const dir = path.join(saves, folder);
+    const lvl = path.join(dir, 'level.dat');
+    let name = folder, lastPlayed = 0, mode = null;
+    try { lastPlayed = fs.statSync(lvl).mtimeMs; } catch (_) {}
+    try {
+      const root = NBT.readNbt(fs.readFileSync(lvl));
+      const d = (root && root.Data) || {};
+      if (typeof d.LevelName === 'string' && d.LevelName.trim()) name = d.LevelName.trim();
+      if (typeof d.LastPlayed === 'number' && d.LastPlayed > 0) lastPlayed = d.LastPlayed;
+      if (typeof d.GameType === 'number') mode = ['survival', 'creative', 'adventure', 'spectator'][d.GameType] || null;
+    } catch (_) {}
+    let icon = null;
+    try { const f = path.join(dir, 'icon.png'); if (fs.statSync(f).size < 400000) icon = 'data:image/png;base64,' + fs.readFileSync(f).toString('base64'); } catch (_) {}
+    return { folder, name, lastPlayed, mode, icon };
+  }
+  handle('studio:worlds', () => {
+    const saves = path.join(gameDir(), 'saves');
+    let names = [];
+    try { names = fs.readdirSync(saves, { withFileTypes: true }).filter((e) => e.isDirectory() && fs.existsSync(path.join(saves, e.name, 'level.dat'))).map((e) => e.name); } catch (_) {}
+    const worlds = names.map((n) => worldInfo(saves, n)).sort((a, b) => b.lastPlayed - a.lastPlayed);
+    return { worlds, selected: store.get().studioWorld || null, saves };
+  });
+  handle('studio:setWorld', (folder) => {
+    const v = folder == null ? null : String(folder);
+    if (v && (/[\\/]/.test(v) || v === '.' || v === '..')) throw new Error('Неверное имя папки мира');
+    store.set({ studioWorld: v });
+    return v;
+  });
   handle('studio:build', () => {
     const project = readProject();
     const docs = { dialogs: [], quests: [], schemes: [] };

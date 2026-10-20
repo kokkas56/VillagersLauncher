@@ -18,6 +18,7 @@ import VarsTab from '../VarsTab.jsx';
 import SchemeTab from '../SchemeTab.jsx';
 import { BuildProvider, BlockPalette, BuildDock, useBuild } from './Build.jsx';
 import Voxelizer from './Voxelizer.jsx';
+import StartTab from './Start.jsx';
 import { LinkCard, ProjectActors } from '../../pages/Studio.jsx';
 import { fmtTicks } from '../model.js';
 import { ERR } from '../validate.js';
@@ -25,6 +26,7 @@ import './c4d.css';
 import '../studio.css';
 
 export const LAYOUTS = [
+  ['start', 'Старт', 'С чего начать: проект, тестовый мир и запуск игры, связь с игрой, как всё устроено, сюжетный режим Kokk Story.'],
   ['scene', 'Сцена', 'Катсцена: камеры, актёры, свет, «Монтаж» и ключи на таймлайне. В центре — игра.'],
   ['build', 'Строительство', 'Блоки и постройки: палитра блоков, рамка (заполнить, заменить, копировать, повернуть), кисть, библиотека построек, 3D-модели → блоки, клонеры. Призраком в игре, запекание в мир.'],
   ['dialogs', 'Диалоги', 'Разговоры с ветками: граф из реплик, выборов, условий и действий.'],
@@ -61,7 +63,7 @@ function StudioMain() {
   const act = useMemo(() => makeActions(core), [core]); // eslint-disable-line
   const actRef = useRef(act);
   actRef.current = act;
-  const [layout, setLayoutState] = useState(() => lsGet('layout', 'scene'));
+  const [layout, setLayoutState] = useState(() => lsGet('layout', 'start'));
   const [rightW, setRightW] = useState(() => lsGet('rightW', 380));
   const [tlH, setTlH] = useState(() => lsGet('tlH', 230));
   const [objH, setObjH] = useState(() => lsGet('objH', 0.42));
@@ -135,6 +137,7 @@ function StudioMain() {
       { label: 'Проверить сцену', icon: 'warn', hint: 'Ошибки и предупреждения — во вкладке «Проверка» справа.', run: () => setModal('issues') },
       { label: 'Собрать для игроков', icon: 'build', hint: 'Проверить всё и положить готовые сцены, диалоги и задания в config/kokkstory/studio — игроки получат их со следующей публикацией сборки.', run: build },
       { label: 'Открыть папку проекта', icon: 'folder', run: () => call('shell:openPath', 'studio') },
+      { label: 'Старт: проект и тестовый мир', icon: 'home', hint: 'Вкладка «Старт»: где проект, в каком мире тестировать, запуск игры, как всё устроено.', run: () => setLayout('start') },
       { sep: true },
       { label: 'Закрыть Студию', icon: 'close', run: () => win.close() }
     ] },
@@ -283,6 +286,8 @@ function StudioMain() {
             <div className="c4-splitter-h" onMouseDown={splitH} title={layout === 'build' ? 'Тяни — высота нижней панели' : 'Тяни — высота таймлайна'} />
             {layout === 'build' ? <BuildDock height={Math.max(200, tlH)} timeline={<Timeline act={act} height={Math.max(200, tlH) - 27} />} /> : <Timeline act={act} height={tlH} />}
           </>
+        ) : layout === 'start' ? (
+          <StartTab setLayout={setLayout} openDock={openDock} build={build} />
         ) : (
           <DocLayout layout={layout} shared={shared} goto={goto} popped={popped(layout)} popOut={popOut} />
         )}
