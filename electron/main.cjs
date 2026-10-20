@@ -74,7 +74,11 @@ function createWindow() {
 }
 
 app.on('second-instance', () => {
-  if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+  // окно лаунчера могли закрыть, пока игра или сервер ещё работают (лаунчер живёт без окна) — тогда открыть его заново
+  try {
+    if (!win || win.isDestroyed()) { createWindow(); return; }
+    if (win.isMinimized()) win.restore(); win.show(); win.focus();
+  } catch (e) { console.error('second-instance', e); try { createWindow(); } catch (_) {} }
 });
 
 app.whenReady().then(() => {
