@@ -144,6 +144,7 @@ module.exports = function setupStudioWindow({ handle, store, dev, getGame, linkI
       const [x, y, w, h] = emb.rect ? rectPx(emb.rect) : emb.method === 'overlay' ? screenPx({ x: 60, y: 80, w: 960, h: 540 }) : [0, 0, 640, 360];
       await helper.cmd(emb.method === 'overlay' ? 'overlay' : 'embed', hwnd, studioHwnd(), x, y, w, h);
       emb.hwnd = hwnd; emb.mode = 'embedded'; emb.hidden = false;
+      lastRegion = ''; setRect().catch(() => {});
       if (emb.hold || (emb.rect && emb.rect.visible === false)) await helper.cmd('show', hwnd, 0).then(() => { emb.hidden = true; }).catch(() => {});
       emitEmb();
       return embState();
@@ -160,7 +161,7 @@ module.exports = function setupStudioWindow({ handle, store, dev, getGame, linkI
     if (emb.mode === 'embedded' && hwnd) {
       try { await helper.cmd('undock', hwnd); } catch (e) { log && log('undock: ' + e.message); }
     }
-    emb.mode = 'off'; emb.hwnd = null; emb.hidden = false;
+    emb.mode = 'off'; emb.hwnd = null; emb.hidden = false; lastRegion = '';
     emitEmb();
     return embState();
   }
@@ -191,14 +192,38 @@ module.exports = function setupStudioWindow({ handle, store, dev, getGame, linkI
     emitEmb();
     return embState();
   }
+  // перемещения склеиваются: пока помощник занят, копится только последний прямоугольник (окно игры не «догоняет» Студию)
+  let rectBusy = false, rectAgain = false;
   async function setRect(r) {
-    emb.rect = r && typeof r === 'object' ? { x: Number(r.x) || 0, y: Number(r.y) || 0, w: Number(r.w) || 1, h: Number(r.h) || 1, dpr: Number(r.dpr) || 1, visible: r.visible !== false } : null;
+    if (r !== undefined) {
+      const holes = r && Array.isArray(r.holes) ? r.holes.filter((h) => Array.isArray(h) && h.length === 4 && h.every((v) => Number.isFinite(Number(v)))).slice(0, 12).map((h) => h.map(Number)) : (emb.rect && emb.rect.holes) || [];
+      emb.rect = r && typeof r === 'object' ? { x: Number(r.x) || 0, y: Number(r.y) || 0, w: Number(r.w) || 1, h: Number(r.h) || 1, dpr: Number(r.dpr) || 1, visible: r.visible !== false, holes } : null;
+    }
+    if (rectBusy) { rectAgain = true; return true; }
+    rectBusy = true;
+    try { await applyRect(); } finally { rectBusy = false; }
+    if (rectAgain) { rectAgain = false; setRect(); }
+    return true;
+  }
+  let lastRegion = '';
+  async function applyRect() {
     if (emb.mode !== 'embedded' || !emb.hwnd || !emb.rect) return true;
     const [x, y, w, h] = rectPx(emb.rect);
     const hide = emb.hold || !emb.rect.visible;
     try {
       if (hide !== emb.hidden) { await helper.cmd('show', emb.hwnd, hide ? 0 : 1); emb.hidden = hide; }
-      if (!hide) await helper.cmd('move', emb.hwnd, x, y, w, h);
+      if (!hide) {
+        await helper.cmd('move', emb.hwnd, x, y, w, h);
+        // дыры под плавающими панелями Студии (урок, окна, меню) — окно игры их не закрывает
+        const sx = w / Math.max(1, emb.rect.w), sy = h / Math.max(1, emb.rect.h);
+        const holes = (emb.rect.holes || []).map(([hx, hy, hw, hh]) => [Math.round((hx - emb.rect.x) * sx), Math.round((hy - emb.rect.y) * sy), Math.round(hw * sx), Math.round(hh * sy)])
+          .filter(([hx, hy, hw, hh]) => hw > 0 && hh > 0 && hx < w && hy < h && hx + hw > 0 && hy + hh > 0);
+        const key = w + 'x' + h + ':' + holes.map((q) => q.join(',')).join(';');
+        if (key !== lastRegion) {
+          lastRegion = key;
+          await helper.cmd('region', emb.hwnd, w, h, holes.length, ...holes.flat()).catch((e) => { log && log('region: ' + e.message); });
+        }
+      }
     } catch (e) {
       // окно игры пропало (игру закрыли) — выходим из встраивания
       emb.mode = 'off'; emb.hwnd = null; emb.why = 'Окно игры пропало: ' + e.message; emitEmb();

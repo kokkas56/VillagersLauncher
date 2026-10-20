@@ -29,10 +29,14 @@ public static class KokkEmbed {
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool f);
   [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+  [DllImport("gdi32.dll")] static extern IntPtr CreateRectRgn(int l, int t, int r, int b);
+  [DllImport("gdi32.dll")] static extern int CombineRgn(IntPtr dst, IntPtr a, IntPtr b, int mode);
+  [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr o);
+  [DllImport("user32.dll")] static extern int SetWindowRgn(IntPtr h, IntPtr rgn, bool redraw);
   const int GWL_STYLE = -16, GWLP_HWNDPARENT = -8;
   const long WS_CHILD = 0x40000000L, WS_POPUP = 0x80000000L, WS_CAPTION = 0x00C00000L, WS_THICKFRAME = 0x00040000L,
              WS_SYSMENU = 0x00080000L, WS_MINIMIZEBOX = 0x00020000L, WS_MAXIMIZEBOX = 0x00010000L, WS_VISIBLE = 0x10000000L;
-  const uint SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0x10, SWP_FRAMECHANGED = 0x20, SWP_SHOWWINDOW = 0x40, SWP_NOMOVE = 0x2, SWP_NOSIZE = 0x1;
+  const uint SWP_ASYNCWINDOWPOS = 0x4000, SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0x10, SWP_FRAMECHANGED = 0x20, SWP_SHOWWINDOW = 0x40, SWP_NOMOVE = 0x2, SWP_NOSIZE = 0x1;
   static Dictionary<long, long> origStyle = new Dictionary<long, long>();
   static Dictionary<long, RECT> origRect = new Dictionary<long, RECT>();
   public static void Init() { try { SetProcessDPIAware(); } catch {} }
@@ -91,7 +95,24 @@ public static class KokkEmbed {
       }
       case "move": {
         IntPtr ch = H(a[2]);
-        SetWindowPos(ch, IntPtr.Zero, I(a[3]), I(a[4]), Math.Max(1, I(a[5])), Math.Max(1, I(a[6])), SWP_NOACTIVATE);
+        // async: the game's window thread may be busy rendering — we don't wait for it (no lag while the Studio is dragged)
+        SetWindowPos(ch, IntPtr.Zero, I(a[3]), I(a[4]), Math.Max(1, I(a[5])), Math.Max(1, I(a[6])), SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+        return "1";
+      }
+      // holes in the game window where the Studio's floating panels lie over the viewport (lesson card, dialogs, menus):
+      // region <hwnd> <w> <h> <n> [x y w h]*n — n = 0 removes the region
+      case "region": {
+        IntPtr ch = H(a[2]);
+        int w = I(a[3]), hh = I(a[4]), n = int.Parse(a[5]);
+        if (n <= 0) { SetWindowRgn(ch, IntPtr.Zero, true); return "1"; }
+        IntPtr full = CreateRectRgn(0, 0, w, hh);
+        for (int i = 0; i < n && 6 + i * 4 + 3 < a.Length; i++) {
+          int x = I(a[6 + i * 4]), y = I(a[7 + i * 4]), rw = I(a[8 + i * 4]), rh = I(a[9 + i * 4]);
+          IntPtr hole = CreateRectRgn(x, y, x + rw, y + rh);
+          CombineRgn(full, full, hole, 4); // RGN_DIFF
+          DeleteObject(hole);
+        }
+        if (SetWindowRgn(ch, full, true) == 0) { DeleteObject(full); throw new Exception("SetWindowRgn не сработал"); }
         return "1";
       }
       case "show": ShowWindow(H(a[2]), a[3] == "1" ? 8 : 0); return "1"; // SW_SHOWNA / SW_HIDE
@@ -109,6 +130,7 @@ public static class KokkEmbed {
         if (!IsWindow(ch)) return "0";
         if (GetParent(ch) != IntPtr.Zero && (GetWL(ch, GWL_STYLE).ToInt64() & WS_CHILD) != 0) SetParent(ch, IntPtr.Zero);
         SetWL(ch, GWLP_HWNDPARENT, IntPtr.Zero);
+        SetWindowRgn(ch, IntPtr.Zero, true);
         if (origStyle.ContainsKey(k)) SetWL(ch, GWL_STYLE, new IntPtr(origStyle[k]));
         if (a.Length >= 7) SetWindowPos(ch, IntPtr.Zero, I(a[3]), I(a[4]), I(a[5]), I(a[6]), SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOZORDER);
         else if (origRect.ContainsKey(k)) { RECT r = origRect[k]; SetWindowPos(ch, IntPtr.Zero, r.L, r.T, r.R - r.L, r.B - r.T, SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOZORDER); }

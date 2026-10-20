@@ -27,18 +27,35 @@ export default function Viewport({ visible = true }) {
     const el = hostRef.current;
     if (!el) return undefined;
     let raf = 0;
+    let last = '';
+    // плавающие панели Студии над видовым окном (урок, окна, меню, всплывашки): в окне игры под ними вырезаются дыры
+    const FLOAT = '.c4-learn-card, .c4-learn-pill, .c4-menu, .c4-modal, .toasts > *, [data-float]';
     const report = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         const r = el.getBoundingClientRect();
-        call('studio:embedRect', { x: r.left, y: r.top, w: r.width, h: r.height, dpr: window.devicePixelRatio || 1, visible }).catch(() => {});
+        const holes = [];
+        for (const f of document.querySelectorAll(FLOAT)) {
+          const q = f.getBoundingClientRect();
+          if (q.width < 2 || q.height < 2) continue;
+          if (q.right <= r.left || q.left >= r.right || q.bottom <= r.top || q.top >= r.bottom) continue;
+          holes.push([Math.round(q.left) - 2, Math.round(q.top) - 2, Math.round(q.width) + 4, Math.round(q.height) + 4]);
+        }
+        const msg = { x: r.left, y: r.top, w: r.width, h: r.height, dpr: window.devicePixelRatio || 1, visible, holes };
+        const key = JSON.stringify(msg);
+        if (key === last) return;
+        last = key;
+        call('studio:embedRect', msg).catch(() => {});
       });
     };
     const ro = new ResizeObserver(report);
     ro.observe(el);
     window.addEventListener('resize', report);
+    // панели появляются, исчезают и двигаются — следим за деревом и стилями (склеивается в один кадр)
+    const mo = new MutationObserver(report);
+    mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
     report();
-    return () => { ro.disconnect(); window.removeEventListener('resize', report); cancelAnimationFrame(raf); call('studio:embedRect', { x: 0, y: 0, w: 1, h: 1, visible: false }).catch(() => {}); };
+    return () => { ro.disconnect(); mo.disconnect(); window.removeEventListener('resize', report); cancelAnimationFrame(raf); call('studio:embedRect', { x: 0, y: 0, w: 1, h: 1, visible: false }).catch(() => {}); };
   }, [visible]);
 
   const running = gameState && ['starting', 'running', 'preparing'].includes(gameState.state);
