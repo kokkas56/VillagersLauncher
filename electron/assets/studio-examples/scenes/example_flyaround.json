@@ -1,0 +1,255 @@
+{
+  "v": 1,
+  "id": "example_flyaround",
+  "title": "Облёт с титром",
+  "note": "Пример: камера облетает точку (0, 72, 0) по кругу радиусом 14 и смотрит в центр. Поменяйте координаты на свои.",
+  "world": {
+    "dim": "minecraft:overworld",
+    "anchor": null
+  },
+  "preload": {
+    "radius": 2,
+    "alongCamera": true,
+    "extra": []
+  },
+  "options": {
+    "letterbox": true,
+    "hideHud": true,
+    "lockInput": true,
+    "skippable": true,
+    "music": null,
+    "endPlayer": {
+      "mode": "stay"
+    }
+  },
+  "actors": [],
+  "length": 220,
+  "tracks": [
+    {
+      "kind": "camera",
+      "keys": [
+        {
+          "t": 0,
+          "pos": [
+            14.5,
+            78.0,
+            0.5
+          ],
+          "yaw": 0,
+          "pitch": 0,
+          "fov": 70,
+          "look": [
+            0.5,
+            72.0,
+            0.5
+          ],
+          "ease": "in"
+        },
+        {
+          "t": 25,
+          "pos": [
+            10.4,
+            77.6,
+            10.4
+          ],
+          "yaw": 0,
+          "pitch": 0,
+          "fov": 70,
+          "look": [
+            0.5,
+            72.0,
+            0.5
+          ],
+          "ease": "linear"
+        },
+        {
+          "t": 50,
+          "pos": [
+            0.5,
+            77.2,
+            14.5
+          ],
+          "yaw": 0,
+          "pitch": 0,
+          "fov": 70,
+          "look": [
+            0.5,
+            72.0,
+            0.5
+          ],
+          "ease": "linear"
+        },
+        {
+          "t": 75,
+          "pos": [
+            -9.4,
+            76.8,
+            10.4
+          ],
+          "yaw": 0,
+          "pitch": 0,
+          "fov": 70,
+          "look": [
+            0.5,
+            72.0,
+            0.5
+          ],
+          "ease": "linear"
+        },
+        {
+          "t": 100,
+          "pos": [
+            -13.5,
+            76.4,
+            0.5
+          ],
+          "yaw": 0,
+          "pitch": 0,
+          "fov": 70,
+          "look": [
+            0.5,
+            72.0,
+            0.5
+          ],
+          "ease": "linear"
+        },
+        {
+          "t": 125,
+          "pos": [
+            -9.4,
+            76.0,
+            -9.4
+          ],
+          "yaw": 0,
+          "pitch": 0,
+          "fov": 70,
+          "look": [
+            0.5,
+            72.0,
+            0.5
+          ],
+          "ease": "linear"
+        },
+        {
+          "t": 150,
+          "pos": [
+            0.5,
+            75.6,
+            -13.5
+          ],
+          "yaw": 0,
+          "pitch": 0,
+          "fov": 70,
+          "look": [
+            0.5,
+            72.0,
+            0.5
+          ],
+          "ease": "linear"
+        },
+        {
+          "t": 175,
+          "pos": [
+            10.4,
+            75.2,
+            -9.4
+          ],
+          "yaw": 0,
+          "pitch": 0,
+          "fov": 70,
+          "look": [
+            0.5,
+            72.0,
+            0.5
+          ],
+          "ease": "out"
+        },
+        {
+          "t": 200,
+          "pos": [
+            14.5,
+            74.8,
+            0.5
+          ],
+          "yaw": 0,
+          "pitch": 0,
+          "fov": 70,
+          "look": [
+            0.5,
+            72.0,
+            0.5
+          ],
+          "ease": "smooth"
+        }
+      ]
+    },
+    {
+      "kind": "fx",
+      "events": [
+        {
+          "t": 0,
+          "do": "fade_in",
+          "ticks": 30
+        },
+        {
+          "t": 40,
+          "do": "title",
+          "text": "Глава 2",
+          "sub": "Мельница",
+          "ticks": 120
+        },
+        {
+          "t": 110,
+          "do": "particles",
+          "name": "minecraft:campfire_cosy_smoke",
+          "pos": [
+            0.5,
+            73.0,
+            0.5
+          ],
+          "count": 20,
+          "spread": [
+            1,
+            0.5,
+            1
+          ],
+          "speed": 0.01
+        },
+        {
+          "t": 195,
+          "do": "fade_out",
+          "ticks": 20
+        }
+      ]
+    },
+    {
+      "kind": "sound",
+      "events": [
+        {
+          "t": 40,
+          "do": "sound",
+          "id": "minecraft:block.bell.use",
+          "pos": null,
+          "vol": 1,
+          "pitch": 0.8
+        }
+      ]
+    },
+    {
+      "kind": "world",
+      "events": [
+        {
+          "t": 0,
+          "do": "time",
+          "value": 12500
+        },
+        {
+          "t": 219,
+          "do": "var",
+          "name": "saw_flyaround",
+          "value": true
+        }
+      ]
+    }
+  ]
+}

@@ -81,12 +81,32 @@ const P = {
   lock: <><rect x="5" y="11" width="14" height="9" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></>,
   grid: <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />,
   layers: <><path d="m12 4 9 5-9 5-9-5z" /><path d="m3 14 9 5 9-5" /></>,
-  top: <><rect x="4" y="4" width="16" height="16" /><path d="M12 8v8M8 12h8" /></>
+  top: <><rect x="4" y="4" width="16" height="16" /><path d="M12 8v8M8 12h8" /></>,
+  // фаза 5: сущности мира (как точечные сущности Hammer), небо, проекты, выходы
+  ent_start: <><circle cx="9" cy="5" r="2.2" /><path d="M9 7.5v6M6 10h6M9 13.5l-3 6M9 13.5l3 6" /><path d="M15 12h6M18.5 9.5 21 12l-2.5 2.5" /></>,
+  ent_zone: <><path d="M4 8 12 4l8 4v8l-8 4-8-4z" strokeDasharray="2.4 1.8" /><path d="M4 8l8 4 8-4M12 12v8" strokeDasharray="2.4 1.8" /></>,
+  ent_actor: <><circle cx="12" cy="6" r="3" /><path d="M6 21v-5a6 6 0 0 1 12 0v5" /><path d="M16 4h5v3h-2l-1 1.5V7h-2z" /></>,
+  ent_button: <><rect x="4" y="9" width="16" height="9" rx="1" /><rect x="8" y="6" width="8" height="5" rx="1" /></>,
+  ent_lever: <><rect x="5" y="15" width="14" height="5" rx="1" /><path d="M12 15 16 5" /><circle cx="16.5" cy="4.5" r="1.6" /></>,
+  ent_plate: <><path d="M3 17h18" /><rect x="6" y="13" width="12" height="4" /><path d="M12 4v6M9.5 7.5 12 10l2.5-2.5" /></>,
+  ent_scene: <><rect x="3" y="7" width="13" height="11" rx="1" /><path d="M6 7v11M13 7v11" /><path d="M19.5 3.5a2.5 2.5 0 0 1 0 5l-1.5 3-1.5-3a2.5 2.5 0 0 1 3-5z" /></>,
+  ent_timer: <><circle cx="12" cy="13" r="7.5" /><path d="M12 9v4.5l3 2M10 3h4" /></>,
+  ent_relay: <><path d="M3 12h5M16 12h5" /><circle cx="8" cy="12" r="1.6" /><circle cx="16" cy="12" r="1.6" /><path d="M9.5 11 15 7" /></>,
+  ent_counter: <><rect x="3" y="6" width="18" height="12" rx="1.5" /><path d="M7 10v4M7 10l-1 1M11 10h2.5v2H11v2h2.5M17 10h2v4h-2M17 12h2" /></>,
+  ent_teleport: <><ellipse cx="12" cy="12" rx="6" ry="9" /><ellipse cx="12" cy="12" rx="3" ry="5" strokeDasharray="2 1.6" /></>,
+  ent_particles: <><path d="M12 4v4M12 16v4M4 12h4M16 12h4" /><path d="m6.5 6.5 2 2M15.5 15.5l2 2M6.5 17.5l2-2M15.5 8.5l2-2" /><circle cx="12" cy="12" r="1.2" /></>,
+  ent_message: <><rect x="3" y="5" width="18" height="11" rx="1.5" /><path d="M7 9h10M7 12h6M8 16l-2 4 5-4" /></>,
+  sky: <><circle cx="9" cy="9" r="3.5" /><path d="M9 2.5v1.5M9 14v1.5M2.5 9H4M14 9h1.5M4.4 4.4l1 1M12.6 12.6l1 1M4.4 13.6l1-1M12.6 5.4l1-1" /><path d="M10 20h9a3 3 0 0 0-1-5.8A4 4 0 0 0 11 15a2.6 2.6 0 0 0-1 5z" /></>,
+  project: <><path d="M3 7h7l2 2h9v10H3z" /><path d="M7 14l3 2 4-4 3 3" /></>,
+  io: <><path d="M3 8h8M8 5l3 3-3 3" /><path d="M21 16h-8M16 13l-3 3 3 3" /></>,
+  tutor: <><path d="M12 4 2 9l10 5 10-5z" /><path d="M6 11v5c3 2.5 9 2.5 12 0v-5" /><path d="M21 9v6" /></>,
+  links: <><circle cx="6" cy="7" r="2.5" /><circle cx="18" cy="17" r="2.5" /><path d="M8.5 7h3a3 3 0 0 1 3 3v4a3 3 0 0 0 3 3" /></>,
+  reconnect: <><path d="M4 12a8 8 0 0 1 14-5.3L20 9" /><path d="M20 4v5h-5" /><path d="M20 12a8 8 0 0 1-14 5.3L4 15" /><path d="M4 20v-5h5" /></>
 };
 
 export const TYPE_COLOR = {
   camera: '#a6b4c8', actor: '#e8a05a', light: '#f2d76b', sound: '#7cc4f5', marker: '#e57373', path: '#9ed2ff',
-  group: '#d0d0d0', cloner: '#7fd36b', effector: '#b38cf0', block: '#c6a46b', template: '#d4b483', structure: '#e7a96a', scene: '#c8c8c8'
+  group: '#d0d0d0', cloner: '#7fd36b', effector: '#b38cf0', block: '#c6a46b', template: '#d4b483', structure: '#e7a96a', scene: '#c8c8c8', sky: '#ffc861'
 };
 
 export default function I({ name, size = 18, color, sw = 1.6, fill }) {

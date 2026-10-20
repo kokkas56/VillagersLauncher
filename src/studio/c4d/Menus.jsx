@@ -40,7 +40,7 @@ export function PopMenu({ x, y, items, onClose, hp, minWidth }) {
         if (it.head) return <div key={i} className="c4-mhead">{it.head}</div>;
         const off = !!it.disabled;
         return (
-          <div key={i} className={'c4-mi' + (off ? ' off' : '') + (it.checked ? ' checked' : '')}
+          <div key={i} className={'c4-mi' + (off ? ' off' : '') + (it.checked ? ' checked' : '')} data-learn={it.learn}
             {...(hp && it.hint ? hp(it.hint) : it.hint ? { title: it.hint } : {})}
             onMouseEnter={(e) => {
               if (hp && it.hint) hp(it.hint).onMouseEnter();
@@ -100,7 +100,7 @@ export function MenuBar({ menus, hp, right }) {
   return (
     <div className="c4-menubar">
       {menus.map((m) => (
-        <button key={m.id} className={open && open.id === m.id ? 'on' : ''} {...hp(m.hint)}
+        <button key={m.id} className={open && open.id === m.id ? 'on' : ''} data-learn={m.learn || 'menu-' + m.id} {...hp(m.hint)}
           onMouseDown={(e) => { e.stopPropagation(); if (open && open.id === m.id) setOpen(null); else show(m, e.currentTarget); }}
           onMouseEnter={(e) => { hp(m.hint).onMouseEnter(); if (open && open.id !== m.id) show(m, e.currentTarget); }}>
           {m.label}

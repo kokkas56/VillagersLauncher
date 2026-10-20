@@ -1,4 +1,4 @@
-// АВТОГЕНЕРАЦИЯ из src/studio/mograph.js, scene3d.js, validate.js, scheme.js (node scripts/sync-studio.cjs) — не править руками.
+// АВТОГЕНЕРАЦИЯ из src/studio/mograph.js, scene3d.js, validate.js, scheme.js, entities.js (node scripts/sync-studio.cjs) — не править руками.
 'use strict';
 
 // ===== mograph.js =====
@@ -265,10 +265,10 @@ const __scene3d = (function () {
 // Игра (фаза 1) понимает только старый формат, поэтому compileScene() делает из объектов дорожку камеры
 // (ключи берутся у активной по «Монтажу» камеры) и события света/звука/клонеров. Сгенерированное помечено gen:true.
 
-const OBJ_TYPES = ['camera', 'actor', 'light', 'sound', 'marker', 'path', 'group', 'cloner', 'effector', 'block', 'template', 'structure'];
+const OBJ_TYPES = ['camera', 'actor', 'light', 'sound', 'marker', 'path', 'group', 'cloner', 'effector', 'block', 'template', 'structure', 'sky'];
 const OBJ_LABEL = {
   camera: 'Камера', actor: 'Актёр', light: 'Свет', sound: 'Звук', marker: 'Метка', path: 'Путь', group: 'Группа',
-  cloner: 'Клонер', effector: 'Эффектор', block: 'Блок', template: 'Шаблон', structure: 'Постройка'
+  cloner: 'Клонер', effector: 'Эффектор', block: 'Блок', template: 'Шаблон', structure: 'Постройка', sky: 'Небо и солнце'
 };
 const INTERPS = ['bezier', 'linear', 'step'];
 const INTERP_LABEL = { bezier: 'Безье (плавно)', linear: 'Линейно', step: 'Ступенька' };
@@ -284,14 +284,40 @@ const CHANNELS = {
   cloner: ['pos.x', 'pos.y', 'pos.z'],
   effector: ['strength'],
   structure: ['pos.x', 'pos.y', 'pos.z'],
+  // фаза 5: «Небо и солнце» (как Sky/Sun в C4D) — время суток, погода, туман, оттенок неба
+  sky: ['time', 'sunAngle', 'moonPhase', 'weather', 'rain', 'fogStart', 'fogEnd', 'fogColor', 'skyColor', 'skyMix'],
   actor: [], block: [], template: []
 };
 // каналы-«переключатели»: всегда ступенькой
-const STEP_CHANNELS = ['on', 'level', 'play', 'look'];
+const STEP_CHANNELS = ['on', 'level', 'play', 'look', 'weather', 'moonPhase'];
+// каналы-цвета (#rrggbb): между ключами цвет плавно смешивается
+const COLOR_CHANNELS = ['fogColor', 'skyColor'];
+// время суток (тики 0–24000, 0 = 06:00): ключи идут только вперёд, через полночь (18:00 → 06:00 — через ночь)
+const WRAP_CHANNELS = ['time'];
+const DAY = 24000;
+const WEATHER_RU = ['ясно', 'дождь', 'гроза'];
+const WEATHER_ID = ['clear', 'rain', 'thunder'];
 const CHANNEL_LABEL = {
   'pos.x': 'Позиция X', 'pos.y': 'Позиция Y', 'pos.z': 'Позиция Z', 'rot.h': 'Поворот H (yaw)', 'rot.p': 'Наклон P (pitch)', 'rot.b': 'Крен B (roll)',
-  fov: 'Угол обзора', shake: 'Дрожание', on: 'Включён', level: 'Яркость', play: 'Играть', vol: 'Громкость', strength: 'Сила', look: 'Смотреть на'
+  fov: 'Угол обзора', shake: 'Дрожание', on: 'Включён', level: 'Яркость', play: 'Играть', vol: 'Громкость', strength: 'Сила', look: 'Смотреть на',
+  time: 'Время суток', sunAngle: 'Наклон солнца', moonPhase: 'Фаза луны', weather: 'Погода', rain: 'Сила дождя', fogStart: 'Туман: начало', fogEnd: 'Туман: конец',
+  fogColor: 'Цвет тумана', skyColor: 'Оттенок неба', skyMix: 'Сила оттенка'
 };
+
+// тики дня → «ЧЧ:ММ» (0 тиков = 06:00, 6000 = 12:00, 18000 = 00:00)
+function ticksToHM(t) {
+  const v = ((Math.round(Number(t) || 0) % DAY) + DAY) % DAY;
+  const mins = Math.round(((v / 1000 + 6) % 24) * 60) % 1440;
+  return String(Math.floor(mins / 60)).padStart(2, '0') + ':' + String(mins % 60).padStart(2, '0');
+}
+// «ЧЧ:ММ» (или «ЧЧ», «Ч.ММ») → тики дня; null — не разобрать
+function hmToTicks(s) {
+  const m = /^\s*(\d{1,2})(?:\s*[:.,ч]\s*(\d{1,2}))?\s*$/.exec(String(s == null ? '' : s));
+  if (!m) return null;
+  const h = Number(m[1]), mi = Number(m[2] || 0);
+  if (h > 24 || mi > 59) return null;
+  return Math.round(((((h % 24) + mi / 60 - 6) % 24 + 24) % 24) * 1000) % DAY;
+}
 
 const r3 = (n) => Math.round(n * 1000) / 1000;
 const isNum = (v) => typeof v === 'number' && isFinite(v);
@@ -317,6 +343,9 @@ function defaultProps(type) {
     case 'template': return { template: '' };
     // постройка из библиотеки (studio/structures/<id>.nbt): ставится целиком, поворот по 90°, отражение по X
     case 'structure': return { pos: [0, 64, 0], structure: '', rot: 0, mirror: false, anchor: 'corner', preview: true, appearAt: null, removeAtEnd: true };
+    // небо: time — тики дня (6000 — полдень), weather 0 ясно / 1 дождь / 2 гроза, rain 0–1 (сила дождя на экране),
+    // туман fogOn + начало/конец (блоки) + цвет, оттенок неба skyColor + skyMix 0–1; restoreAtEnd — вернуть время и погоду в конце
+    case 'sky': return { time: 6000, sunAngle: 0, moonPhase: 0, weather: 0, rain: 0, fogOn: false, fogStart: 32, fogEnd: 192, fogColor: '#c0d0e0', skyColor: '#ffffff', skyMix: 0, restoreAtEnd: true, live: true };
     default: return {};
   }
 }
@@ -368,6 +397,8 @@ function keySlopes(keys, i) {
 // значение канала в момент t (ключи отсортированы по t)
 function evalKeys(keys, t, ch) {
   if (!Array.isArray(keys) || !keys.length) return undefined;
+  if (ch && WRAP_CHANNELS.includes(ch)) return evalWrap(keys, t);
+  if (ch && COLOR_CHANNELS.includes(ch)) return evalColor(keys, t);
   if (t <= keys[0].t) return keys[0].v;
   const n = keys.length;
   if (t >= keys[n - 1].t) return keys[n - 1].v;
@@ -385,15 +416,142 @@ function evalKeys(keys, t, ch) {
   return (2 * u3 - 3 * u2 + 1) * a.v + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * b.v + (u3 - u2) * m1;
 }
 
+// время суток: разворачиваем ключи «только вперёд» (каждый следующий — не раньше предыдущего по кругу), считаем, сворачиваем
+function evalWrap(keys, t) {
+  const un = [];
+  let acc = null;
+  for (const k of keys) {
+    if (!isNum(k.v)) { un.push(k); continue; }
+    const v = ((k.v % DAY) + DAY) % DAY;
+    if (acc == null) acc = v;
+    else { const prev = ((acc % DAY) + DAY) % DAY; acc += ((v - prev) % DAY + DAY) % DAY; }
+    un.push({ ...k, v: acc });
+  }
+  const r = evalKeys(un, t, 'time_unwrapped');
+  return isNum(r) ? Math.round((((r % DAY) + DAY) % DAY) * 1000) / 1000 : r;
+}
+const HEX = /^#?([0-9a-f]{6})$/i;
+function rgbOf(s) { const m = HEX.exec(String(s || '')); if (!m) return null; const n = parseInt(m[1], 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function hexOf(c) { return '#' + c.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join(''); }
+function evalColor(keys, t) {
+  if (t <= keys[0].t) return keys[0].v;
+  const n = keys.length;
+  if (t >= keys[n - 1].t) return keys[n - 1].v;
+  let i = 0;
+  while (i < n - 2 && keys[i + 1].t <= t) i++;
+  const a = keys[i], b = keys[i + 1];
+  const ca = rgbOf(a.v), cb = rgbOf(b.v);
+  if (!ca || !cb || a.interp === 'step' || b.t <= a.t) return a.v;
+  let u = (t - a.t) / (b.t - a.t);
+  if ((a.interp || 'bezier') === 'bezier') u = u * u * (3 - 2 * u);
+  return hexOf(ca.map((v, j) => v + (cb[j] - v) * u));
+}
+function isColor(v) { return typeof v === 'string' && HEX.test(v); }
+
 // свойства объекта в момент t (с анимацией)
-function propsAt(obj, t) {
+function propsAt(obj, t, depth) {
   let p = obj.props || {};
   const anim = obj.anim || {};
   for (const ch of Object.keys(anim)) {
     const v = evalKeys(anim[ch], t, ch);
     if (v !== undefined) p = chanSet(p, ch, v);
   }
+  // «Связи»: свойство ведёт свойство другого объекта (их прикрепляет withLinks; цепочки — не глубже 8)
+  const drv = obj[DRV];
+  if (drv && drv.length && (depth || 0) < 8) {
+    for (const d of drv) {
+      const sv = chanGet(propsAt(d.src, t, (depth || 0) + 1), d.srcCh);
+      const v = mapLink(d.link, sv, d.ch);
+      if (v !== undefined) p = chanSet(p, d.ch, v);
+    }
+  }
   return p;
+}
+
+// ---------------- «Связи» (как XPresso-lite в C4D) ----------------
+// scene.links: [{ id, from:"<id объекта>.<канал>", to:"<id объекта>.<канал>", map:[[вход, выход], …], clamp:true, invert:false, mul:1, add:0, on:true }]
+// Значение источника → таблица (по точкам, линейно; без таблицы — как есть) → invert (1 − x для 0..1, иначе −x)? → × mul + add.
+// Таблица с clamp:false продолжает крайние отрезки. Для «Включён» (on) результат > 0.5 — включён; для «Погода» и «Яркость» — округление.
+const DRV = '__drv';
+function splitRef(ref) {
+  const s = String(ref || '');
+  const i = s.indexOf('.');
+  return i > 0 ? { obj: s.slice(0, i), ch: s.slice(i + 1) } : { obj: s, ch: '' };
+}
+function mapLink(link, v, ch) {
+  let x = typeof v === 'boolean' ? (v ? 1 : 0) : v;
+  if (!isNum(x)) return undefined;
+  // порядок как в игре (StudioLinks.apply): × и + → таблица → «наоборот» (с таблицей — отражение в её диапазоне, без — 1 − x)
+  if (isNum(link.mul)) x *= link.mul;
+  if (isNum(link.add)) x += link.add;
+  const map = Array.isArray(link.map) ? link.map.filter((r) => Array.isArray(r) && isNum(r[0]) && isNum(r[1])).slice().sort((a, b) => a[0] - b[0]) : [];
+  if (map.length === 1) x = map[0][1];
+  else if (map.length > 1) {
+    const clamp = link.clamp !== false;
+    let i = 0;
+    if (x <= map[0][0]) i = 0;
+    else if (x >= map[map.length - 1][0]) i = map.length - 2;
+    else while (i < map.length - 2 && map[i + 1][0] <= x) i++;
+    const a = map[i], b = map[i + 1];
+    let u = b[0] === a[0] ? 0 : (x - a[0]) / (b[0] - a[0]);
+    if (clamp) u = Math.max(0, Math.min(1, u));
+    x = a[1] + (b[1] - a[1]) * u;
+  }
+  if (link.invert) {
+    if (map.length) { const outs = map.map((r) => r[1]); x = Math.min(...outs) + Math.max(...outs) - x; }
+    else x = 1 - x;
+  }
+  if (ch === 'on') return x > 0.5;
+  if (ch === 'level') return Math.max(0, Math.min(15, Math.round(x)));
+  if (ch === 'weather') return Math.max(0, Math.min(2, Math.round(x)));
+  if (ch === 'moonPhase') return ((Math.round(x) % 8) + 8) % 8;
+  if (ch === 'time') return ((x % DAY) + DAY) % DAY;
+  return Math.round(x * 1000) / 1000;
+}
+// анимируемые каналы объекта (то, что можно связать)
+function linkableChannels(o) {
+  if (!o) return [];
+  const base = CHANNELS[o.type] || [];
+  return base.filter((ch) => !COLOR_CHANNELS.includes(ch) && ch !== 'play');
+}
+// сцена → копия, где у объектов-целей прикреплены «водители» связей (неперечисляемое поле: в JSON не попадает)
+function withLinks(scene) {
+  const links = Array.isArray(scene && scene.links) ? scene.links.filter((l) => l && l.on !== false) : [];
+  if (!links.length) return scene;
+  const objs = (scene.objects || []).map((o) => ({ ...o }));
+  const by = new Map(objs.map((o) => [o.id, o]));
+  for (const l of links) {
+    const f = splitRef(l.from), t = splitRef(l.to);
+    const src = by.get(f.obj), dst = by.get(t.obj);
+    if (!src || !dst || !f.ch || !t.ch || src === dst && f.ch === t.ch) continue;
+    if (!Object.prototype.hasOwnProperty.call(dst, DRV)) Object.defineProperty(dst, DRV, { value: [], enumerable: false, writable: true });
+    dst[DRV].push({ src, srcCh: f.ch, ch: t.ch, link: l });
+  }
+  return { ...scene, objects: objs };
+}
+function validateLinks(scene, add, E, W) {
+  const links = Array.isArray(scene.links) ? scene.links : [];
+  const ids = new Set();
+  links.forEach((l, i) => {
+    const sel = { link: i };
+    const w = 'Связь ' + (i + 1) + ': ';
+    if (!l || typeof l !== 'object') { add(E, w + 'пустая', sel); return; }
+    if (l.id) { if (ids.has(l.id)) add(W, w + 'id повторяется', sel); ids.add(l.id); }
+    const f = splitRef(l.from), t = splitRef(l.to);
+    const fo = objById(scene, f.obj), to = objById(scene, t.obj);
+    if (!fo) add(E, w + 'источника «' + f.obj + '» нет в сцене', sel);
+    else if (!(CHANNELS[fo.type] || []).includes(f.ch)) add(E, w + 'у «' + fo.name + '» нет свойства «' + f.ch + '»', sel);
+    if (!to) add(E, w + 'цели «' + t.obj + '» нет в сцене', sel);
+    else if (!linkableChannels(to).includes(t.ch)) add(E, w + 'свойство «' + t.ch + '» у «' + to.name + '» нельзя вести связью', sel);
+    if (fo && to && fo.id === to.id && f.ch === t.ch) add(E, w + 'свойство ведёт само себя', sel);
+    if (to && isAnimated(to, t.ch)) add(W, w + 'у «' + to.name + '» есть ключи «' + (CHANNEL_LABEL[t.ch] || t.ch) + '» — связь их перекрывает', sel);
+    if (Array.isArray(l.map) && l.map.some((r) => !Array.isArray(r) || !isNum(r[0]) || !isNum(r[1]))) add(E, w + 'в таблице не числа', sel);
+    if (l.mul !== undefined && !isNum(l.mul)) add(E, w + '«Умножить» — число', sel);
+    if (l.add !== undefined && !isNum(l.add)) add(E, w + '«Прибавить» — число', sel);
+  });
+  // кольцо: A ведёт B, B ведёт A
+  const edges = links.filter((l) => l && l.on !== false).map((l) => [splitRef(l.from).obj, splitRef(l.to).obj]);
+  for (const [a, b] of edges) if (a !== b && edges.some(([x, y]) => x === b && y === a)) { add(W, 'Связи: «' + a + '» и «' + b + '» ведут друг друга по кругу — значения возьмутся с задержкой'); break; }
 }
 function isAnimated(obj, ch) { return !!(obj && obj.anim && Array.isArray(obj.anim[ch]) && obj.anim[ch].length); }
 function keyAt(obj, ch, t) { return isAnimated(obj, ch) ? obj.anim[ch].findIndex((k) => k.t === t) : -1; }
@@ -403,7 +561,7 @@ function setKey(obj, ch, t, v, interp) {
   const cur = v !== undefined ? v : chanGet(propsAt(obj, t), ch);
   const keys = isAnimated(obj, ch) ? obj.anim[ch].slice() : [];
   const i = keys.findIndex((k) => k.t === t);
-  const def = isStepChannel(ch) || !isNum(cur) ? 'step' : 'bezier';
+  const def = COLOR_CHANNELS.includes(ch) ? 'linear' : isStepChannel(ch) || !isNum(cur) ? 'step' : 'bezier';
   if (i >= 0) keys[i] = { ...keys[i], v: cur, ...(interp ? { interp } : {}) };
   else { keys.push({ t, v: cur, interp: interp || def }); keys.sort((a, b) => a.t - b.t); }
   return { ...obj, anim: { ...(obj.anim || {}), [ch]: keys } };
@@ -616,7 +774,7 @@ function lightObjects(scene) {
     const at = lightPositions(scene, o, 0);
     if (!at.length) continue;
     const anim = {};
-    for (const ch of ['on', 'level']) if (o.anim && Array.isArray(o.anim[ch]) && o.anim[ch].length) anim[ch] = o.anim[ch].map((k) => ({ t: Math.round(k.t), v: ch === 'on' ? !!k.v : Math.max(0, Math.min(15, Math.round(Number(k.v) || 0))), interp: 'step' }));
+    for (const ch of ['on', 'level']) { const src = bakeLinked(scene, o, ch, 5) || (o.anim && Array.isArray(o.anim[ch]) && o.anim[ch].length ? o.anim[ch] : null); if (src) anim[ch] = src.map((k) => ({ t: Math.round(k.t), v: ch === 'on' ? !!k.v : Math.max(0, Math.min(15, Math.round(Number(k.v) || 0))), interp: 'step' })); }
     out.push({ id: o.id, type: 'light', name: o.name, enabled: true, visible: true, props: { pos: at[0], positions: at.slice(1), level: Math.max(0, Math.min(15, Math.round(isNum(p.level) ? p.level : 15))), on: p.on !== false }, anim });
   }
   return out;
@@ -717,9 +875,65 @@ function compileScene(scene) {
   addEv('world', compileCloners(s));
   addEv('sound', compileSounds(s));
   out.tracks = tracks;
-  const lights = lightObjects(s);
-  if (lights.length) out.objects = lights;
+  // «Связи» запекаются в ключи света и неба (игра считает ключи; сами связи остаются в файле в scene.links)
+  const sl = withLinks(s);
+  const lights = lightObjects(sl);
+  const skies = skyObjects(sl);
+  if (lights.length || skies.length) out.objects = [...lights, ...skies];
   return out;
+}
+
+// связанное свойство → ключи ступенькой/линейно с шагом step тиков (одинаковые подряд выкидываются)
+function bakeLinked(scene, o, ch, step) {
+  const drv = o[DRV];
+  if (!drv || !drv.some((d) => d.ch === ch)) return null;
+  const len = Math.max(1, Math.round(scene.length || 1));
+  const keys = [];
+  const st = isStepChannel(ch) || ch === 'on' || ch === 'level';
+  for (let t = 0; t <= len; t += step) {
+    const v = chanGet(propsAt(o, t), ch);
+    const prev = keys[keys.length - 1];
+    if (prev && prev.v === v && st) continue;
+    keys.push({ t, v, interp: st ? 'step' : 'linear' });
+  }
+  return keys;
+}
+// «Небо и солнце» для игры: props в момент 0 и ключи (время — тики дня, только вперёд; погода — clear/rain/thunder ступенькой)
+function skyObjects(scene) {
+  const out = [];
+  for (const o of (scene.objects || []).filter((x) => x.type === 'sky' && isActive(scene, x))) {
+    const p = propsAt(o, 0);
+    const anim = {};
+    for (const ch of CHANNELS.sky) {
+      const baked = bakeLinked(scene, o, ch, ch === 'time' ? 2 : 5);
+      const keys = baked || (o.anim && Array.isArray(o.anim[ch]) && o.anim[ch].length ? o.anim[ch] : null);
+      if (!keys) continue;
+      anim[ch] = keys.map((k) => {
+        const r = { t: Math.round(k.t), v: ch === 'weather' ? WEATHER_ID[k.v] || 'clear' : COLOR_CHANNELS.includes(ch) ? rgbArr(k.v) : (ch === 'fogEnd' || ch === 'fogStart') && !p.fogOn ? 0 : k.v, interp: isStepChannel(ch) ? 'step' : k.interp || 'bezier' };
+        if (isNum(k.in)) r.in = k.in;
+        if (isNum(k.out)) r.out = k.out;
+        return r;
+      });
+    }
+    out.push({ id: o.id, type: 'sky', name: o.name, enabled: true, visible: true, props: skyProps(p), anim });
+  }
+  return out;
+}
+// формат игры (docs/studio.md, «Фаза 5»): плоские свойства; туман есть, только если fogEnd > 0; цвета — [r,g,b] 0–255
+function rgbArr(hex, def) { return rgbOf(hex) || rgbOf(def) || [255, 255, 255]; }
+function skyProps(p) {
+  return {
+    time: Math.round(((((Number(p.time) || 0) % DAY) + DAY) % DAY)), sunAngle: Number(p.sunAngle) || 0, moonPhase: ((Math.round(Number(p.moonPhase) || 0) % 8) + 8) % 8,
+    weather: WEATHER_ID[Math.round(Number(p.weather) || 0)] || 'clear', rain: Math.max(0, Math.min(1, Number(p.rain) || 0)),
+    fogStart: p.fogOn ? Number(p.fogStart) || 0 : 0, fogEnd: p.fogOn ? Math.max(1, Number(p.fogEnd) || 0) : 0, fogColor: rgbArr(p.fogColor, '#c0d0e0'),
+    skyColor: rgbArr(p.skyColor, '#ffffff'), skyMix: Math.max(0, Math.min(1, Number(p.skyMix) || 0)), restoreAtEnd: p.restoreAtEnd !== false
+  };
+}
+// небо сцены в момент t (с учётом связей) — для живого показа в игре ({t:'sky'}) и подписи в Студии
+function skyAt(scene, t) {
+  const sl = withLinks(scene);
+  const o = (sl.objects || []).find((x) => x.type === 'sky' && isActive(sl, x));
+  return o ? { id: o.id, ...skyProps(propsAt(o, t)) } : null;
 }
 
 // Для сохранения на диск: объекты + сгенерированные дорожки (чтобы игра в режиме разработчика читала файл напрямую).
@@ -757,6 +971,7 @@ function gameObject(scene, o, t, selected) {
     case 'sound': props.sound = p.id; if (!isP3(p.pos)) delete props.pos; break;
     case 'cloner': props.mode = p.mode; break;
     case 'structure': props.structure = p.structure || ''; props.rot = p.rot || 0; props.mirror = p.mirror === true ? 'x' : p.mirror || false; if (p.anchor === 'center') props.anchor = 'center'; if (props.pos) props.pos = props.pos.map((v) => Math.floor(v)); break;
+    case 'sky': Object.assign(props, skyProps(p)); break;
     case 'effector': props.kind = p.kind; { const cl = o.parent && objById(scene, o.parent); const cp = cl && worldPos(scene, cl, t); if (!props.pos && cp) props.pos = cp.map(r3); } break;
     case 'actor': {
       const ap = actorPosAt(scene, o.actor, t);
@@ -768,16 +983,19 @@ function gameObject(scene, o, t, selected) {
   }
   return { id: o.id, type: o.type, name: o.name, parent: o.parent || null, enabled: isActive(scene, o), visible: o.visible !== false, selected: !!selected, props, anim: {} };
 }
-function objectsSnapshot(scene, t, selIds) {
+function objectsSnapshot(scene0, t, selIds) {
+  const scene = withLinks(scene0);
   const sel = new Set(selIds || []);
   return (scene.objects || []).filter((o) => !['block', 'template'].includes(o.type)).map((o) => gameObject(scene, o, t, sel.has(o.id)));
 }
 // позы для {t:'time', poses}: камеры, актёры и всё, что анимировано (само или через группу)
-function posesAt(scene, t) {
+function posesAt(scene0, t) {
+  const scene = withLinks(scene0);
   const poses = {};
   for (const o of scene.objects || []) {
     if (!isActive(scene, o)) continue;
-    const moving = o.type === 'camera' || o.type === 'actor' || Object.keys(o.anim || {}).length || ancestors(scene, o).some((a) => Object.keys(a.anim || {}).length);
+    if (o.type === 'sky') continue; // небо — отдельным сообщением {t:'sky'}
+    const moving = o.type === 'camera' || o.type === 'actor' || Object.keys(o.anim || {}).length || (o[DRV] && o[DRV].length) || ancestors(scene, o).some((a) => Object.keys(a.anim || {}).length);
     if (!moving) continue;
     const g = gameObject(scene, o, t, false).props;
     if (!g.pos) continue;
@@ -848,7 +1066,7 @@ function validateObjects(scene, add, E, W) {
         prev = k.t;
         if (isNum(len) && k.t > len) add(W, 'Объект ' + nm + ': ключ «' + (CHANNEL_LABEL[ch] || ch) + '» после конца сцены (' + k.t + ' т)', sel);
         if (k.interp && !INTERPS.includes(k.interp)) add(W, 'Объект ' + nm + ': неизвестная интерполяция «' + k.interp + '»', sel);
-        if (ch !== 'look' && !isNum(k.v) && typeof k.v !== 'boolean') add(E, 'Объект ' + nm + ': значение ключа «' + (CHANNEL_LABEL[ch] || ch) + '» — не число', sel);
+        if (ch !== 'look' && !isNum(k.v) && typeof k.v !== 'boolean' && !(COLOR_CHANNELS.includes(ch) && isColor(k.v))) add(E, 'Объект ' + nm + ': значение ключа «' + (CHANNEL_LABEL[ch] || ch) + '» — не число', sel);
       }
     }
     if (o.type === 'camera') {
@@ -863,6 +1081,14 @@ function validateObjects(scene, add, E, W) {
     if (o.type === 'sound') {
       if (!p.id || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(p.id)) add(E, 'Звук ' + nm + ': id звука пиши вида minecraft:block.bell.use', sel);
       if (!((o.anim && o.anim.play) || []).some((k) => k.v)) add(W, 'Звук ' + nm + ': нет ни одного ключа «Играть» — не прозвучит', sel);
+    }
+    if (o.type === 'sky') {
+      if (objs.filter((x) => x && x.type === 'sky').length > 1 && objs.find((x) => x && x.type === 'sky') !== o) add(W, 'Небо ' + nm + ': небо в сцене одно — сыграет первое', sel);
+      if (p.time !== undefined && !(isNum(p.time) && p.time >= 0 && p.time < DAY)) add(E, 'Небо ' + nm + ': время суток — от 0 до 23999 тиков', sel);
+      if (p.rain !== undefined && !(isNum(p.rain) && p.rain >= 0 && p.rain <= 1)) add(E, 'Небо ' + nm + ': сила дождя — от 0 до 1', sel);
+      if (p.fogOn && isNum(p.fogStart) && isNum(p.fogEnd) && p.fogEnd <= p.fogStart) add(W, 'Небо ' + nm + ': конец тумана ближе начала', sel);
+      for (const c of COLOR_CHANNELS) if (p[c] !== undefined && !isColor(p[c])) add(E, 'Небо ' + nm + ': цвет пиши вида #a0c0ff', sel);
+      for (const k of (o.anim && o.anim.weather) || []) if (![0, 1, 2].includes(k.v)) { add(E, 'Небо ' + nm + ': погода в ключе — ясно, дождь или гроза', sel); break; }
     }
     if (o.type === 'path' && (!Array.isArray(p.points) || p.points.filter(isP3).length < 2)) add(E, 'Путь ' + nm + ': нужно минимум 2 точки', sel);
     if (o.type === 'actor' && !(scene.actors || []).some((a) => a && a.id === o.actor)) add(E, 'Объект ' + nm + ': актёра «' + o.actor + '» нет в сцене', sel);
@@ -898,6 +1124,7 @@ function validateObjects(scene, add, E, W) {
       } catch (e) { add(E, 'Клонер ' + nm + ': не считается — ' + e.message, sel); }
     }
   }
+  validateLinks(scene, add, E, W);
   const st = Array.isArray(scene.stage) ? scene.stage : [];
   const cams = objs.filter((o) => o && o.type === 'camera');
   if (!cams.length) add(W, 'В сцене нет ни одной камеры — сцена пойдёт глазами игрока. Создай камеру: Создать → Камера');
@@ -913,9 +1140,9 @@ function validateObjects(scene, add, E, W) {
   if (cams.length > 1 && !st.length) add(W, 'Камер несколько, а «Монтаж» пуст — будет первая камера. Перетащи камеры на дорожку «Монтаж»');
 }
 
-return { OBJ_TYPES, OBJ_LABEL, INTERPS, INTERP_LABEL, CHANNELS, STEP_CHANNELS, CHANNEL_LABEL, defaultProps, makeObject, uniqueObjId, chanGet, chanSet, isStepChannel, keySlopes, evalKeys, propsAt, isAnimated, keyAt, setKey, removeKey, setChannel, moveKeys, allKeyTimes, objById, childrenOf, ancestors, isDescendant, isActive, parentOffset, worldPos, stageAt, activeCamera, cameraPose, hasObjects, toObjectScene, compileCamera, lightObjects, compileSounds, SCENE_CLONE_MAX, structurePlacements, compileCloners, clonerInputs, clonerOutput, compileScene, sceneForDisk, gameObject, objectsSnapshot, posesAt, actorPosAt, validateObjects };
+return { OBJ_TYPES, OBJ_LABEL, INTERPS, INTERP_LABEL, CHANNELS, STEP_CHANNELS, COLOR_CHANNELS, WRAP_CHANNELS, DAY, WEATHER_RU, WEATHER_ID, CHANNEL_LABEL, ticksToHM, hmToTicks, defaultProps, makeObject, uniqueObjId, chanGet, chanSet, isStepChannel, keySlopes, evalKeys, isColor, propsAt, splitRef, mapLink, linkableChannels, withLinks, validateLinks, isAnimated, keyAt, setKey, removeKey, setChannel, moveKeys, allKeyTimes, objById, childrenOf, ancestors, isDescendant, isActive, parentOffset, worldPos, stageAt, activeCamera, cameraPose, hasObjects, toObjectScene, compileCamera, lightObjects, compileSounds, SCENE_CLONE_MAX, structurePlacements, compileCloners, clonerInputs, clonerOutput, compileScene, skyObjects, rgbArr, skyProps, skyAt, sceneForDisk, gameObject, objectsSnapshot, posesAt, actorPosAt, validateObjects };
 })();
-const { OBJ_TYPES, OBJ_LABEL, INTERPS, INTERP_LABEL, CHANNELS, STEP_CHANNELS, CHANNEL_LABEL, defaultProps, makeObject, uniqueObjId, chanGet, chanSet, isStepChannel, keySlopes, evalKeys, propsAt, isAnimated, keyAt, setKey, removeKey, setChannel, moveKeys, allKeyTimes, objById, childrenOf, ancestors, isDescendant, isActive, parentOffset, worldPos, stageAt, activeCamera, cameraPose, hasObjects, toObjectScene, compileCamera, lightObjects, compileSounds, SCENE_CLONE_MAX, structurePlacements, compileCloners, clonerInputs, clonerOutput, compileScene, sceneForDisk, gameObject, objectsSnapshot, posesAt, actorPosAt, validateObjects } = __scene3d;
+const { OBJ_TYPES, OBJ_LABEL, INTERPS, INTERP_LABEL, CHANNELS, STEP_CHANNELS, COLOR_CHANNELS, WRAP_CHANNELS, DAY, WEATHER_RU, WEATHER_ID, CHANNEL_LABEL, ticksToHM, hmToTicks, defaultProps, makeObject, uniqueObjId, chanGet, chanSet, isStepChannel, keySlopes, evalKeys, isColor, propsAt, splitRef, mapLink, linkableChannels, withLinks, validateLinks, isAnimated, keyAt, setKey, removeKey, setChannel, moveKeys, allKeyTimes, objById, childrenOf, ancestors, isDescendant, isActive, parentOffset, worldPos, stageAt, activeCamera, cameraPose, hasObjects, toObjectScene, compileCamera, lightObjects, compileSounds, SCENE_CLONE_MAX, structurePlacements, compileCloners, clonerInputs, clonerOutput, compileScene, skyObjects, rgbArr, skyProps, skyAt, sceneForDisk, gameObject, objectsSnapshot, posesAt, actorPosAt, validateObjects } = __scene3d;
 
 // ===== validate.js =====
 const __validate = (function () {
@@ -946,7 +1173,7 @@ const VERBS = {
     particles: { need: ['name', 'pos'] }, story_fx: { need: ['name'] }, title: { need: ['text'] }
   },
   sound: { sound: { need: ['id'] }, music: { need: ['id'] }, music_fade: { need: [] } },
-  world: { time: { need: ['value'] }, weather: { need: ['value'] }, block: { need: ['pos', 'state'] }, var: { need: ['name'] }, dialog: { need: ['id'] }, bake: { need: ['placements'] } }
+  world: { time: { need: ['value'] }, weather: { need: ['value'] }, block: { need: ['pos', 'state'] }, var: { need: ['name'] }, dialog: { need: ['id'] }, bake: { need: ['placements'] }, mark: { need: ['name'] } }
 };
 
 const TRACK_LABEL = { camera: 'Камера', actor: 'Актёр', fx: 'Эффекты', sound: 'Звук', subtitles: 'Субтитры', world: 'Мир' };
@@ -1270,7 +1497,17 @@ function normalizeScene(scene) {
 
 function normalizeProject(p) {
   const s = strip(p || {});
-  return { v: 1, name: s.name || 'Сюжет', actors: s.actors || [], vars: (s.vars || []).map((v) => ({ scope: 'world', ...v })), templates: s.templates || [], talkPriority: isNum(s.talkPriority) ? s.talkPriority : 0, ui: { ...DEFAULT_UI, ...(s.ui || {}) } };
+  const out = { v: s.v === 2 ? 2 : 1, name: s.name || 'Сюжет', actors: s.actors || [], vars: (s.vars || []).map((v) => ({ scope: 'world', ...v })), templates: s.templates || [], talkPriority: isNum(s.talkPriority) ? s.talkPriority : 0, ui: { ...DEFAULT_UI, ...(s.ui || {}) } };
+  // фаза 4: пределы схем; фаза 5: проект-карта — id, мир (папка saves или "*" — любой), старт, настройки игры (F5)
+  if (s.schemes && typeof s.schemes === 'object') out.schemes = s.schemes;
+  if (s.v === 2) {
+    out.id = s.id;
+    out.world = s.world || null;
+    out.worlds = Array.isArray(s.worlds) ? s.worlds : s.world ? [s.world] : [];
+    if (s.start) out.start = s.start;
+    if (s.play && typeof s.play === 'object') out.play = s.play;
+  }
+  return out;
 }
 
 // ======================= Фаза 2: диалоги, задания, переменные =======================
@@ -2179,4 +2416,439 @@ return { SCHEME_NODE_TYPES, SCHEME_NODE_LABEL, SCHEME_NODE_CAT, EVENT_KINDS, EVE
 })();
 const { SCHEME_NODE_TYPES, SCHEME_NODE_LABEL, SCHEME_NODE_CAT, EVENT_KINDS, EVENT_LABEL, TIME_AT, timeAtTick, ZONE_ON, QUEST_ON, ITEM_ON, BLOCK_ON, WHO_ZONE, SCHEME_COND_EXTRA, SCHEME_COND_EXTRA_LABEL, SCHEME_ACTION_EXTRA, SCHEME_ACTION_EXTRA_LABEL, FX_KINDS, MSG_STYLES, WEATHER_KINDS, ROTS, MIRRORS, GATE_SET, MSG_TO, SCHEME_LIMITS, schemeCondKind, schemeActionKind, schemeOutputs, schemeGetOut, schemeSetOut, schemeHasInput, validateScheme, schemeSignals, defaultScheme, normalizeScheme } = __scheme;
 
-module.exports = { CLONER_MODES, CLONER_MODE_LABEL, EFFECTOR_KINDS, EFFECTOR_LABEL, MAX_CLONES, MAX_SEND, hash01, noise2, smoothPath, samplePath, clonerLayout, applyEffector, rotateBlockState, quarter, clonerPlacements, placementsBox, OBJ_TYPES, OBJ_LABEL, INTERPS, INTERP_LABEL, CHANNELS, STEP_CHANNELS, CHANNEL_LABEL, defaultProps, makeObject, uniqueObjId, chanGet, chanSet, isStepChannel, keySlopes, evalKeys, propsAt, isAnimated, keyAt, setKey, removeKey, setChannel, moveKeys, allKeyTimes, objById, childrenOf, ancestors, isDescendant, isActive, parentOffset, worldPos, stageAt, activeCamera, cameraPose, hasObjects, toObjectScene, compileCamera, lightObjects, compileSounds, SCENE_CLONE_MAX, structurePlacements, compileCloners, clonerInputs, clonerOutput, compileScene, sceneForDisk, gameObject, objectsSnapshot, posesAt, actorPosAt, validateObjects, ERR, WARN, TRACK_KINDS, ACTOR_KINDS, EASES, WEATHERS, END_MODES, SUB_MAX, VERBS, TRACK_LABEL, VERB_LABEL, FIELD_LABEL, isResId, isSceneId, isActorId, isPos, isNum, trackKeyOf, itemsOfTrack, verbOf, isTarget, validateScene, validateProject, cleanScene, cleanProject, DEFAULT_UI, defaultProject, defaultScene, normalizeScene, normalizeProject, VAR_TYPES, OPS, NODE_TYPES, NODE_LABEL, TRIGGERS, COND_KINDS, COND_LABEL, ACTION_KINDS, ACTION_LABEL, QUEST_STATES, QUEST_OPS, GOAL_TYPES, GOAL_LABEL, VAR_SCOPES, TEXT_MAX, isDocId, isVarName, condKind, actionKind, nodeOutputs, getOut, setOut, isEndRef, checkSpeaker, checkConds, checkActions, validateDialog, describeGoal, validateQuest, validateVars, varDefault, defaultDialog, defaultQuest, cleanDoc, normalizeDialog, normalizeQuest, SCHEME_NODE_TYPES, SCHEME_NODE_LABEL, SCHEME_NODE_CAT, EVENT_KINDS, EVENT_LABEL, TIME_AT, timeAtTick, ZONE_ON, QUEST_ON, ITEM_ON, BLOCK_ON, WHO_ZONE, SCHEME_COND_EXTRA, SCHEME_COND_EXTRA_LABEL, SCHEME_ACTION_EXTRA, SCHEME_ACTION_EXTRA_LABEL, FX_KINDS, MSG_STYLES, WEATHER_KINDS, ROTS, MIRRORS, GATE_SET, MSG_TO, SCHEME_LIMITS, schemeCondKind, schemeActionKind, schemeOutputs, schemeGetOut, schemeSetOut, schemeHasInput, validateScheme, schemeSignals, defaultScheme, normalizeScheme };
+// ===== entities.js =====
+const __entities = (function () {
+// «Студия Кокка», фаза 5: сущности мира (точечные сущности как в Valve Hammer) и их «Выходы» (I/O).
+// Файл проекта entities.json: [{ id, type, name, pos, rot, props, outputs:[{ on, target, input, param, delay, once }] }]
+// Этот файл попадает и в главный процесс (scripts/sync-studio.cjs → electron/studio-validate.cjs): проверка одна.
+//
+// Цель выхода (target) — как в игре (docs/studio.md, «Фаза 5»):
+//   "<id объекта>" — другой объект мира проекта (id объектов из Студии начинаются с «e_»)
+//   "scene:<id>", "quest:<id>", "scheme:<id>", "dialog:<id>", "signal:<имя>"
+//   "player" (или "!activator") — игрок, который начал цепочку
+// Вход (input) и выход (on) — машинные id игры; у сцены-точки выход метки — "mark:<имя>".
+// Встроенный каталог ниже — запасной: когда игра на связи, её {t:'entityTypes'} перекрывает его (mergeGameTypes).
+
+const isNum = (v) => typeof v === 'number' && isFinite(v);
+const isP3 = (p) => Array.isArray(p) && p.length === 3 && p.every(isNum);
+const RES = /^#?[a-z0-9_.-]+:[a-z0-9_./-]+$/;
+const DOC = /^[a-z0-9_.-]{1,64}$/;
+
+// param: { kind: 'text'|'number'|'pos'|'dialog'|'scene'|'quest'|'var'|'anim'|'effect'|'item'|'target', label, required?, hint }
+const P = {
+  text: (label, hint, required) => ({ kind: 'text', label, hint, required: !!required }),
+  num: (label, hint, required) => ({ kind: 'number', label, hint, required: !!required }),
+  pos: (label, hint) => ({ kind: 'pos', label, hint }),
+  ref: (kind, label, hint, required) => ({ kind, label, hint, required: !!required })
+};
+
+// ---------- виды сущностей ----------
+// outputs / inputs: [id, подпись, подсказка, param?]
+const ENT_TYPES = {
+  player_start: {
+    label: 'Старт игрока', icon: 'ent_start', color: '#6cd06c', point: true, one: true, noCommon: true,
+    hint: 'Где появляется игрок, когда жмёшь ▶ Играть (F5). Стрелка — куда он смотрит. В проекте один.',
+    outputs: [['start', 'Старт', 'Сработает, когда началась игра (F5); у игроков — при первом входе в мир проекта.']],
+    inputs: [],
+    props: {}
+  },
+  trigger_zone: {
+    label: 'Зона', icon: 'ent_zone', color: '#e0a040',
+    hint: 'Невидимая коробка в мире: срабатывает, когда в неё входят, выходят или пока внутри. Позиция — центр низа коробки.',
+    outputs: [['enter', 'Вошёл', 'Кто-то из фильтра вошёл в зону.'], ['leave', 'Вышел', 'Вышел из зоны.'], ['inside', 'Внутри', 'Пока внутри — раз в «Внутри: каждые, тиков».']],
+    inputs: [],
+    props: { size: [4, 3, 4], filter: 'player', every: 5, insideEvery: 20 }
+  },
+  actor: {
+    label: 'Актёр', icon: 'ent_actor', color: '#e8a05a',
+    hint: 'Персонаж в мире: житель долины, персонаж проекта или любое существо. Входы: говорить, идти, смотреть, анимация, исчезнуть, появиться, начать диалог.',
+    outputs: [['used', 'Кликнули', 'Игрок нажал ПКМ по актёру.']],
+    inputs: [
+      ['say', 'Говорить', 'Реплика над головой.', P.text('Текст', 'Что сказать.', true)],
+      ['walk_to', 'Идти к', 'Идёт к точке или к объекту мира.', P.ref('target', 'Куда', 'x y z или id объекта (например e_zone1).', true)],
+      ['look_at', 'Смотреть на', 'Поворачивает голову.', P.ref('target', 'На что', 'player, x y z или id объекта.', true)],
+      ['anim', 'Анимация', 'Жест жителя (wave, sit, point…).', P.ref('anim', 'Жест', 'Имя жеста.', true)],
+      ['hide', 'Исчезнуть', 'Убрать актёра из мира.'],
+      ['show', 'Появиться', 'Поставить актёра на его место.'],
+      ['dialog', 'Начать диалог', 'Открыть диалог с этим актёром у игрока (пусто — диалог из свойств).', P.ref('dialog', 'Диалог', 'id диалога.')]
+    ],
+    props: { kind: 'valley', who: 0, actor: '', type: 'minecraft:villager', name: '', ai: false, spawn: true, speed: 0.6, dialog: '' }
+  },
+  button: {
+    label: 'Кнопка', icon: 'ent_button', color: '#c9b37a', block: true,
+    hint: 'Настоящая кнопка на месте объекта. Нажали — сработал выход.',
+    outputs: [['pressed', 'Нажата', 'Игрок нажал кнопку.']],
+    inputs: [['press', 'Нажать', 'Нажать кнопку самой логикой.']],
+    props: {}
+  },
+  lever: {
+    label: 'Рычаг', icon: 'ent_lever', color: '#c9b37a', block: true,
+    hint: 'Настоящий рычаг на месте объекта.',
+    outputs: [['on', 'Включён', 'Рычаг повернули во «вкл».'], ['off', 'Выключен', 'Рычаг повернули в «выкл».']],
+    inputs: [['set_on', 'Перевести вкл', ''], ['set_off', 'Перевести выкл', ''], ['flip', 'Перещёлкнуть', '']],
+    props: {}
+  },
+  pressure_plate: {
+    label: 'Нажимная плита', icon: 'ent_plate', color: '#c9b37a', block: true,
+    hint: 'Настоящая нажимная плита на месте объекта.',
+    outputs: [['pressed', 'Нажата', 'На плиту наступили.'], ['released', 'Отпущена', 'С плиты сошли.']],
+    inputs: [],
+    props: {}
+  },
+  scene_point: {
+    label: 'Сцена-точка', icon: 'ent_scene', color: '#9fb0ff',
+    hint: 'Катсцена, поставленная в мир. Вход «Запустить» проигрывает сцену; выходы — началась, закончилась, на метке (событие «Метка» на дорожке «Мир» сцены).',
+    outputs: [['started', 'Началась', ''], ['ended', 'Закончилась', 'Досмотрена или пропущена.'], ['mark', 'На метке «…»', 'Когда сцена дошла до события «Метка» с этим именем.', P.text('Метка', 'Имя метки из сцены.', true)]],
+    inputs: [['start', 'Запустить', 'Проиграть сцену.'], ['stop', 'Стоп', 'Остановить сцену.']],
+    props: { scene: '', who: 'activator', radius: 64 }
+  },
+  timer: {
+    label: 'Таймер', icon: 'ent_timer', color: '#7cc4f5',
+    hint: 'Срабатывает через заданное время (и снова, если «Повторять»).',
+    outputs: [['fired', 'Сработал', '']],
+    inputs: [['start', 'Старт', ''], ['stop', 'Стоп', ''], ['reset', 'Сброс', 'Начать отсчёт заново.']],
+    props: { interval: 5, repeat: true, autostart: false }
+  },
+  relay: {
+    label: 'Реле', icon: 'ent_relay', color: '#b0b0b0',
+    hint: 'Узел-переходник: «Сработать» передаёт дальше, если реле включено. Удобно собирать и выключать цепочки.',
+    outputs: [['fired', 'Сработал', '']],
+    inputs: [['trigger', 'Сработать', '']],
+    props: {}
+  },
+  counter: {
+    label: 'Счётчик', icon: 'ent_counter', color: '#b38cf0',
+    hint: 'Число от минимума до максимума: «собери 3 ключа» и подобное.',
+    outputs: [['max', 'Достиг максимума', ''], ['min', 'Достиг минимума', ''], ['changed', 'Изменился', 'Параметр — новое число.']],
+    inputs: [['add', 'Добавить', '', P.num('Сколько', 'По умолчанию 1.')], ['subtract', 'Вычесть', '', P.num('Сколько', 'По умолчанию 1.')], ['set', 'Задать', '', P.num('Значение', '', true)]],
+    props: { start: 0, min: 0, max: 10 }
+  },
+  teleport: {
+    label: 'Телепорт', icon: 'ent_teleport', color: '#d070e0',
+    hint: 'Переносит игрока в точку назначения (можно в другое измерение), после переноса может сыграть сцену.',
+    outputs: [['done', 'Перенёс', '']],
+    inputs: [['teleport', 'Телепорт игрока', '']],
+    props: { dest: [0, 64, 0], dim: 'minecraft:overworld', yaw: 0, pitch: 0, scene: '' }
+  },
+  sound: {
+    label: 'Звук', icon: 'sound', color: '#7cc4f5',
+    hint: 'Звук в точке мира.',
+    outputs: [],
+    inputs: [['play', 'Играть', ''], ['stop', 'Остановить', '']],
+    props: { sound: 'minecraft:block.bell.use', vol: 1, pitch: 1, radius: 16, every: 0 }
+  },
+  light: {
+    label: 'Свет', icon: 'light', color: '#f2d76b',
+    hint: 'Невидимый блок света (minecraft:light): горит, пока объект включён. «Включить/Выключить» — зажечь и погасить.',
+    outputs: [],
+    inputs: [['set_level', 'Яркость', '', P.num('Яркость 0–15', '', true)]],
+    props: { level: 15 }
+  },
+  particles: {
+    label: 'Частицы', icon: 'ent_particles', color: '#f0a0c0',
+    hint: 'Частицы в точке: дым, искры, сердечки… Сыплются, пока объект включён (каждые N тиков).',
+    outputs: [],
+    inputs: [['burst', 'Вспышка', 'Один раз.']],
+    props: { particle: 'minecraft:flame', count: 10, spread: [0.5, 0.5, 0.5], speed: 0.02, every: 10 }
+  },
+  message: {
+    label: 'Сообщение', icon: 'ent_message', color: '#e0e0e0',
+    hint: 'Титр, строка над хотбаром или сообщение в чат.',
+    outputs: [],
+    inputs: [['show', 'Показать', '', P.text('Текст', 'Пусто — текст из свойств.')]],
+    props: { text: 'Глава 1', style: 'title', sub: '', ticks: 60, to: 'activator', radius: 32 }
+  },
+  structure: {
+    label: 'Постройка', icon: 'structure', color: '#e7a96a',
+    hint: 'Постройка из библиотеки: «Поставить» и «Убрать» во время игры.',
+    outputs: [['placed', 'Поставлена', '']],
+    inputs: [['place', 'Поставить', ''], ['remove', 'Убрать', 'Вернуть, что было до неё.']],
+    props: { structure: '', rot: 0, mirror: false, anchor: 'corner', air: true }
+  },
+  quest_giver: {
+    label: 'Выдача задания', icon: 'quest', color: '#e6c23c',
+    hint: 'Начинает или завершает задание игроку.',
+    outputs: [],
+    inputs: [['start', 'Начать задание', ''], ['complete', 'Завершить задание', '']],
+    props: { quest: '' }
+  },
+  var_set: {
+    label: 'Переменная', icon: 'vars', color: '#9ed2ff',
+    hint: 'Записывает или прибавляет переменную проекта.',
+    outputs: [],
+    inputs: [['set', 'Задать', '', P.text('Значение', 'Пусто — значение из свойств.')]],
+    props: { name: '', value: true, op: 'set' }
+  }
+};
+// у всех видов, кроме «Старта игрока», есть ещё «Включить», «Выключить», «Переключить»
+const COMMON_INPUTS = [['enable', 'Включить', 'Объект снова работает и слушает входы.'], ['disable', 'Выключить', 'Объект не срабатывает и не слушает входы (кроме «Включить»).'], ['toggle', 'Переключить', 'Включить ↔ выключить.']];
+function entInputs(type) { const d = ENT_TYPES[type]; if (!d) return []; return d.noCommon ? d.inputs : [...d.inputs, ...COMMON_INPUTS.filter((c) => !d.inputs.some((x) => x[0] === c[0]))]; }
+// каталог из игры ({t:'entityTypes'}) главнее встроенного: подписи, подсказки, входы и выходы берутся оттуда
+const PK = { text: 'text', number: 'number', pos: 'pos', anim: 'anim', dialog: 'dialog', value: 'text' };
+function fromGameIO(list, old) {
+  return (Array.isArray(list) ? list : []).filter((x) => x && x.id).map((x) => {
+    const was = (old || []).find((o) => o[0] === x.id);
+    const pd = !x.param || x.param === 'none' ? undefined : was && was[3] && was[3].kind === (PK[x.param] || 'text') ? was[3] : { kind: PK[x.param] || 'text', label: x.paramRu || 'Параметр', hint: x.paramHint || '', required: !!x.required };
+    return [x.id, x.ru || x.id, x.hint || (was ? was[2] : ''), pd];
+  });
+}
+function mergeGameTypes(msg) {
+  let n = 0;
+  for (const t of (msg && msg.types) || []) {
+    if (!t || !t.id) continue;
+    const d = ENT_TYPES[t.id] || (ENT_TYPES[t.id] = { label: t.ru || t.id, icon: 'info', color: t.color || '#ccc', inputs: [], outputs: [], props: {} });
+    if (t.ru) d.label = t.ru;
+    if (t.hint) d.hint = t.hint;
+    if (Array.isArray(t.outputs)) d.outputs = fromGameIO(t.outputs.map((o) => (o && o.id === 'mark:<имя>' ? { ...o, id: 'mark' } : o)), d.outputs);
+    if (Array.isArray(t.inputs)) { const own = t.inputs.filter((x) => x && !COMMON_INPUTS.some((c) => c[0] === x.id)); d.inputs = fromGameIO(own, d.inputs); }
+    if (t.props && typeof t.props === 'object') d.props = { ...t.props };
+    n++;
+  }
+  for (const t of (msg && msg.targets) || []) {
+    const k = String(t && t.id || '').replace(/:$/, '');
+    if (!k) continue;
+    const d = TARGET_KINDS[k] || (TARGET_KINDS[k] = { label: t.ru || k, inputs: [] });
+    if (Array.isArray(t.inputs)) d.inputs = fromGameIO(t.inputs, d.inputs);
+  }
+  return n;
+}
+// жители долины по номеру who (как в моде Villagers)
+const VALLEY_NAMES = ['Мирон', 'Таисия', 'Марта', 'Леван', 'Броня', 'Аглая', 'Егор', 'Глеб', 'Неля', 'Рада', 'Ярина', 'Данила', 'Савелий', 'Тим', 'Маг'];
+const ENT_TOOL_ORDER = ['player_start', 'trigger_zone', 'actor', 'button', 'lever', 'pressure_plate', 'scene_point', 'timer', 'relay', 'counter', 'teleport', 'sound', 'light', 'particles', 'message', 'structure', 'quest_giver', 'var_set'];
+
+// входы целей, которые не сущности
+const TARGET_KINDS = {
+  scene: { label: 'Сцена', inputs: [['start', 'Запустить', 'Проиграть сцену.'], ['stop', 'Стоп', 'Остановить сцену.']] },
+  quest: { label: 'Задание', inputs: [['start', 'Начать', ''], ['advance', 'Продвинуть', '', P.text('Шаг', 'id шага (пусто — текущий).')], ['complete', 'Завершить', ''], ['fail', 'Провалить', ''], ['reset', 'Сбросить', '']] },
+  scheme: { label: 'Схема', inputs: [['enable', 'Включить', ''], ['disable', 'Выключить', ''], ['fire', 'Запустить', 'Как кнопка «Запустить событие» в Схемах.', P.text('Узел', 'id узла (пусто — все события).')]] },
+  dialog: { label: 'Диалог', inputs: [['open', 'Открыть', 'Открыть диалог у игрока.']] },
+  signal: { label: 'Сигнал', inputs: [['raise', 'Поднять', 'Событие «Сигнал» во всех схемах.']] },
+  player: { label: 'Игрок', inputs: [
+    ['message', 'Сообщение', 'Строка в чат.', P.text('Текст', '', true)],
+    ['teleport', 'Перенести', '', P.pos('Куда', 'x y z')],
+    ['give', 'Дать предмет', '', P.ref('item', 'Предмет', 'minecraft:bread 3', true)],
+    ['effect', 'Эффект', '', P.ref('effect', 'Эффект', 'minecraft:speed 10 1', true)],
+    ['heal', 'Вылечить', '']
+  ] }
+};
+const OUT_ACTION_RU = { enter: 'Вошёл', leave: 'Вышел' };
+
+function entLabel(type) { return (ENT_TYPES[type] || {}).label || type; }
+function isEntId(id) { return typeof id === 'string' && /^e_[a-z0-9_]{1,60}$/.test(id); }
+function newEntityId(ents, type) {
+  const base = 'e_' + ({ player_start: 'start', trigger_zone: 'zone', pressure_plate: 'plate', scene_point: 'scene', quest_giver: 'quest', var_set: 'var' }[type] || type);
+  const taken = new Set((ents || []).map((e) => e && e.id));
+  let n = 1;
+  while (taken.has(base + n)) n++;
+  return base + n;
+}
+function makeEntity(ents, type, opt = {}) {
+  const def = ENT_TYPES[type];
+  if (!def) throw new Error('Неизвестный вид сущности: ' + type);
+  const id = newEntityId(ents, type);
+  const sameN = (ents || []).filter((e) => e && e.type === type).length;
+  return {
+    id, type, name: opt.name || (def.one ? def.label : def.label + ' ' + (sameN + 1)),
+    pos: isP3(opt.pos) ? opt.pos.slice() : [0, 64, 0], rot: [isNum(opt.yaw) ? opt.yaw : 0, 0, 0],
+    props: JSON.parse(JSON.stringify({ ...def.props, ...(opt.props || {}) })), outputs: []
+  };
+}
+
+// цель → { kind, id }
+function parseTarget(t) {
+  if (typeof t !== 'string' || !t) return { kind: null, id: null };
+  if (t === 'player' || t === '!activator') return { kind: 'player', id: null };
+  const m = /^(scene|quest|scheme|dialog|signal):(.+)$/.exec(t);
+  if (m) return { kind: m[1], id: m[2] };
+  return { kind: 'entity', id: t };
+}
+// какие входы есть у цели (для выпадающего списка «Что сделать»): [[id, подпись, подсказка, param?]]
+function inputsForTarget(target, ents, self) {
+  const p = parseTarget(target);
+  if (p.kind === 'entity') {
+    const e = (ents || []).find((x) => x && x.id === p.id) || (self && self.id === p.id ? self : null);
+    return e && ENT_TYPES[e.type] ? entInputs(e.type) : [];
+  }
+  if (p.kind && TARGET_KINDS[p.kind]) return TARGET_KINDS[p.kind].inputs;
+  return [];
+}
+function outputsOf(type) { return (ENT_TYPES[type] || {}).outputs || []; }
+// выход «mark:<имя>» у сцены-точки — это выход «mark» с именем метки
+function outBase(on) { return typeof on === 'string' && on.startsWith('mark:') ? 'mark' : on; }
+function outputLabel(type, on) { const o = outputsOf(type).find((x) => x[0] === outBase(on)); return o ? (outBase(on) === 'mark' && on.length > 5 ? 'На метке «' + on.slice(5) + '»' : o[1]) : on; }
+function inputLabel(target, input, ents, self) { const i = inputsForTarget(target, ents, self).find((x) => x[0] === input); return i ? i[1] : input; }
+function targetLabel(target, ents, lists) {
+  const p = parseTarget(target);
+  if (p.kind === 'player') return 'Игрок';
+  if (p.kind === 'signal') return 'Сигнал «' + p.id + '»';
+  if (p.kind === 'entity') { const e = (ents || []).find((x) => x && x.id === p.id); return e ? e.name : p.id + ' (нет!)'; }
+  const l = lists && lists[p.kind + 's'];
+  const it = Array.isArray(l) ? l.find((x) => x.id === p.id) : null;
+  return (TARGET_KINDS[p.kind] ? TARGET_KINDS[p.kind].label : p.kind) + ' «' + (it ? it.title || it.id : p.id) + '»';
+}
+function newOutput(type) {
+  const o = outputsOf(type)[0];
+  return { on: o ? o[0] : '', target: '', input: '', param: '', delay: 0, once: false };
+}
+// «Входы» сущности: кто её вызывает — [{ from: сущность, i, out }]
+function incomingOf(ents, id) {
+  const res = [];
+  for (const e of ents || []) {
+    if (!e || !Array.isArray(e.outputs)) continue;
+    e.outputs.forEach((o, i) => { if (o && o.target === id) res.push({ from: e, i, out: o }); });
+  }
+  return res;
+}
+
+// ---------- проверка ----------
+// ctx: { scenes:[id], quests:[id], schemes:[id], dialogs:[id], structures:[id], vars:[name] }
+// issues: { sev, ent, out?, msg } — out: номер выхода
+function validateEntities(ents, ctx) {
+  const c = ctx || {};
+  const issues = [];
+  const add = (sev, msg, ent, out) => issues.push({ sev, kind: 'entity', ent: ent || null, out: out == null ? null : out, msg });
+  if (!Array.isArray(ents)) { add(ERR, 'entities.json: должен быть список сущностей'); return issues; }
+  const ids = new Set();
+  const has = (list, id) => !Array.isArray(list) || list.includes(id);
+  let starts = 0;
+  for (const e of ents) {
+    if (!e || typeof e !== 'object') { add(ERR, 'Сущность без данных — файл повреждён'); continue; }
+    const nm = '«' + (e.name || e.id || '?') + '»';
+    if (!isEntId(e.id)) add(ERR, 'Сущность ' + nm + ': id «' + e.id + '» — e_ и латиница/цифры/_', e.id);
+    if (ids.has(e.id)) add(ERR, 'Сущность ' + nm + ': id «' + e.id + '» повторяется', e.id);
+    ids.add(e.id);
+    const def = ENT_TYPES[e.type];
+    if (!def) { add(ERR, 'Сущность ' + nm + ': неизвестный вид «' + e.type + '»', e.id); continue; }
+    if (e.type === 'player_start') starts++;
+    if (!isP3(e.pos)) add(ERR, def.label + ' ' + nm + ': позиция — три числа x y z', e.id);
+    const p = e.props || {};
+    switch (e.type) {
+      case 'trigger_zone':
+        if (!isP3(p.size) || p.size.some((v) => v <= 0)) add(ERR, 'Зона ' + nm + ': размер — три числа больше нуля', e.id);
+        if (!['player', 'mob', 'villager', 'any'].includes(p.filter || 'player')) add(ERR, 'Зона ' + nm + ': фильтр — игрок, моб, житель или любой', e.id);
+        if ((e.outputs || []).some((o) => o && o.on === 'inside') && p.insideEvery !== undefined && !(isNum(p.insideEvery) && p.insideEvery >= 1)) add(ERR, 'Зона ' + nm + ': «Внутри: каждые, тиков» — от 1', e.id);
+        break;
+      case 'actor':
+        if (p.kind === 'entity' && !RES.test(p.type || '')) add(ERR, 'Актёр ' + nm + ': id существа пиши вида minecraft:villager', e.id);
+        if (p.kind === 'valley' && !(Number.isInteger(p.who) && p.who >= 0 && p.who <= 14)) add(ERR, 'Актёр ' + nm + ': номер жителя долины — от 0 до 14', e.id);
+        if (p.kind === 'story' && !p.actor) add(ERR, 'Актёр ' + nm + ': выбери персонажа проекта', e.id);
+        break;
+      case 'scene_point':
+        if (!p.scene) add(WARN, 'Сцена-точка ' + nm + ': не выбрана сцена', e.id);
+        else if (!has(c.scenes, p.scene)) add(ERR, 'Сцена-точка ' + nm + ': сцены «' + p.scene + '» нет в проекте', e.id);
+        break;
+      case 'timer':
+        if (!(isNum(p.interval) && p.interval > 0)) add(ERR, 'Таймер ' + nm + ': время — больше 0 секунд', e.id);
+        break;
+      case 'counter':
+        if (!(isNum(p.min) && isNum(p.max) && p.max > p.min)) add(ERR, 'Счётчик ' + nm + ': максимум должен быть больше минимума', e.id);
+        break;
+      case 'teleport':
+        if (!isP3(p.dest)) add(ERR, 'Телепорт ' + nm + ': куда — три числа x y z', e.id);
+        if (p.dim && !RES.test(p.dim)) add(ERR, 'Телепорт ' + nm + ': измерение пиши вида minecraft:the_nether', e.id);
+        if (p.scene && !has(c.scenes, p.scene)) add(WARN, 'Телепорт ' + nm + ': сцены «' + p.scene + '» нет', e.id);
+        break;
+      case 'sound':
+        if (!RES.test(p.sound || '')) add(ERR, 'Звук ' + nm + ': id звука пиши вида minecraft:block.bell.use', e.id);
+        break;
+      case 'light':
+        if (p.level !== undefined && !(Number.isInteger(p.level) && p.level >= 0 && p.level <= 15)) add(ERR, 'Свет ' + nm + ': яркость — от 0 до 15', e.id);
+        break;
+      case 'particles':
+        if (!RES.test(p.particle || '')) add(ERR, 'Частицы ' + nm + ': id частиц пиши вида minecraft:flame', e.id);
+        break;
+      case 'message':
+        if (!['title', 'actionbar', 'chat'].includes(p.style || 'title')) add(ERR, 'Сообщение ' + nm + ': вид — титр, над хотбаром или чат', e.id);
+        break;
+      case 'structure':
+        if (!p.structure) add(WARN, 'Постройка ' + nm + ': не выбрана постройка', e.id);
+        else if (!has(c.structures, p.structure)) add(ERR, 'Постройка ' + nm + ': постройки «' + p.structure + '» нет в библиотеке', e.id);
+        break;
+      case 'quest_giver':
+        if (!p.quest) add(WARN, 'Выдача задания ' + nm + ': не выбрано задание', e.id);
+        else if (!has(c.quests, p.quest)) add(ERR, 'Выдача задания ' + nm + ': задания «' + p.quest + '» нет', e.id);
+        break;
+      case 'var_set':
+        if (!p.name) add(ERR, 'Переменная ' + nm + ': не выбрана переменная', e.id);
+        else if (Array.isArray(c.vars) && !c.vars.includes(p.name)) add(WARN, 'Переменная ' + nm + ': «' + p.name + '» нет в списке переменных проекта', e.id);
+        break;
+      default:
+    }
+    validateOutputs(e, ents, c, (sev, msg, i) => add(sev, msg, e.id, i));
+  }
+  if (starts > 1) add(ERR, 'Старт игрока поставлен ' + starts + ' раза — нужен один');
+  if (!starts && ents.length) add(WARN, 'Нет «Старта игрока» — ▶ Играть (F5) начнётся с того места, где стоит игрок');
+  return issues;
+}
+
+// выходы одной сущности: add(sev, msg, номер выхода)
+function validateOutputs(e, ents, ctx, add) {
+  const c = ctx || {};
+  const outs = Array.isArray(e.outputs) ? e.outputs : [];
+  const nm = '«' + (e.name || e.id) + '»';
+  const defOuts = outputsOf(e.type);
+  outs.forEach((o, i) => {
+    const w = nm + ', выход ' + (i + 1) + ': ';
+    if (!o || typeof o !== 'object') { add(ERR, w + 'пустой', i); return; }
+    const od = defOuts.find((x) => x[0] === outBase(o.on));
+    if (!o.on) add(ERR, w + 'не выбрано «Когда»', i);
+    else if (!od) add(ERR, w + 'у вида «' + entLabel(e.type) + '» нет выхода «' + o.on + '»', i);
+    else if (od[3] && od[3].required && outBase(o.on) === 'mark' && !(o.on.length > 5)) add(ERR, w + '«' + od[1] + '» — укажи ' + od[3].label.toLowerCase(), i);
+    if (!o.target) { add(ERR, w + 'не выбрано «Кому»', i); return; }
+    const t = parseTarget(o.target);
+    if (t.kind === 'entity') {
+      if (!(ents || []).some((x) => x && x.id === t.id)) { add(ERR, w + 'цели «' + t.id + '» нет — её удалили?', i); return; }
+    } else if (t.kind === 'scene' && !(!Array.isArray(c.scenes) || c.scenes.includes(t.id))) { add(ERR, w + 'сцены «' + t.id + '» нет', i); return; }
+    else if (t.kind === 'quest' && !(!Array.isArray(c.quests) || c.quests.includes(t.id))) { add(ERR, w + 'задания «' + t.id + '» нет', i); return; }
+    else if (t.kind === 'scheme' && !(!Array.isArray(c.schemes) || c.schemes.includes(t.id))) { add(ERR, w + 'схемы «' + t.id + '» нет', i); return; }
+    else if (t.kind === 'dialog' && !(!Array.isArray(c.dialogs) || c.dialogs.includes(t.id))) { add(ERR, w + 'диалога «' + t.id + '» нет', i); return; }
+    if (t.kind && t.kind !== 'entity' && t.kind !== 'signal' && t.id !== null && !DOC.test(t.id)) add(ERR, w + 'неверное имя цели «' + t.id + '»', i);
+    const ins = inputsForTarget(o.target, ents, e);
+    if (!o.input) { add(ERR, w + 'не выбрано «Что сделать»', i); return; }
+    const inp = ins.find((x) => x[0] === o.input);
+    if (!inp) { add(ERR, w + 'цель «' + targetLabel(o.target, ents) + '» не умеет «' + o.input + '»' + (ins.length ? ' (умеет: ' + ins.map((x) => x[1]).join(', ') + ')' : ' — у неё нет входов'), i); return; }
+    const pd = inp[3];
+    const empty = o.param === undefined || o.param === null || o.param === '';
+    if (pd && pd.required && empty) add(ERR, w + '«' + inp[1] + '» — нужен параметр «' + pd.label + '»', i);
+    if (pd && !empty) {
+      if (pd.kind === 'number' && !isFinite(Number(o.param))) add(ERR, w + 'параметр «' + pd.label + '» — число', i);
+      if (pd.kind === 'pos' && !parsePos(o.param)) add(ERR, w + 'параметр «' + pd.label + '» — три числа x y z', i);
+      if (pd.kind === 'dialog' && Array.isArray(c.dialogs) && !c.dialogs.includes(String(o.param))) add(ERR, w + 'диалога «' + o.param + '» нет', i);
+      if (pd.kind === 'target') { const s = String(o.param); if (s !== 'player' && !parsePos(s) && !(ents || []).some((x) => x && x.id === s)) add(WARN, w + '«' + pd.label + '»: ни точка, ни сущность — «' + s + '»', i); }
+    }
+    if (o.delay !== undefined && o.delay !== null && o.delay !== '' && !(isNum(Number(o.delay)) && Number(o.delay) >= 0)) add(ERR, w + 'задержка — число секунд, не меньше 0', i);
+    if (Number(o.delay) > 3600) add(WARN, w + 'задержка больше часа', i);
+  });
+}
+function parsePos(v) {
+  if (isP3(v)) return v;
+  const a = String(v == null ? '' : v).trim().split(/[\s,;]+/).map(Number);
+  return a.length === 3 && a.every(isNum) ? a : null;
+}
+
+// чистка перед записью: только известные поля, числа — числами
+function cleanEntities(ents) {
+  if (!Array.isArray(ents)) return [];
+  return ents.filter((e) => e && typeof e === 'object' && e.id).map((e) => {
+    const o = { id: e.id, type: e.type, name: String(e.name || e.id).slice(0, 80), pos: isP3(e.pos) ? e.pos : [0, 64, 0], rot: Array.isArray(e.rot) ? e.rot.slice(0, 3).map((v) => (isNum(v) ? v : 0)) : [0, 0, 0], props: e.props && typeof e.props === 'object' ? e.props : {} };
+    if (typeof e.dim === 'string' && e.dim) o.dim = e.dim;
+    if (e.note) o.note = String(e.note);
+    if (e.enabled === false) o.enabled = false;
+    o.outputs = (Array.isArray(e.outputs) ? e.outputs : []).filter((x) => x && typeof x === 'object').map((x) => {
+      const r = { on: String(x.on || ''), target: String(x.target || ''), input: String(x.input || '') };
+      if (x.param !== undefined && x.param !== null && x.param !== '') r.param = x.param;
+      const d = Number(x.delay);
+      r.delay = isNum(d) && d > 0 ? Math.round(d * 100) / 100 : 0;
+      if (x.once) r.once = true;
+      if (x.note) r.note = String(x.note);
+      return r;
+    });
+    return o;
+  });
+}
+
+return { ENT_TYPES, COMMON_INPUTS, entInputs, mergeGameTypes, VALLEY_NAMES, ENT_TOOL_ORDER, TARGET_KINDS, OUT_ACTION_RU, entLabel, isEntId, newEntityId, makeEntity, parseTarget, inputsForTarget, outputsOf, outBase, outputLabel, inputLabel, targetLabel, newOutput, incomingOf, validateEntities, validateOutputs, parsePos, cleanEntities };
+})();
+const { ENT_TYPES, COMMON_INPUTS, entInputs, mergeGameTypes, VALLEY_NAMES, ENT_TOOL_ORDER, TARGET_KINDS, OUT_ACTION_RU, entLabel, isEntId, newEntityId, makeEntity, parseTarget, inputsForTarget, outputsOf, outBase, outputLabel, inputLabel, targetLabel, newOutput, incomingOf, validateEntities, validateOutputs, parsePos, cleanEntities } = __entities;
+
+module.exports = { CLONER_MODES, CLONER_MODE_LABEL, EFFECTOR_KINDS, EFFECTOR_LABEL, MAX_CLONES, MAX_SEND, hash01, noise2, smoothPath, samplePath, clonerLayout, applyEffector, rotateBlockState, quarter, clonerPlacements, placementsBox, OBJ_TYPES, OBJ_LABEL, INTERPS, INTERP_LABEL, CHANNELS, STEP_CHANNELS, COLOR_CHANNELS, WRAP_CHANNELS, DAY, WEATHER_RU, WEATHER_ID, CHANNEL_LABEL, ticksToHM, hmToTicks, defaultProps, makeObject, uniqueObjId, chanGet, chanSet, isStepChannel, keySlopes, evalKeys, isColor, propsAt, splitRef, mapLink, linkableChannels, withLinks, validateLinks, isAnimated, keyAt, setKey, removeKey, setChannel, moveKeys, allKeyTimes, objById, childrenOf, ancestors, isDescendant, isActive, parentOffset, worldPos, stageAt, activeCamera, cameraPose, hasObjects, toObjectScene, compileCamera, lightObjects, compileSounds, SCENE_CLONE_MAX, structurePlacements, compileCloners, clonerInputs, clonerOutput, compileScene, skyObjects, rgbArr, skyProps, skyAt, sceneForDisk, gameObject, objectsSnapshot, posesAt, actorPosAt, validateObjects, ERR, WARN, TRACK_KINDS, ACTOR_KINDS, EASES, WEATHERS, END_MODES, SUB_MAX, VERBS, TRACK_LABEL, VERB_LABEL, FIELD_LABEL, isResId, isSceneId, isActorId, isPos, isNum, trackKeyOf, itemsOfTrack, verbOf, isTarget, validateScene, validateProject, cleanScene, cleanProject, DEFAULT_UI, defaultProject, defaultScene, normalizeScene, normalizeProject, VAR_TYPES, OPS, NODE_TYPES, NODE_LABEL, TRIGGERS, COND_KINDS, COND_LABEL, ACTION_KINDS, ACTION_LABEL, QUEST_STATES, QUEST_OPS, GOAL_TYPES, GOAL_LABEL, VAR_SCOPES, TEXT_MAX, isDocId, isVarName, condKind, actionKind, nodeOutputs, getOut, setOut, isEndRef, checkSpeaker, checkConds, checkActions, validateDialog, describeGoal, validateQuest, validateVars, varDefault, defaultDialog, defaultQuest, cleanDoc, normalizeDialog, normalizeQuest, SCHEME_NODE_TYPES, SCHEME_NODE_LABEL, SCHEME_NODE_CAT, EVENT_KINDS, EVENT_LABEL, TIME_AT, timeAtTick, ZONE_ON, QUEST_ON, ITEM_ON, BLOCK_ON, WHO_ZONE, SCHEME_COND_EXTRA, SCHEME_COND_EXTRA_LABEL, SCHEME_ACTION_EXTRA, SCHEME_ACTION_EXTRA_LABEL, FX_KINDS, MSG_STYLES, WEATHER_KINDS, ROTS, MIRRORS, GATE_SET, MSG_TO, SCHEME_LIMITS, schemeCondKind, schemeActionKind, schemeOutputs, schemeGetOut, schemeSetOut, schemeHasInput, validateScheme, schemeSignals, defaultScheme, normalizeScheme, ENT_TYPES, COMMON_INPUTS, entInputs, mergeGameTypes, VALLEY_NAMES, ENT_TOOL_ORDER, TARGET_KINDS, OUT_ACTION_RU, entLabel, isEntId, newEntityId, makeEntity, parseTarget, inputsForTarget, outputsOf, outBase, outputLabel, inputLabel, targetLabel, newOutput, incomingOf, validateEntities, validateOutputs, parsePos, cleanEntities };

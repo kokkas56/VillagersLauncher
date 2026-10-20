@@ -1,17 +1,39 @@
-// «Студия»: проект сцен автора на диске (<игра>/studio), сборка для игроков
-// (<игра>/config/kokkstory/studio) и живая связь с запущенной игрой — TCP 127.0.0.1:47311, JSON построчно.
+// «Студия»: проекты автора на диске (<игра>/studio/projects/<id>, фаза 5 — проект = карта со своим миром),
+// сборка для игроков (<игра>/config/kokkstory/studio/<id>) и живая связь с запущенной игрой — TCP, JSON построчно.
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
 const V = require('./studio-validate.cjs');
 const NBT = require('./nbt.cjs');
+const SP = require('./studio-projects.cjs');
 
 const SAFE_ID = /^[a-z0-9_-]{1,64}$/;
 const DEFAULT_PORT = 47311;
 
-module.exports = function setupStudio({ handle, send, store }) {
+module.exports = function setupStudio({ handle, send, store, getGame }) {
   const gameDir = () => store.get().gameDir;
-  const root = () => path.join(gameDir(), 'studio');
+  // общая папка Студии: .dev, .link, current, cache/, undo/, projects/
+  const sroot = () => path.join(gameDir(), 'studio');
+  const savesDir = () => path.join(gameDir(), 'saves');
+  // переезд со старого плоского studio/ — один раз на папку игры (и «Примеры» из лаунчера)
+  let bootedFor = null;
+  function boot() {
+    const r = sroot();
+    if (bootedFor === r) return;
+    bootedFor = r;
+    try {
+      const m = SP.migrate(r, { lastWorld: store.get().studioWorld || null, examplesSrc: path.join(__dirname, 'assets', 'studio-examples') });
+      if (m.migrated) linkLog('ok', 'Студия: проект переехал в studio/projects/default («Мой проект»): ' + m.moved.join(', ') + (m.examples.length ? '; примеры (' + m.examples.length + ') — в проект «Примеры»' : ''));
+      else if (m.seeded) linkLog('info', 'Студия: положил проект «Примеры» в studio/projects/examples');
+    } catch (e) { linkLog('error', 'Студия: переезд проекта не удался — ' + e.message); }
+  }
+  const curId = () => { boot(); return SP.readCurrent(sroot()); };
+  // папка открытого проекта; без проекта документы недоступны
+  function root() {
+    const id = curId();
+    if (!id) throw new Error('Проект не открыт — открой или создай проект (Файл → Открыть проект)');
+    return SP.projectDir(sroot(), id);
+  }
   const scenesDir = () => path.join(root(), 'scenes');
   // виды документов проекта: сцены, диалоги, задания — по файлу на штуку
   const KINDS = {
@@ -27,8 +49,11 @@ module.exports = function setupStudio({ handle, send, store }) {
     return path.join(kindDir(k), String(id) + '.json');
   }
   const projectFile = () => path.join(root(), 'project.json');
-  const devFile = () => path.join(root(), '.dev');
-  const outDir = () => path.join(gameDir(), 'config', 'kokkstory', 'studio');
+  const devFile = () => path.join(sroot(), '.dev');
+  const linkFile = () => path.join(sroot(), '.link');
+  const entFile = () => path.join(root(), 'entities.json');
+  // сборка проекта для игроков: config/kokkstory/studio/<id проекта>/
+  const outDir = () => path.join(gameDir(), 'config', 'kokkstory', 'studio', curId() || '_');
 
   function checkId(id) {
     if (!SAFE_ID.test(String(id || ''))) throw new Error('Имя сцены: только маленькие латинские буквы, цифры, _ и - (например alaric_arrival)');
@@ -46,11 +71,16 @@ module.exports = function setupStudio({ handle, send, store }) {
   function ensure() {
     for (const k of Object.keys(KINDS)) fs.mkdirSync(kindDir(k), { recursive: true });
     fs.mkdirSync(structDir(), { recursive: true });
-    if (!fs.existsSync(projectFile())) writeJson(projectFile(), V.defaultProject());
+    if (!fs.existsSync(projectFile())) writeJson(projectFile(), SP.projectDefaults(curId(), 'Проект'));
+    if (!fs.existsSync(entFile())) writeJson(entFile(), []);
   }
   function readProject() {
     ensure();
-    try { return { ...V.defaultProject(), ...readJson(projectFile()) }; } catch (e) { throw new Error('project.json не читается: ' + e.message); }
+    try { return { ...V.defaultProject(), ...readJson(projectFile()), v: 2, id: curId() }; } catch (e) { throw new Error('project.json не читается: ' + e.message); }
+  }
+  function readEntities() {
+    ensure();
+    try { const e = readJson(entFile()); return Array.isArray(e) ? e : e && Array.isArray(e.entities) ? e.entities : []; } catch (e) { throw new Error('entities.json не читается: ' + e.message); }
   }
   function list() {
     ensure();
@@ -136,8 +166,101 @@ module.exports = function setupStudio({ handle, send, store }) {
   };
 
   handle('studio:open', () => {
+    const id = curId();
+    const base = { studio: sroot(), dev: devOn(), link: status(), projects: SP.listProjects(sroot(), savesDir()), recent: recentIds(), saves: savesDir() };
+    if (!id) return { ...base, dir: null, out: null, project: null, projectId: null, scenes: [], dialogs: [], quests: [], schemes: [], structures: [], entities: [] };
     ensure();
-    return { dir: root(), out: outDir(), dev: devOn(), project: readProject(), scenes: list(), dialogs: listDocs('dialogs'), quests: listDocs('quests'), schemes: listDocs('schemes'), structures: structList(), link: status() };
+    return { ...base, dir: root(), out: outDir(), projectId: id, project: readProject(), scenes: list(), dialogs: listDocs('dialogs'), quests: listDocs('quests'), schemes: listDocs('schemes'), structures: structList(), entities: readEntities(), world: worldOfProject(readProject()) };
+  });
+
+  // ---------- фаза 5: проекты ----------
+  function recentIds() { const r = store.get().studioRecent; return Array.isArray(r) ? r.filter((x) => SP.isProjectId(x) && fs.existsSync(path.join(SP.projectsDir(sroot()), x, 'project.json'))).slice(0, 8) : []; }
+  function touchRecent(id) { store.set({ studioRecent: [id, ...recentIds().filter((x) => x !== id)].slice(0, 8) }); }
+  function worldOfProject(p) { return p && p.world && p.world !== '*' ? SP.worldSummary(savesDir(), p.world) : null; }
+  // окна Студии перечитываются, когда проект сменили (studio-window.cjs пересылает событие во все окна)
+  function emitProject(id) { send('studio-win', { type: 'project', id: id || null }); }
+  function tellGameProject() {
+    if (!connected) return;
+    const id = curId();
+    let p = null;
+    try { p = id ? readProject() : null; } catch (_) {}
+    try { write({ t: 'project', id: id || null, editor: true, name: p ? p.name : null, world: p ? p.world || null : null, dir: id ? SP.projectDir(sroot(), id) : null }); } catch (_) {}
+  }
+  // мир игры совпадает с миром проекта? (hello.worldDir — папка мира в saves, hello.world — его название)
+  function worldMatch(p) {
+    if (!p || !p.world || p.world === '*') return { match: true };
+    if (!connected || !info) return { match: null };
+    if (info.inWorld === false) return { match: false, why: 'Игра в меню — мир не открыт' };
+    const folder = info.worldFolder || info.worldDir;
+    if (folder) return { match: folder === p.world };
+    const w = SP.worldSummary(savesDir(), p.world);
+    return { match: !!w && (info.world === w.name || info.world === p.world) };
+  }
+  handle('studio:projects', () => ({ current: curId(), list: SP.listProjects(sroot(), savesDir()), recent: recentIds(), saves: savesDir() }));
+  handle('studio:worldMatch', () => { const id = curId(); let p = null; try { p = id ? readProject() : null; } catch (_) {} return { ...worldMatch(p), world: p && p.world, worldName: (worldOfProject(p) || {}).name || null, game: info ? { world: info.world, worldFolder: info.worldFolder || info.worldDir, inWorld: info.inWorld } : null }; });
+  handle('studio:projectOpen', (id) => {
+    if (!SP.isProjectId(id) || !fs.existsSync(path.join(SP.projectsDir(sroot()), id, 'project.json'))) throw new Error('Проекта «' + id + '» нет');
+    SP.setCurrent(sroot(), id);
+    touchRecent(id);
+    ensure();
+    const p = readProject();
+    linkLog('info', 'Открыт проект «' + p.name + '»' + (p.world ? ' (мир ' + p.world + ')' : ''));
+    tellGameProject();
+    emitProject(id);
+    return { project: p, ...worldMatch(p) };
+  });
+  handle('studio:projectClose', () => {
+    SP.setCurrent(sroot(), null);
+    tellGameProject();
+    emitProject(null);
+    return true;
+  });
+  // новый проект. world: { mode:'new', template:'flat'|'void'|'normal', name, seed?, creative?, rules? }
+  //                     | { mode:'copy', from, name }  | { mode:'existing', folder, copy:true|false }  | { mode:'none' }
+  handle('studio:projectCreate', ({ name, note, world }) => {
+    boot();
+    const nm = String(name || '').trim();
+    if (!nm) throw new Error('Назови проект');
+    const w = world || { mode: 'none' };
+    let folder = null;
+    const saves = savesDir();
+    if (w.mode === 'new') {
+      if (!['flat', 'void', 'normal'].includes(w.template)) throw new Error('Неизвестный шаблон мира: ' + w.template);
+      folder = SP.createWorld(saves, { name: w.name || nm, template: w.template, seed: w.seed, creative: w.creative !== false, cheats: true, rules: w.rules || {} });
+    } else if (w.mode === 'copy' || (w.mode === 'existing' && w.copy !== false)) {
+      const src = String(w.from || w.folder || '');
+      if (!src || /[\\/]/.test(src)) throw new Error('Выбери мир');
+      folder = SP.copyWorld(saves, src, w.name || nm);
+    } else if (w.mode === 'existing') {
+      const src = String(w.folder || '');
+      if (!src || /[\\/]/.test(src) || !fs.existsSync(path.join(saves, src, 'level.dat'))) throw new Error('Мир «' + src + '» не найден в saves');
+      folder = src;
+    }
+    const p = SP.createProject(sroot(), { name: nm, note, world: folder });
+    // метка проекта в папке мира: игра при старте мира берёт её в SavedData kokkstory_studio
+    if (folder) { try { fs.writeFileSync(path.join(saves, folder, 'kokkstory_project.txt'), p.id + '\n'); } catch (_) {} }
+    SP.setCurrent(sroot(), p.id);
+    touchRecent(p.id);
+    linkLog('ok', 'Создан проект «' + p.name + '»' + (folder ? ', мир saves/' + folder : ''));
+    tellGameProject();
+    emitProject(p.id);
+    return { project: p, world: folder };
+  });
+  // «Открыть мир проекта»: игра уходит в меню и загружает мир проекта; без связи — запуск через лаунчер (quickPlay)
+  handle('studio:openProjectWorld', () => {
+    const p = readProject();
+    if (!p.world || p.world === '*') throw new Error('У проекта нет своего мира');
+    if (!fs.existsSync(path.join(savesDir(), p.world, 'level.dat'))) throw new Error('Мира «' + p.world + '» нет в saves');
+    if (connected) { write({ t: 'openWorld', world: p.world, project: p.id }); return { sent: true }; }
+    return { sent: false, world: p.world };
+  });
+  // ---------- сущности мира (entities.json) ----------
+  handle('studio:entities', () => readEntities());
+  handle('studio:entitiesSave', (list) => {
+    if (!Array.isArray(list)) throw new Error('Сущности — список');
+    const clean = V.cleanEntities(list);
+    writeJson(entFile(), clean);
+    return { mtime: fs.statSync(entFile()).mtimeMs, count: clean.length };
   });
   // ---- диалоги и задания (и сцены тем же путём): kind = 'scenes' | 'dialogs' | 'quests' ----
   handle('studio:docList', (k) => listDocs(k));
@@ -266,11 +389,11 @@ module.exports = function setupStudio({ handle, send, store }) {
     return true;
   });
   handle('studio:project', (data) => {
-    if (data && typeof data === 'object') writeJson(projectFile(), V.cleanProject({ ...V.defaultProject(), ...data }));
+    if (data && typeof data === 'object') writeJson(projectFile(), V.cleanProject({ ...V.defaultProject(), ...data, v: 2, id: curId() }));
     return readProject();
   });
   handle('studio:devMode', (on) => {
-    ensure();
+    fs.mkdirSync(sroot(), { recursive: true });
     if (on === true) fs.writeFileSync(devFile(), 'Режим разработчика Студии: игра читает сцены прямо из этой папки и открывает связь с лаунчером.\nУдали файл (или выключи переключатель в лаунчере), чтобы выключить.\n');
     else if (on === false && fs.existsSync(devFile())) fs.unlinkSync(devFile());
     return devOn();
@@ -340,12 +463,17 @@ module.exports = function setupStudio({ handle, send, store }) {
       dialogs: docs.dialogs.map((d) => ({ id: d.id, nodes: Object.keys(d.nodes || {}) })), quests: docs.quests.map((q) => ({ id: q.id, steps: (q.steps || []).map((x) => x && x.id) }))
     };
     for (const d of docs.schemes) issues.push(...V.validateScheme(d, sctx));
+    // сущности мира и их выходы
+    let ents = [];
+    try { ents = readEntities(); } catch (e) { issues.push({ sev: V.ERR, kind: 'entity', doc: 'entities.json', sel: null, msg: e.message }); }
+    issues.push(...V.validateEntities(ents, { scenes: scenes.map((s) => s.id), quests: docs.quests.map((d) => d.id), schemes: docs.schemes.map((d) => d.id), dialogs: docs.dialogs.map((d) => d.id), structures: structs.map((x) => x.id), vars: (project.vars || []).map((v) => v && v.name) }).map((x) => ({ ...x, doc: x.ent || 'entities.json' })));
     const errors = issues.filter((i) => i.sev === V.ERR).length;
-    if (errors) return { ok: false, issues, errors, count: 0, dialogs: 0, quests: 0, schemes: 0, structures: 0, dir: outDir() };
+    if (errors) return { ok: false, issues, errors, count: 0, dialogs: 0, quests: 0, schemes: 0, structures: 0, entities: 0, dir: outDir() };
     const out = outDir();
     const outScenes = path.join(out, 'scenes');
     fs.mkdirSync(outScenes, { recursive: true });
-    writeJson(path.join(out, 'project.json'), V.normalizeProject(project));
+    writeJson(path.join(out, 'project.json'), V.normalizeProject({ ...project, v: 2, id: curId() }));
+    writeJson(path.join(out, 'entities.json'), V.cleanEntities(ents));
     const keep = new Set();
     for (const s of scenes) { writeJson(path.join(outScenes, s.id + '.json'), V.normalizeScene(s)); keep.add(s.id + '.json'); }
     // убрать из сборки сцены, которых больше нет в проекте
@@ -371,11 +499,14 @@ module.exports = function setupStudio({ handle, send, store }) {
       }
     }
     for (const f of fs.readdirSync(sOut)) if (/\.(nbt|json)$/.test(f) && !keepS.has(f)) { fs.unlinkSync(path.join(sOut, f)); removed++; }
-    writeJson(path.join(out, 'index.json'), { v: 3, built: new Date().toISOString(), scenes: scenes.map((s) => s.id), dialogs: docs.dialogs.map((d) => d.id), quests: docs.quests.map((d) => d.id), schemes: docs.schemes.map((d) => d.id), structures: structs.map((x) => x.id) });
-    return { ok: true, issues, errors: 0, count: scenes.length, dialogs: docs.dialogs.length, quests: docs.quests.length, schemes: docs.schemes.length, structures: structs.length, removed, dir: out };
+    writeJson(path.join(out, 'index.json'), { v: 5, project: curId(), name: project.name, world: project.world || null, built: new Date().toISOString(), scenes: scenes.map((s) => s.id), dialogs: docs.dialogs.map((d) => d.id), quests: docs.quests.map((d) => d.id), schemes: docs.schemes.map((d) => d.id), structures: structs.map((x) => x.id), entities: ents.length });
+    return { ok: true, issues, errors: 0, count: scenes.length, dialogs: docs.dialogs.length, quests: docs.quests.length, schemes: docs.schemes.length, structures: structs.length, entities: ents.length, removed, dir: out, project: curId() };
   });
 
-  // ---------- живая связь с игрой ----------
+  // ---------- живая связь с игрой (фаза 5: надёжная) ----------
+  // Окно Студии держит связь всё время, пока открыто (holders). Попытка — раз в 2 с: порт из studio/.link ({port,pid,ver},
+  // его пишет игра), затем порт из настроек (и +1…+4, если .link нет); адреса 127.0.0.1 и localhost.
+  // Игра шлёт {t:'ping'} раз в 5 с; 15 с тишины после первого пульса — связь мёртвая, переподключаемся.
   let want = false;
   let sock = null;
   let connected = false;
@@ -383,40 +514,91 @@ module.exports = function setupStudio({ handle, send, store }) {
   let timer = null;
   let buf = '';
   let waiters = [];
+  let busyTry = false;
+  const ls = { reason: 'idle', text: 'Связь не нужна — Студия закрыта', attempts: 0, host: null, port: null, pingSeen: false, lastMsg: 0, helloAt: 0, heartbeat: 'unknown', lastLogText: '' };
   const port = () => Number(store.get().studioPort) || DEFAULT_PORT;
-  function status() { return { connected, info, port: port(), want }; }
+  function status() { return { connected, info, port: ls.port || port(), want, reason: ls.reason, text: ls.text, attempts: ls.attempts, host: ls.host, heartbeat: ls.heartbeat }; }
   function emitState() { send('studio-link', { type: 'state', ...status() }); }
+  // строка в «Журнал» окна Студии (одинаковые подряд окно склеивает)
+  function linkLog(level, text) { send('studio-link', { type: 'log', level, text }); }
+  function setReason(reason, text, level) {
+    const changed = ls.reason !== reason || ls.text !== text;
+    ls.reason = reason; ls.text = text;
+    if (changed) emitState();
+    if (level) linkLog(level, text);
+  }
   function failWaiters(msg) { const w = waiters; waiters = []; w.forEach((x) => { clearTimeout(x.timer); x.reject(new Error(msg)); }); }
-  function schedule() {
+  function schedule(ms) {
     clearTimeout(timer);
-    if (want && !sock) timer = setTimeout(connect, 3000);
+    if (want && !sock) timer = setTimeout(attempt, ms == null ? 2000 : ms);
   }
   function write(msg) {
-    if (!sock || !connected) throw new Error('Нет связи с игрой — запусти игру с режимом разработчика');
+    if (!sock || !connected) throw new Error('Нет связи с игрой: ' + (ls.text || 'запусти игру с режимом разработчика'));
     sock.write(JSON.stringify(msg) + '\n');
     return true;
   }
-  function onLine(line) {
-    let msg;
-    try { msg = JSON.parse(line); } catch (_) { return; }
-    if (!msg || typeof msg !== 'object') return;
-    if (msg.t === 'hello') { info = msg; emitState(); }
-    const match = (w) => (w.pred ? w.pred(msg) : w.type === msg.t);
-    const hit = waiters.filter(match);
-    if (hit.length) { waiters = waiters.filter((w) => !match(w)); hit.forEach((w) => { clearTimeout(w.timer); w.resolve(msg); }); }
-    send('studio-link', { type: 'msg', msg });
+  function readLinkFile() {
+    try { const j = JSON.parse(fs.readFileSync(linkFile(), 'utf8')); return j && Number(j.port) > 0 ? j : null; } catch (_) { return null; }
   }
-  function connect() {
-    if (!want || sock) return;
-    const s = net.createConnection({ host: '127.0.0.1', port: port() });
-    sock = s;
+  function pidAlive(pid) { if (!(Number(pid) > 0)) return false; try { process.kill(Number(pid), 0); return true; } catch (e) { return e.code === 'EPERM'; } }
+  function gameRunning(lf) { return !!(getGame && getGame()) || !!(lf && pidAlive(lf.pid)); }
+  // одна попытка TCP: { ok, socket } или { ok:false, code }
+  function tryOne(host, p) {
+    return new Promise((resolve) => {
+      const s = net.createConnection({ host, port: p });
+      let done = false;
+      const fin = (r) => { if (done) return; done = true; clearTimeout(to); s.removeAllListeners('error'); s.removeAllListeners('connect'); if (!r.ok) s.destroy(); resolve(r); };
+      const to = setTimeout(() => fin({ ok: false, code: 'ETIMEDOUT' }), 1500);
+      s.once('connect', () => fin({ ok: true, socket: s }));
+      s.once('error', (e) => fin({ ok: false, code: e.code || e.message }));
+    });
+  }
+  const CODE_RU = { ECONNREFUSED: 'отказ', ETIMEDOUT: 'нет ответа', EADDRNOTAVAIL: 'адрес недоступен', ENOTFOUND: 'имя не найдено', EACCES: 'доступ запрещён', ECONNRESET: 'сброс' };
+  async function attempt() {
+    if (!want || sock || busyTry) return;
+    busyTry = true;
+    try {
+      ls.attempts++;
+      const lf = readLinkFile();
+      const ports = [];
+      if (lf && (!lf.pid || pidAlive(lf.pid))) ports.push(Number(lf.port));
+      ports.push(port());
+      if (!lf && ls.attempts % 3 === 0) for (let k = 1; k <= 4; k++) ports.push(port() + k);
+      const tried = [];
+      const hosts = [...new Set([lf && typeof lf.host === 'string' && /^[\w.:-]+$/.test(lf.host) ? lf.host : null, '127.0.0.1', 'localhost'].filter(Boolean))];
+      for (const p of [...new Set(ports)]) {
+        for (const host of hosts) {
+          const r = await tryOne(host, p);
+          if (!want) { if (r.socket) r.socket.destroy(); return; }
+          if (r.ok) { linkLog('info', 'Связь: попытка ' + ls.attempts + ' — ' + host + ':' + p + ' ответил, жду «hello» от игры'); adopt(r.socket, host, p); return; }
+          tried.push(host + ':' + p + ' — ' + (CODE_RU[r.code] || r.code));
+        }
+      }
+      // почему не вышло — по обстановке
+      const running = gameRunning(lf);
+      const g = getGame && getGame();
+      let devAt = 0;
+      try { devAt = fs.statSync(devFile()).mtimeMs; } catch (_) {}
+      const timeouts = tried.length && tried.every((x) => x.endsWith('нет ответа'));
+      let reason, text;
+      if (!running) { reason = 'no-game'; text = 'Игра не запущена'; }
+      else if (!devAt) { reason = 'no-dev'; text = 'Игра без режима разработчика: нет файла studio/.dev — включи режим (кнопка ниже) и перезапусти игру'; }
+      else if (g && g.started && devAt > g.started) { reason = 'dev-late'; text = 'Режим разработчика включён после запуска игры — подожди пару секунд (новый мод подхватит сам) или перезапусти игру'; }
+      else if (timeouts) { reason = 'timeout'; text = 'Порт ' + (lf ? lf.port : port()) + ' не отвечает — похоже на брандмауэр Windows'; }
+      else if (!lf && g && g.started && Date.now() - g.started > 120000) { reason = 'old-mod'; text = 'Отказ соединения: игра не открыла связь (нет studio/.link) — старая версия мода Kokk Story или порт ' + port() + ' занят'; }
+      else { reason = 'refused'; text = 'Отказ соединения (' + (lf ? 'порт ' + lf.port + ' из .link' : 'порт ' + port()) + ') — игра ещё грузится или связь не открылась'; }
+      ls.port = lf ? Number(lf.port) : port(); ls.host = null;
+      setReason(reason, text);
+      // в журнал — каждая попытка (окно склеивает одинаковые строки в «×N»)
+      linkLog(reason === 'no-game' ? 'info' : 'warn', 'Связь: попытка ' + ls.attempts + ' — ' + tried.join('; ') + ' → ' + text);
+      schedule(2000);
+    } finally { busyTry = false; }
+  }
+  function adopt(s, host, p) {
+    sock = s; connected = false; buf = '';
+    ls.host = host; ls.port = p; ls.pingSeen = false; ls.lastMsg = Date.now(); ls.heartbeat = 'unknown';
     s.setEncoding('utf8');
     s.setNoDelay(true);
-    s.on('connect', () => {
-      connected = true; buf = '';
-      try { write({ t: 'hello', from: 'launcher' }); } catch (_) {}
-      emitState();
-    });
     s.on('data', (d) => {
       buf += d;
       let i;
@@ -433,11 +615,69 @@ module.exports = function setupStudio({ handle, send, store }) {
       sock = null;
       const was = connected;
       connected = false; info = null;
+      clearTimeout(helloTimer);
       failWaiters('Связь с игрой пропала');
-      if (was) emitState();
-      schedule();
+      if (ls.reason !== 'dead' && ls.reason !== 'busy') setReason('closed', was ? 'Игра закрыла связь (вышла из мира, закрылась или перезапускается)' : 'Соединение закрылось до «hello»', was ? 'warn' : 'warn');
+      else emitState();
+      schedule(was ? 800 : 2000);
     });
+    try { s.write(JSON.stringify({ t: 'hello', from: 'launcher', proto: 5 }) + '\n'); } catch (_) {}
+    clearTimeout(helloTimer);
+    helloTimer = setTimeout(() => {
+      if (sock === s && !connected) { setReason('busy', 'Порт ' + p + ' занят другой программой: она не ответила как игра', 'error'); s.destroy(); }
+    }, 4000);
   }
+  let helloTimer = null;
+  function onLine(line) {
+    let msg;
+    try { msg = JSON.parse(line); } catch (_) { return; }
+    if (!msg || typeof msg !== 'object') return;
+    ls.lastMsg = Date.now();
+    if (msg.t === 'pong') return;
+    if (msg.t === 'ping') {
+      if (info) { info = { ...info, inWorld: msg.inWorld, editor: msg.editor, playing: msg.playing, project: msg.project }; }
+      if (!ls.pingSeen) { ls.pingSeen = true; ls.heartbeat = 'ok'; emitState(); }
+      send('studio-link', { type: 'msg', msg });
+      return;
+    }
+    if (msg.t === 'hello') {
+      const first = !connected;
+      const oldWorld = info && (info.worldDir || info.world);
+      info = msg;
+      if (first) {
+        connected = true; ls.helloAt = Date.now(); clearTimeout(helloTimer);
+        setReason('ok', 'Игра на связи' + (msg.world ? ' · ' + msg.world : '') + ' (' + ls.host + ':' + ls.port + ', мод ' + (msg.ver || '?') + ')', 'ok');
+        tellGameProject();
+      } else {
+        if ((msg.worldDir || msg.world) !== oldWorld) linkLog('info', 'Игра: мир — ' + (msg.world || 'меню'));
+        emitState();
+      }
+      if (!first) msg.refresh = true;
+    }
+    const match = (w) => (w.pred ? w.pred(msg) : w.type === msg.t);
+    const hit = waiters.filter(match);
+    if (hit.length) { waiters = waiters.filter((w) => !match(w)); hit.forEach((w) => { clearTimeout(w.timer); w.resolve(msg); }); }
+    send('studio-link', { type: 'msg', msg });
+  }
+  // сторож: пульс, обновление «hello» (мир мог смениться)
+  let helloPoll = 0;
+  setInterval(() => {
+    if (!sock || !connected) return;
+    const now = Date.now();
+    if (ls.pingSeen && now - ls.lastMsg > 15000) {
+      setReason('dead', 'Игра перестала отвечать (15 с без пульса) — переподключаюсь', 'error');
+      const s = sock; sock = null; connected = false; info = null; failWaiters('Игра не отвечает'); s.destroy(); emitState(); schedule(500);
+      return;
+    }
+    if (!ls.pingSeen && ls.heartbeat !== 'old' && now - ls.helloAt > 16000) {
+      ls.heartbeat = 'old';
+      linkLog('warn', 'Игра не шлёт пульс ({t:\'ping\'}) — похоже, старая версия мода Kokk Story: связь работает, но обрыв замечу только по закрытию');
+      emitState();
+    }
+    // свой пульс (игра фазы 5 отвечает pong); старой игре не шлём — она пишет «не знаю сообщения»
+    if (info && Number(info.proto) >= 5 && helloPoll % 2 === 0) { try { sock.write('{"t":"ping"}\n'); } catch (_) {} }
+    if (++helloPoll % 4 === 0) { try { sock.write(JSON.stringify({ t: 'hello', from: 'launcher', proto: 5, refresh: true }) + '\n'); } catch (_) {} }
+  }, 2500).unref();
   // ждать сообщение игры, подходящее под условие (без отправки)
   function waitMsg(pred, ms) {
     return new Promise((resolve, reject) => {
@@ -455,26 +695,53 @@ module.exports = function setupStudio({ handle, send, store }) {
     });
   }
 
-  // связь держат открытой окна-«держатели»: старая вкладка «Студия» в лаунчере ('tab') и окно Студии ('window')
+  // связь держат открытой «держатели»: окно Студии ('studio-window' — из главного процесса, пока окно открыто),
+  // его вкладки и старая вкладка «Студия» в лаунчере ('tab')
   const holders = new Set();
+  function hold(key, on) {
+    const was = want;
+    if (on) holders.add(key); else holders.delete(key);
+    want = holders.size > 0;
+    if (want && !was) { ls.attempts = 0; setReason('connecting', 'Ищу игру…'); clearTimeout(timer); attempt(); }
+    else if (!want && was) {
+      clearTimeout(timer);
+      if (sock) { const s = sock; sock = null; connected = false; info = null; failWaiters('Студия закрыта'); s.destroy(); }
+      setReason('idle', 'Связь не нужна — Студия закрыта');
+    }
+    return status();
+  }
   handle('studio:link', (on, who) => {
     const k = typeof who === 'string' && who ? who : 'tab';
-    if (on) holders.add(k); else holders.delete(k);
-    want = holders.size > 0;
-    clearTimeout(timer);
-    if (want) connect();
-    else if (sock) { const s = sock; sock = null; connected = false; info = null; failWaiters('Студия закрыта'); s.destroy(); }
+    hold(k, !!on);
     emitState();
     return status();
   });
   handle('studio:linkState', () => status());
+  // «Переподключить»: бросить текущее и сразу попробовать снова
+  handle('studio:reconnect', () => {
+    if (!want) hold('tab-reconnect', true);
+    clearTimeout(timer);
+    if (sock) { const s = sock; sock = null; connected = false; info = null; failWaiters('Переподключаюсь'); s.destroy(); }
+    ls.attempts = 0;
+    setReason('connecting', 'Переподключаюсь…', 'info');
+    attempt();
+    return status();
+  });
   handle('studio:setPort', (p) => {
     const n = Math.floor(Number(p));
     if (!(n > 1023 && n < 65536)) throw new Error('Порт — число от 1024 до 65535');
     store.set({ studioPort: n });
-    if (sock) sock.destroy(); else if (want) connect();
+    if (sock) sock.destroy(); else if (want) { clearTimeout(timer); attempt(); }
     return status();
   });
+  // ▶ Играть (F5) / ▶ с камеры (Shift+F5) / ■ Стоп: игра отвечает {t:'playtest', state:'playing'|'stopped'|'error', …}
+  handle('studio:playtest', ({ on, from, pos, yaw, pitch }) => {
+    if (!on) return write({ t: 'playtestStop' });
+    const m = { t: 'playtest', from: from === 'camera' ? 'camera' : 'start' };
+    if (Array.isArray(pos)) { m.pos = pos; if (typeof yaw === 'number') m.yaw = yaw; if (typeof pitch === 'number') m.pitch = pitch; }
+    return write(m);
+  });
+  handle('studio:editor', (on) => write({ t: 'editor', on: !!on }));
   handle('studio:send', (msg) => write(msg));
   handle('studio:play', (scene) => write({ t: 'play', scene }));
   handle('studio:stop', () => write({ t: 'stop' }));
@@ -631,5 +898,5 @@ module.exports = function setupStudio({ handle, send, store }) {
   handle('studio:ghostStream', (a) => stream('ghostChunk', a || {}));
   handle('studio:bakeStream', (a) => stream('bakeChunk', a || {}));
 
-  return { info: () => info, status, write: (m) => write(m) };
+  return { info: () => info, status, write: (m) => write(m), hold };
 };

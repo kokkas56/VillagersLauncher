@@ -9,10 +9,10 @@
 // (ключи берутся у активной по «Монтажу» камеры) и события света/звука/клонеров. Сгенерированное помечено gen:true.
 import { clonerPlacements } from './mograph.js';
 
-export const OBJ_TYPES = ['camera', 'actor', 'light', 'sound', 'marker', 'path', 'group', 'cloner', 'effector', 'block', 'template', 'structure'];
+export const OBJ_TYPES = ['camera', 'actor', 'light', 'sound', 'marker', 'path', 'group', 'cloner', 'effector', 'block', 'template', 'structure', 'sky'];
 export const OBJ_LABEL = {
   camera: 'Камера', actor: 'Актёр', light: 'Свет', sound: 'Звук', marker: 'Метка', path: 'Путь', group: 'Группа',
-  cloner: 'Клонер', effector: 'Эффектор', block: 'Блок', template: 'Шаблон', structure: 'Постройка'
+  cloner: 'Клонер', effector: 'Эффектор', block: 'Блок', template: 'Шаблон', structure: 'Постройка', sky: 'Небо и солнце'
 };
 export const INTERPS = ['bezier', 'linear', 'step'];
 export const INTERP_LABEL = { bezier: 'Безье (плавно)', linear: 'Линейно', step: 'Ступенька' };
@@ -28,14 +28,40 @@ export const CHANNELS = {
   cloner: ['pos.x', 'pos.y', 'pos.z'],
   effector: ['strength'],
   structure: ['pos.x', 'pos.y', 'pos.z'],
+  // фаза 5: «Небо и солнце» (как Sky/Sun в C4D) — время суток, погода, туман, оттенок неба
+  sky: ['time', 'sunAngle', 'moonPhase', 'weather', 'rain', 'fogStart', 'fogEnd', 'fogColor', 'skyColor', 'skyMix'],
   actor: [], block: [], template: []
 };
 // каналы-«переключатели»: всегда ступенькой
-export const STEP_CHANNELS = ['on', 'level', 'play', 'look'];
+export const STEP_CHANNELS = ['on', 'level', 'play', 'look', 'weather', 'moonPhase'];
+// каналы-цвета (#rrggbb): между ключами цвет плавно смешивается
+export const COLOR_CHANNELS = ['fogColor', 'skyColor'];
+// время суток (тики 0–24000, 0 = 06:00): ключи идут только вперёд, через полночь (18:00 → 06:00 — через ночь)
+export const WRAP_CHANNELS = ['time'];
+export const DAY = 24000;
+export const WEATHER_RU = ['ясно', 'дождь', 'гроза'];
+export const WEATHER_ID = ['clear', 'rain', 'thunder'];
 export const CHANNEL_LABEL = {
   'pos.x': 'Позиция X', 'pos.y': 'Позиция Y', 'pos.z': 'Позиция Z', 'rot.h': 'Поворот H (yaw)', 'rot.p': 'Наклон P (pitch)', 'rot.b': 'Крен B (roll)',
-  fov: 'Угол обзора', shake: 'Дрожание', on: 'Включён', level: 'Яркость', play: 'Играть', vol: 'Громкость', strength: 'Сила', look: 'Смотреть на'
+  fov: 'Угол обзора', shake: 'Дрожание', on: 'Включён', level: 'Яркость', play: 'Играть', vol: 'Громкость', strength: 'Сила', look: 'Смотреть на',
+  time: 'Время суток', sunAngle: 'Наклон солнца', moonPhase: 'Фаза луны', weather: 'Погода', rain: 'Сила дождя', fogStart: 'Туман: начало', fogEnd: 'Туман: конец',
+  fogColor: 'Цвет тумана', skyColor: 'Оттенок неба', skyMix: 'Сила оттенка'
 };
+
+// тики дня → «ЧЧ:ММ» (0 тиков = 06:00, 6000 = 12:00, 18000 = 00:00)
+export function ticksToHM(t) {
+  const v = ((Math.round(Number(t) || 0) % DAY) + DAY) % DAY;
+  const mins = Math.round(((v / 1000 + 6) % 24) * 60) % 1440;
+  return String(Math.floor(mins / 60)).padStart(2, '0') + ':' + String(mins % 60).padStart(2, '0');
+}
+// «ЧЧ:ММ» (или «ЧЧ», «Ч.ММ») → тики дня; null — не разобрать
+export function hmToTicks(s) {
+  const m = /^\s*(\d{1,2})(?:\s*[:.,ч]\s*(\d{1,2}))?\s*$/.exec(String(s == null ? '' : s));
+  if (!m) return null;
+  const h = Number(m[1]), mi = Number(m[2] || 0);
+  if (h > 24 || mi > 59) return null;
+  return Math.round(((((h % 24) + mi / 60 - 6) % 24 + 24) % 24) * 1000) % DAY;
+}
 
 const r3 = (n) => Math.round(n * 1000) / 1000;
 const isNum = (v) => typeof v === 'number' && isFinite(v);
@@ -61,6 +87,9 @@ export function defaultProps(type) {
     case 'template': return { template: '' };
     // постройка из библиотеки (studio/structures/<id>.nbt): ставится целиком, поворот по 90°, отражение по X
     case 'structure': return { pos: [0, 64, 0], structure: '', rot: 0, mirror: false, anchor: 'corner', preview: true, appearAt: null, removeAtEnd: true };
+    // небо: time — тики дня (6000 — полдень), weather 0 ясно / 1 дождь / 2 гроза, rain 0–1 (сила дождя на экране),
+    // туман fogOn + начало/конец (блоки) + цвет, оттенок неба skyColor + skyMix 0–1; restoreAtEnd — вернуть время и погоду в конце
+    case 'sky': return { time: 6000, sunAngle: 0, moonPhase: 0, weather: 0, rain: 0, fogOn: false, fogStart: 32, fogEnd: 192, fogColor: '#c0d0e0', skyColor: '#ffffff', skyMix: 0, restoreAtEnd: true, live: true };
     default: return {};
   }
 }
@@ -112,6 +141,8 @@ export function keySlopes(keys, i) {
 // значение канала в момент t (ключи отсортированы по t)
 export function evalKeys(keys, t, ch) {
   if (!Array.isArray(keys) || !keys.length) return undefined;
+  if (ch && WRAP_CHANNELS.includes(ch)) return evalWrap(keys, t);
+  if (ch && COLOR_CHANNELS.includes(ch)) return evalColor(keys, t);
   if (t <= keys[0].t) return keys[0].v;
   const n = keys.length;
   if (t >= keys[n - 1].t) return keys[n - 1].v;
@@ -129,15 +160,142 @@ export function evalKeys(keys, t, ch) {
   return (2 * u3 - 3 * u2 + 1) * a.v + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * b.v + (u3 - u2) * m1;
 }
 
+// время суток: разворачиваем ключи «только вперёд» (каждый следующий — не раньше предыдущего по кругу), считаем, сворачиваем
+function evalWrap(keys, t) {
+  const un = [];
+  let acc = null;
+  for (const k of keys) {
+    if (!isNum(k.v)) { un.push(k); continue; }
+    const v = ((k.v % DAY) + DAY) % DAY;
+    if (acc == null) acc = v;
+    else { const prev = ((acc % DAY) + DAY) % DAY; acc += ((v - prev) % DAY + DAY) % DAY; }
+    un.push({ ...k, v: acc });
+  }
+  const r = evalKeys(un, t, 'time_unwrapped');
+  return isNum(r) ? Math.round((((r % DAY) + DAY) % DAY) * 1000) / 1000 : r;
+}
+const HEX = /^#?([0-9a-f]{6})$/i;
+function rgbOf(s) { const m = HEX.exec(String(s || '')); if (!m) return null; const n = parseInt(m[1], 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function hexOf(c) { return '#' + c.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join(''); }
+function evalColor(keys, t) {
+  if (t <= keys[0].t) return keys[0].v;
+  const n = keys.length;
+  if (t >= keys[n - 1].t) return keys[n - 1].v;
+  let i = 0;
+  while (i < n - 2 && keys[i + 1].t <= t) i++;
+  const a = keys[i], b = keys[i + 1];
+  const ca = rgbOf(a.v), cb = rgbOf(b.v);
+  if (!ca || !cb || a.interp === 'step' || b.t <= a.t) return a.v;
+  let u = (t - a.t) / (b.t - a.t);
+  if ((a.interp || 'bezier') === 'bezier') u = u * u * (3 - 2 * u);
+  return hexOf(ca.map((v, j) => v + (cb[j] - v) * u));
+}
+export function isColor(v) { return typeof v === 'string' && HEX.test(v); }
+
 // свойства объекта в момент t (с анимацией)
-export function propsAt(obj, t) {
+export function propsAt(obj, t, depth) {
   let p = obj.props || {};
   const anim = obj.anim || {};
   for (const ch of Object.keys(anim)) {
     const v = evalKeys(anim[ch], t, ch);
     if (v !== undefined) p = chanSet(p, ch, v);
   }
+  // «Связи»: свойство ведёт свойство другого объекта (их прикрепляет withLinks; цепочки — не глубже 8)
+  const drv = obj[DRV];
+  if (drv && drv.length && (depth || 0) < 8) {
+    for (const d of drv) {
+      const sv = chanGet(propsAt(d.src, t, (depth || 0) + 1), d.srcCh);
+      const v = mapLink(d.link, sv, d.ch);
+      if (v !== undefined) p = chanSet(p, d.ch, v);
+    }
+  }
   return p;
+}
+
+// ---------------- «Связи» (как XPresso-lite в C4D) ----------------
+// scene.links: [{ id, from:"<id объекта>.<канал>", to:"<id объекта>.<канал>", map:[[вход, выход], …], clamp:true, invert:false, mul:1, add:0, on:true }]
+// Значение источника → таблица (по точкам, линейно; без таблицы — как есть) → invert (1 − x для 0..1, иначе −x)? → × mul + add.
+// Таблица с clamp:false продолжает крайние отрезки. Для «Включён» (on) результат > 0.5 — включён; для «Погода» и «Яркость» — округление.
+const DRV = '__drv';
+export function splitRef(ref) {
+  const s = String(ref || '');
+  const i = s.indexOf('.');
+  return i > 0 ? { obj: s.slice(0, i), ch: s.slice(i + 1) } : { obj: s, ch: '' };
+}
+export function mapLink(link, v, ch) {
+  let x = typeof v === 'boolean' ? (v ? 1 : 0) : v;
+  if (!isNum(x)) return undefined;
+  // порядок как в игре (StudioLinks.apply): × и + → таблица → «наоборот» (с таблицей — отражение в её диапазоне, без — 1 − x)
+  if (isNum(link.mul)) x *= link.mul;
+  if (isNum(link.add)) x += link.add;
+  const map = Array.isArray(link.map) ? link.map.filter((r) => Array.isArray(r) && isNum(r[0]) && isNum(r[1])).slice().sort((a, b) => a[0] - b[0]) : [];
+  if (map.length === 1) x = map[0][1];
+  else if (map.length > 1) {
+    const clamp = link.clamp !== false;
+    let i = 0;
+    if (x <= map[0][0]) i = 0;
+    else if (x >= map[map.length - 1][0]) i = map.length - 2;
+    else while (i < map.length - 2 && map[i + 1][0] <= x) i++;
+    const a = map[i], b = map[i + 1];
+    let u = b[0] === a[0] ? 0 : (x - a[0]) / (b[0] - a[0]);
+    if (clamp) u = Math.max(0, Math.min(1, u));
+    x = a[1] + (b[1] - a[1]) * u;
+  }
+  if (link.invert) {
+    if (map.length) { const outs = map.map((r) => r[1]); x = Math.min(...outs) + Math.max(...outs) - x; }
+    else x = 1 - x;
+  }
+  if (ch === 'on') return x > 0.5;
+  if (ch === 'level') return Math.max(0, Math.min(15, Math.round(x)));
+  if (ch === 'weather') return Math.max(0, Math.min(2, Math.round(x)));
+  if (ch === 'moonPhase') return ((Math.round(x) % 8) + 8) % 8;
+  if (ch === 'time') return ((x % DAY) + DAY) % DAY;
+  return Math.round(x * 1000) / 1000;
+}
+// анимируемые каналы объекта (то, что можно связать)
+export function linkableChannels(o) {
+  if (!o) return [];
+  const base = CHANNELS[o.type] || [];
+  return base.filter((ch) => !COLOR_CHANNELS.includes(ch) && ch !== 'play');
+}
+// сцена → копия, где у объектов-целей прикреплены «водители» связей (неперечисляемое поле: в JSON не попадает)
+export function withLinks(scene) {
+  const links = Array.isArray(scene && scene.links) ? scene.links.filter((l) => l && l.on !== false) : [];
+  if (!links.length) return scene;
+  const objs = (scene.objects || []).map((o) => ({ ...o }));
+  const by = new Map(objs.map((o) => [o.id, o]));
+  for (const l of links) {
+    const f = splitRef(l.from), t = splitRef(l.to);
+    const src = by.get(f.obj), dst = by.get(t.obj);
+    if (!src || !dst || !f.ch || !t.ch || src === dst && f.ch === t.ch) continue;
+    if (!Object.prototype.hasOwnProperty.call(dst, DRV)) Object.defineProperty(dst, DRV, { value: [], enumerable: false, writable: true });
+    dst[DRV].push({ src, srcCh: f.ch, ch: t.ch, link: l });
+  }
+  return { ...scene, objects: objs };
+}
+export function validateLinks(scene, add, E, W) {
+  const links = Array.isArray(scene.links) ? scene.links : [];
+  const ids = new Set();
+  links.forEach((l, i) => {
+    const sel = { link: i };
+    const w = 'Связь ' + (i + 1) + ': ';
+    if (!l || typeof l !== 'object') { add(E, w + 'пустая', sel); return; }
+    if (l.id) { if (ids.has(l.id)) add(W, w + 'id повторяется', sel); ids.add(l.id); }
+    const f = splitRef(l.from), t = splitRef(l.to);
+    const fo = objById(scene, f.obj), to = objById(scene, t.obj);
+    if (!fo) add(E, w + 'источника «' + f.obj + '» нет в сцене', sel);
+    else if (!(CHANNELS[fo.type] || []).includes(f.ch)) add(E, w + 'у «' + fo.name + '» нет свойства «' + f.ch + '»', sel);
+    if (!to) add(E, w + 'цели «' + t.obj + '» нет в сцене', sel);
+    else if (!linkableChannels(to).includes(t.ch)) add(E, w + 'свойство «' + t.ch + '» у «' + to.name + '» нельзя вести связью', sel);
+    if (fo && to && fo.id === to.id && f.ch === t.ch) add(E, w + 'свойство ведёт само себя', sel);
+    if (to && isAnimated(to, t.ch)) add(W, w + 'у «' + to.name + '» есть ключи «' + (CHANNEL_LABEL[t.ch] || t.ch) + '» — связь их перекрывает', sel);
+    if (Array.isArray(l.map) && l.map.some((r) => !Array.isArray(r) || !isNum(r[0]) || !isNum(r[1]))) add(E, w + 'в таблице не числа', sel);
+    if (l.mul !== undefined && !isNum(l.mul)) add(E, w + '«Умножить» — число', sel);
+    if (l.add !== undefined && !isNum(l.add)) add(E, w + '«Прибавить» — число', sel);
+  });
+  // кольцо: A ведёт B, B ведёт A
+  const edges = links.filter((l) => l && l.on !== false).map((l) => [splitRef(l.from).obj, splitRef(l.to).obj]);
+  for (const [a, b] of edges) if (a !== b && edges.some(([x, y]) => x === b && y === a)) { add(W, 'Связи: «' + a + '» и «' + b + '» ведут друг друга по кругу — значения возьмутся с задержкой'); break; }
 }
 export function isAnimated(obj, ch) { return !!(obj && obj.anim && Array.isArray(obj.anim[ch]) && obj.anim[ch].length); }
 export function keyAt(obj, ch, t) { return isAnimated(obj, ch) ? obj.anim[ch].findIndex((k) => k.t === t) : -1; }
@@ -147,7 +305,7 @@ export function setKey(obj, ch, t, v, interp) {
   const cur = v !== undefined ? v : chanGet(propsAt(obj, t), ch);
   const keys = isAnimated(obj, ch) ? obj.anim[ch].slice() : [];
   const i = keys.findIndex((k) => k.t === t);
-  const def = isStepChannel(ch) || !isNum(cur) ? 'step' : 'bezier';
+  const def = COLOR_CHANNELS.includes(ch) ? 'linear' : isStepChannel(ch) || !isNum(cur) ? 'step' : 'bezier';
   if (i >= 0) keys[i] = { ...keys[i], v: cur, ...(interp ? { interp } : {}) };
   else { keys.push({ t, v: cur, interp: interp || def }); keys.sort((a, b) => a.t - b.t); }
   return { ...obj, anim: { ...(obj.anim || {}), [ch]: keys } };
@@ -360,7 +518,7 @@ export function lightObjects(scene) {
     const at = lightPositions(scene, o, 0);
     if (!at.length) continue;
     const anim = {};
-    for (const ch of ['on', 'level']) if (o.anim && Array.isArray(o.anim[ch]) && o.anim[ch].length) anim[ch] = o.anim[ch].map((k) => ({ t: Math.round(k.t), v: ch === 'on' ? !!k.v : Math.max(0, Math.min(15, Math.round(Number(k.v) || 0))), interp: 'step' }));
+    for (const ch of ['on', 'level']) { const src = bakeLinked(scene, o, ch, 5) || (o.anim && Array.isArray(o.anim[ch]) && o.anim[ch].length ? o.anim[ch] : null); if (src) anim[ch] = src.map((k) => ({ t: Math.round(k.t), v: ch === 'on' ? !!k.v : Math.max(0, Math.min(15, Math.round(Number(k.v) || 0))), interp: 'step' })); }
     out.push({ id: o.id, type: 'light', name: o.name, enabled: true, visible: true, props: { pos: at[0], positions: at.slice(1), level: Math.max(0, Math.min(15, Math.round(isNum(p.level) ? p.level : 15))), on: p.on !== false }, anim });
   }
   return out;
@@ -461,9 +619,65 @@ export function compileScene(scene) {
   addEv('world', compileCloners(s));
   addEv('sound', compileSounds(s));
   out.tracks = tracks;
-  const lights = lightObjects(s);
-  if (lights.length) out.objects = lights;
+  // «Связи» запекаются в ключи света и неба (игра считает ключи; сами связи остаются в файле в scene.links)
+  const sl = withLinks(s);
+  const lights = lightObjects(sl);
+  const skies = skyObjects(sl);
+  if (lights.length || skies.length) out.objects = [...lights, ...skies];
   return out;
+}
+
+// связанное свойство → ключи ступенькой/линейно с шагом step тиков (одинаковые подряд выкидываются)
+function bakeLinked(scene, o, ch, step) {
+  const drv = o[DRV];
+  if (!drv || !drv.some((d) => d.ch === ch)) return null;
+  const len = Math.max(1, Math.round(scene.length || 1));
+  const keys = [];
+  const st = isStepChannel(ch) || ch === 'on' || ch === 'level';
+  for (let t = 0; t <= len; t += step) {
+    const v = chanGet(propsAt(o, t), ch);
+    const prev = keys[keys.length - 1];
+    if (prev && prev.v === v && st) continue;
+    keys.push({ t, v, interp: st ? 'step' : 'linear' });
+  }
+  return keys;
+}
+// «Небо и солнце» для игры: props в момент 0 и ключи (время — тики дня, только вперёд; погода — clear/rain/thunder ступенькой)
+export function skyObjects(scene) {
+  const out = [];
+  for (const o of (scene.objects || []).filter((x) => x.type === 'sky' && isActive(scene, x))) {
+    const p = propsAt(o, 0);
+    const anim = {};
+    for (const ch of CHANNELS.sky) {
+      const baked = bakeLinked(scene, o, ch, ch === 'time' ? 2 : 5);
+      const keys = baked || (o.anim && Array.isArray(o.anim[ch]) && o.anim[ch].length ? o.anim[ch] : null);
+      if (!keys) continue;
+      anim[ch] = keys.map((k) => {
+        const r = { t: Math.round(k.t), v: ch === 'weather' ? WEATHER_ID[k.v] || 'clear' : COLOR_CHANNELS.includes(ch) ? rgbArr(k.v) : (ch === 'fogEnd' || ch === 'fogStart') && !p.fogOn ? 0 : k.v, interp: isStepChannel(ch) ? 'step' : k.interp || 'bezier' };
+        if (isNum(k.in)) r.in = k.in;
+        if (isNum(k.out)) r.out = k.out;
+        return r;
+      });
+    }
+    out.push({ id: o.id, type: 'sky', name: o.name, enabled: true, visible: true, props: skyProps(p), anim });
+  }
+  return out;
+}
+// формат игры (docs/studio.md, «Фаза 5»): плоские свойства; туман есть, только если fogEnd > 0; цвета — [r,g,b] 0–255
+export function rgbArr(hex, def) { return rgbOf(hex) || rgbOf(def) || [255, 255, 255]; }
+export function skyProps(p) {
+  return {
+    time: Math.round(((((Number(p.time) || 0) % DAY) + DAY) % DAY)), sunAngle: Number(p.sunAngle) || 0, moonPhase: ((Math.round(Number(p.moonPhase) || 0) % 8) + 8) % 8,
+    weather: WEATHER_ID[Math.round(Number(p.weather) || 0)] || 'clear', rain: Math.max(0, Math.min(1, Number(p.rain) || 0)),
+    fogStart: p.fogOn ? Number(p.fogStart) || 0 : 0, fogEnd: p.fogOn ? Math.max(1, Number(p.fogEnd) || 0) : 0, fogColor: rgbArr(p.fogColor, '#c0d0e0'),
+    skyColor: rgbArr(p.skyColor, '#ffffff'), skyMix: Math.max(0, Math.min(1, Number(p.skyMix) || 0)), restoreAtEnd: p.restoreAtEnd !== false
+  };
+}
+// небо сцены в момент t (с учётом связей) — для живого показа в игре ({t:'sky'}) и подписи в Студии
+export function skyAt(scene, t) {
+  const sl = withLinks(scene);
+  const o = (sl.objects || []).find((x) => x.type === 'sky' && isActive(sl, x));
+  return o ? { id: o.id, ...skyProps(propsAt(o, t)) } : null;
 }
 
 // Для сохранения на диск: объекты + сгенерированные дорожки (чтобы игра в режиме разработчика читала файл напрямую).
@@ -501,6 +715,7 @@ export function gameObject(scene, o, t, selected) {
     case 'sound': props.sound = p.id; if (!isP3(p.pos)) delete props.pos; break;
     case 'cloner': props.mode = p.mode; break;
     case 'structure': props.structure = p.structure || ''; props.rot = p.rot || 0; props.mirror = p.mirror === true ? 'x' : p.mirror || false; if (p.anchor === 'center') props.anchor = 'center'; if (props.pos) props.pos = props.pos.map((v) => Math.floor(v)); break;
+    case 'sky': Object.assign(props, skyProps(p)); break;
     case 'effector': props.kind = p.kind; { const cl = o.parent && objById(scene, o.parent); const cp = cl && worldPos(scene, cl, t); if (!props.pos && cp) props.pos = cp.map(r3); } break;
     case 'actor': {
       const ap = actorPosAt(scene, o.actor, t);
@@ -512,16 +727,19 @@ export function gameObject(scene, o, t, selected) {
   }
   return { id: o.id, type: o.type, name: o.name, parent: o.parent || null, enabled: isActive(scene, o), visible: o.visible !== false, selected: !!selected, props, anim: {} };
 }
-export function objectsSnapshot(scene, t, selIds) {
+export function objectsSnapshot(scene0, t, selIds) {
+  const scene = withLinks(scene0);
   const sel = new Set(selIds || []);
   return (scene.objects || []).filter((o) => !['block', 'template'].includes(o.type)).map((o) => gameObject(scene, o, t, sel.has(o.id)));
 }
 // позы для {t:'time', poses}: камеры, актёры и всё, что анимировано (само или через группу)
-export function posesAt(scene, t) {
+export function posesAt(scene0, t) {
+  const scene = withLinks(scene0);
   const poses = {};
   for (const o of scene.objects || []) {
     if (!isActive(scene, o)) continue;
-    const moving = o.type === 'camera' || o.type === 'actor' || Object.keys(o.anim || {}).length || ancestors(scene, o).some((a) => Object.keys(a.anim || {}).length);
+    if (o.type === 'sky') continue; // небо — отдельным сообщением {t:'sky'}
+    const moving = o.type === 'camera' || o.type === 'actor' || Object.keys(o.anim || {}).length || (o[DRV] && o[DRV].length) || ancestors(scene, o).some((a) => Object.keys(a.anim || {}).length);
     if (!moving) continue;
     const g = gameObject(scene, o, t, false).props;
     if (!g.pos) continue;
@@ -592,7 +810,7 @@ export function validateObjects(scene, add, E, W) {
         prev = k.t;
         if (isNum(len) && k.t > len) add(W, 'Объект ' + nm + ': ключ «' + (CHANNEL_LABEL[ch] || ch) + '» после конца сцены (' + k.t + ' т)', sel);
         if (k.interp && !INTERPS.includes(k.interp)) add(W, 'Объект ' + nm + ': неизвестная интерполяция «' + k.interp + '»', sel);
-        if (ch !== 'look' && !isNum(k.v) && typeof k.v !== 'boolean') add(E, 'Объект ' + nm + ': значение ключа «' + (CHANNEL_LABEL[ch] || ch) + '» — не число', sel);
+        if (ch !== 'look' && !isNum(k.v) && typeof k.v !== 'boolean' && !(COLOR_CHANNELS.includes(ch) && isColor(k.v))) add(E, 'Объект ' + nm + ': значение ключа «' + (CHANNEL_LABEL[ch] || ch) + '» — не число', sel);
       }
     }
     if (o.type === 'camera') {
@@ -607,6 +825,14 @@ export function validateObjects(scene, add, E, W) {
     if (o.type === 'sound') {
       if (!p.id || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(p.id)) add(E, 'Звук ' + nm + ': id звука пиши вида minecraft:block.bell.use', sel);
       if (!((o.anim && o.anim.play) || []).some((k) => k.v)) add(W, 'Звук ' + nm + ': нет ни одного ключа «Играть» — не прозвучит', sel);
+    }
+    if (o.type === 'sky') {
+      if (objs.filter((x) => x && x.type === 'sky').length > 1 && objs.find((x) => x && x.type === 'sky') !== o) add(W, 'Небо ' + nm + ': небо в сцене одно — сыграет первое', sel);
+      if (p.time !== undefined && !(isNum(p.time) && p.time >= 0 && p.time < DAY)) add(E, 'Небо ' + nm + ': время суток — от 0 до 23999 тиков', sel);
+      if (p.rain !== undefined && !(isNum(p.rain) && p.rain >= 0 && p.rain <= 1)) add(E, 'Небо ' + nm + ': сила дождя — от 0 до 1', sel);
+      if (p.fogOn && isNum(p.fogStart) && isNum(p.fogEnd) && p.fogEnd <= p.fogStart) add(W, 'Небо ' + nm + ': конец тумана ближе начала', sel);
+      for (const c of COLOR_CHANNELS) if (p[c] !== undefined && !isColor(p[c])) add(E, 'Небо ' + nm + ': цвет пиши вида #a0c0ff', sel);
+      for (const k of (o.anim && o.anim.weather) || []) if (![0, 1, 2].includes(k.v)) { add(E, 'Небо ' + nm + ': погода в ключе — ясно, дождь или гроза', sel); break; }
     }
     if (o.type === 'path' && (!Array.isArray(p.points) || p.points.filter(isP3).length < 2)) add(E, 'Путь ' + nm + ': нужно минимум 2 точки', sel);
     if (o.type === 'actor' && !(scene.actors || []).some((a) => a && a.id === o.actor)) add(E, 'Объект ' + nm + ': актёра «' + o.actor + '» нет в сцене', sel);
@@ -642,6 +868,7 @@ export function validateObjects(scene, add, E, W) {
       } catch (e) { add(E, 'Клонер ' + nm + ': не считается — ' + e.message, sel); }
     }
   }
+  validateLinks(scene, add, E, W);
   const st = Array.isArray(scene.stage) ? scene.stage : [];
   const cams = objs.filter((o) => o && o.type === 'camera');
   if (!cams.length) add(W, 'В сцене нет ни одной камеры — сцена пойдёт глазами игрока. Создай камеру: Создать → Камера');

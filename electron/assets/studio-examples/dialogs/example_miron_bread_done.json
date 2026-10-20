@@ -1,0 +1,96 @@
+{
+  "v": 1,
+  "id": "example_miron_bread_done",
+  "title": "Мирон: хлеб принесён",
+  "note": "Пример диалога для шага задания (goal talk): открывается заданием, сам по клику не срабатывает.",
+  "speaker": "actor:miron",
+  "trigger": {
+    "on": "quest",
+    "when": [],
+    "once": false,
+    "priority": 0
+  },
+  "start": "n1",
+  "nodes": {
+    "n1": {
+      "type": "cond",
+      "if": [
+        {
+          "item": "minecraft:bread",
+          "count": 3
+        }
+      ],
+      "then": "n2",
+      "else": "n5",
+      "x": 80,
+      "y": 60
+    },
+    "n2": {
+      "type": "line",
+      "who": "speaker",
+      "text": "Тёплый ещё! Спасибо, {player}.",
+      "face": "relief",
+      "next": "n3",
+      "x": 300,
+      "y": 20
+    },
+    "n3": {
+      "type": "action",
+      "do": [
+        {
+          "take": "minecraft:bread",
+          "count": 3
+        },
+        {
+          "trust": "miron",
+          "add": 2
+        },
+        {
+          "add": "bread_brought",
+          "value": 1
+        },
+        {
+          "sound": "minecraft:entity.villager.yes"
+        }
+      ],
+      "next": "n4",
+      "x": 520,
+      "y": 20
+    },
+    "n4": {
+      "type": "line",
+      "who": "speaker",
+      "text": "Сходи-ка теперь к мельнице — посмотри, крутится ли колесо.",
+      "next": "end",
+      "x": 740,
+      "y": 20
+    },
+    "n5": {
+      "type": "line",
+      "who": "speaker",
+      "text": "А хлеб-то где? Три буханки, не меньше.",
+      "face": "grumble",
+      "next": "n6",
+      "x": 300,
+      "y": 140
+    },
+    "n6": {
+      "type": "action",
+      "do": [
+        {
+          "quest": "example_bread",
+          "do": "advance",
+          "step": "s1"
+        }
+      ],
+      "next": "end",
+      "x": 520,
+      "y": 140
+    },
+    "end": {
+      "type": "end",
+      "x": 960,
+      "y": 80
+    }
+  }
+}

@@ -12,6 +12,9 @@ class W {
   u8(v) { this.need(1); this.buf.writeUInt8(v & 255, this.n); this.n += 1; }
   i16(v) { this.need(2); this.buf.writeInt16BE(v, this.n); this.n += 2; }
   i32(v) { this.need(4); this.buf.writeInt32BE(v | 0, this.n); this.n += 4; }
+  i64(v) { this.need(8); this.buf.writeBigInt64BE(BigInt.asIntN(64, typeof v === 'bigint' ? v : BigInt(Math.trunc(Number(v) || 0))), this.n); this.n += 8; }
+  f32(v) { this.need(4); this.buf.writeFloatBE(Number(v) || 0, this.n); this.n += 4; }
+  f64(v) { this.need(8); this.buf.writeDoubleBE(Number(v) || 0, this.n); this.n += 8; }
   str(s) { const b = Buffer.from(String(s), 'utf8'); this.need(2 + b.length); this.buf.writeUInt16BE(b.length, this.n); this.n += 2; b.copy(this.buf, this.n); this.n += b.length; }
   out() { return this.buf.subarray(0, this.n); }
 }
@@ -27,7 +30,12 @@ function tagOf(v) {
 function payload(w, t, v) {
   const val = v && typeof v === 'object' && '_t' in v ? v.v : v;
   switch (t) {
-    case T.BYTE: w.u8(val); break;
+    case T.BYTE: w.u8(typeof val === 'boolean' ? (val ? 1 : 0) : val); break;
+    case T.LONG: w.i64(val); break;
+    case T.FLOAT: w.f32(val); break;
+    case T.DOUBLE: w.f64(val); break;
+    case T.BYTES: { const b = Buffer.from(val); w.i32(b.length); w.need(b.length); b.copy(w.buf, w.n); w.n += b.length; break; }
+    case T.LONGS: w.i32(val.length); for (const x of val) w.i64(x); break;
     case T.SHORT: w.i16(val); break;
     case T.INT: w.i32(val); break;
     case T.STRING: w.str(val); break;
@@ -106,4 +114,41 @@ function readNbt(buf) {
   return read(T.COMPOUND);
 }
 
-module.exports = { writeNbt, readNbt, structureNbt, stateOf, T, DATA_VERSION };
+// чтение с сохранением типов: каждое значение — { _t, v } (списки ещё и _et), чтобы файл можно было поправить и записать обратно
+// (например, имя мира в level.dat при копировании мира) без потери LONG/BYTE/FLOAT.
+function readTyped(buf) {
+  let b = buf;
+  if (b[0] === 0x1f && b[1] === 0x8b) b = zlib.gunzipSync(b);
+  let i = 0;
+  const str = () => { const L = b.readUInt16BE(i); i += 2; const s = b.toString('utf8', i, i + L); i += L; return s; };
+  const read = (t) => {
+    switch (t) {
+      case T.BYTE: return { _t: t, v: b.readInt8(i++) };
+      case T.SHORT: { const v = b.readInt16BE(i); i += 2; return { _t: t, v }; }
+      case T.INT: { const v = b.readInt32BE(i); i += 4; return { _t: t, v }; }
+      case T.LONG: { const v = b.readBigInt64BE(i); i += 8; return { _t: t, v }; }
+      case T.FLOAT: { const v = b.readFloatBE(i); i += 4; return { _t: t, v }; }
+      case T.DOUBLE: { const v = b.readDoubleBE(i); i += 8; return { _t: t, v }; }
+      case T.BYTES: { const L = b.readInt32BE(i); i += 4; const v = Buffer.from(b.subarray(i, i + L)); i += L; return { _t: t, v }; }
+      case T.STRING: return { _t: t, v: str() };
+      case T.LIST: { const et = b.readUInt8(i++); const L = b.readInt32BE(i); i += 4; const a = []; for (let k = 0; k < L; k++) a.push(read(et)); return { _t: t, _et: et, v: a }; }
+      case T.COMPOUND: { const o = {}; for (;;) { const tt = b.readUInt8(i++); if (tt === T.END) break; const k = str(); o[k] = read(tt); } return { _t: t, v: o }; }
+      case T.INTS: { const L = b.readInt32BE(i); i += 4; const a = []; for (let k = 0; k < L; k++) { a.push(b.readInt32BE(i)); i += 4; } return { _t: t, v: a }; }
+      case T.LONGS: { const L = b.readInt32BE(i); i += 4; const a = []; for (let k = 0; k < L; k++) { a.push(b.readBigInt64BE(i)); i += 8; } return { _t: t, v: a }; }
+      default: throw new Error('NBT: неизвестный тип ' + t);
+    }
+  };
+  const t = b.readUInt8(i++);
+  if (t !== T.COMPOUND) throw new Error('NBT: корень не compound');
+  str();
+  return read(T.COMPOUND);
+}
+// типизированный корень (результат readTyped) → gzip-файл
+function writeTyped(root) {
+  const w = new W();
+  w.u8(T.COMPOUND); w.str('');
+  payload(w, T.COMPOUND, root);
+  return zlib.gzipSync(w.out());
+}
+
+module.exports = { writeNbt, readNbt, readTyped, writeTyped, structureNbt, stateOf, T, DATA_VERSION };

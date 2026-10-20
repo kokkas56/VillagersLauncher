@@ -1,0 +1,135 @@
+{
+  "v": 1,
+  "id": "example_miron_work",
+  "title": "Мирон: есть работа?",
+  "note": "Пример диалога: тема в обычном разговоре Мирона (priority 0 — свой разговор жителя не перекрывается). Даёт задание example_bread.",
+  "speaker": "actor:miron",
+  "trigger": {
+    "on": "talk",
+    "when": [
+      {
+        "quest": "example_bread",
+        "state": "not_started"
+      }
+    ],
+    "once": false,
+    "priority": 0,
+    "topic": "Есть для меня работа?"
+  },
+  "start": "n1",
+  "nodes": {
+    "n1": {
+      "type": "line",
+      "who": "player",
+      "text": "Мирон, есть для меня работа?",
+      "next": "n2",
+      "x": 80,
+      "y": 60
+    },
+    "n2": {
+      "type": "cond",
+      "if": [
+        {
+          "var": "miron_asked_work",
+          "op": "==",
+          "value": true
+        }
+      ],
+      "then": "n3b",
+      "else": "n3",
+      "x": 300,
+      "y": 60
+    },
+    "n3": {
+      "type": "line",
+      "who": "speaker",
+      "text": "Работа? Хм. Хлеба в доме не осталось, а мне от верстака не отойти.",
+      "face": "tired",
+      "next": "n4",
+      "x": 520,
+      "y": 20
+    },
+    "n3b": {
+      "type": "line",
+      "who": "speaker",
+      "text": "Всё про тот же хлеб, {player}. Надумал?",
+      "next": "n4",
+      "x": 520,
+      "y": 120
+    },
+    "n4": {
+      "type": "action",
+      "do": [
+        {
+          "set": "miron_asked_work",
+          "value": true
+        }
+      ],
+      "next": "n5",
+      "x": 740,
+      "y": 60
+    },
+    "n5": {
+      "type": "choice",
+      "text": "Принесёшь три буханки?",
+      "options": [
+        {
+          "text": "Принесу.",
+          "next": "n6"
+        },
+        {
+          "text": "У меня уже есть хлеб.",
+          "when": [
+            {
+              "item": "minecraft:bread",
+              "count": 3
+            }
+          ],
+          "hint": "Нужно 3 хлеба в сумке",
+          "next": "n6"
+        },
+        {
+          "text": "Не сейчас.",
+          "next": "n7"
+        }
+      ],
+      "x": 960,
+      "y": 60
+    },
+    "n6": {
+      "type": "action",
+      "do": [
+        {
+          "quest": "example_bread",
+          "do": "start"
+        }
+      ],
+      "next": "n8",
+      "x": 1180,
+      "y": 20
+    },
+    "n8": {
+      "type": "line",
+      "who": "speaker",
+      "text": "Вот и славно. Я буду тут.",
+      "face": "smile",
+      "anim": "greet",
+      "next": "end",
+      "x": 1400,
+      "y": 20
+    },
+    "n7": {
+      "type": "line",
+      "who": "speaker",
+      "text": "Как знаешь.",
+      "next": "end",
+      "x": 1180,
+      "y": 140
+    },
+    "end": {
+      "type": "end",
+      "x": 1620,
+      "y": 80
+    }
+  }
+}

@@ -9,7 +9,7 @@ const POP_TITLE = { dialogs: 'Диалоги', quests: 'Задания', vars: '
 // какие события главного процесса нужны окнам Студии
 const FORWARD = ['studio-link', 'game-state', 'busy-state', 'studio-embed', 'studio-win'];
 
-module.exports = function setupStudioWindow({ handle, store, dev, getGame, linkInfo, mainWindow, log }) {
+module.exports = function setupStudioWindow({ handle, store, dev, getGame, linkInfo, mainWindow, log, holdLink }) {
   let studio = null;
   const pops = new Map(); // tab → BrowserWindow
   const helper = createHelper(log);
@@ -50,6 +50,8 @@ module.exports = function setupStudioWindow({ handle, store, dev, getGame, linkI
     const saved = store.get().studioBounds;
     const b = boundsOk(saved) ? saved : { width: 1500, height: 920 };
     studio = makeWin({ ...b, minWidth: 1100, minHeight: 680 }, 'studio');
+    // окно Студии держит живую связь с игрой всё время, пока открыто (не зависит от того, что делают вкладки)
+    if (holdLink) holdLink(true);
     if (saved && saved.maximized) studio.once('ready-to-show', () => studio.maximize());
     const remember = () => {
       if (!studio || studio.isDestroyed() || studio.isMinimized()) return;
@@ -77,6 +79,7 @@ module.exports = function setupStudioWindow({ handle, store, dev, getGame, linkI
     });
     studio.on('closed', () => {
       studio = null;
+      if (holdLink) holdLink(false);
       emb.mode = 'off'; emb.want = 'off';
       for (const w of pops.values()) if (w && !w.isDestroyed()) w.close();
     });
