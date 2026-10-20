@@ -42,7 +42,7 @@ function ProjectCard({ p, onOpen, current, hp }) {
   );
 }
 
-// экран без открытого проекта (как стартовое окно C4D / Hammer)
+// экран без открытого проекта (выбор проекта)
 export function ProjectPicker({ onNew, onLearn }) {
   const core = useStudio();
   const { hp } = core;
@@ -182,10 +182,10 @@ export function OpenProjectModal({ onClose, onNew, Modal }) {
 export function ProjectPropsModal({ onClose, Modal }) {
   const core = useStudio();
   const p = core.project;
-  const [v, setV] = useState(() => ({ name: p.name || '', note: p.note || '', time: p.play && p.play.time != null ? p.play.time : '', weather: (p.play && p.play.weather) || '', rules: { ...((p.play && p.play.gamerules) || {}) } }));
+  const [v, setV] = useState(() => ({ name: p.name || '', note: p.note || '', time: p.play && p.play.time != null ? p.play.time : '', weather: (p.play && p.play.weather) || '', rules: { ...((p.play && p.play.gamerules) || {}) }, immortal: !!(p.play && p.play.immortal), deathStops: !(p.play && p.play.deathStops === false), deathStopTicks: p.play && p.play.deathStopTicks != null ? p.play.deathStopTicks : 20 }));
   const save = () => {
     const t = v.time === '' ? null : Math.max(0, Math.min(23999, Math.round(Number(v.time) || 0)));
-    core.saveProject({ ...p, name: v.name.trim() || p.name, note: v.note, play: { time: t, weather: v.weather || null, gamerules: v.rules } });
+    core.saveProject({ ...p, name: v.name.trim() || p.name, note: v.note, play: { ...(p.play || {}), time: t, weather: v.weather || null, gamerules: v.rules, immortal: !!v.immortal, deathStops: !!v.deathStops, deathStopTicks: Math.max(0, Math.min(200, Math.round(Number(v.deathStopTicks) || 0))) } });
     core.toast('Свойства проекта сохранены', 'ok', 2000);
     onClose();
   };
@@ -214,6 +214,13 @@ export function ProjectPropsModal({ onClose, Modal }) {
           {rule('doWeatherCycle', 'погода меняется', '')}
           {rule('keepInventory', 'не терять вещи', '')}
         </div>
+        <label className="c4-np-l">Смерть во время проверки (F5)</label>
+        <div className="c4-np-opts">
+          <label className="c4-chk" title="Пока идёт проверка F5, игрок не получает урона и не умирает. Удобно, когда проверяешь логику, а не опасность."><input type="checkbox" checked={v.immortal} onChange={(e) => setV({ ...v, immortal: e.target.checked })} /> бессмертие в тесте</label>
+          <label className="c4-chk" title="Погиб во время F5 — игра сама нажимает «Стоп»: мир откатывается, игрок возрождается на месте, где был до ▶, с прежним здоровьем, едой и вещами."><input type="checkbox" checked={v.deathStops} disabled={v.immortal} onChange={(e) => setV({ ...v, deathStops: e.target.checked })} /> смерть = автоматический Стоп</label>
+          <span className="c4-np-seed" title="Сколько тиков после смерти ждать до автоматического Стопа (20 тиков = 1 секунда) — чтобы успеть увидеть, что случилось.">через <input className="c4-text" style={{ width: 50 }} value={v.deathStopTicks} disabled={v.immortal || !v.deathStops} onChange={(e) => setV({ ...v, deathStopTicks: e.target.value })} onKeyDown={(e) => e.stopPropagation()} /> т</span>
+        </div>
+        <div className="dim small" style={{ marginTop: -2 }}>По «Стопу» игрок всегда возвращается живым: здоровье, еда, воздух, огонь, эффекты, опыт, режим, вещи и место — как до ▶.</div>
         <label className="c4-np-l">Заметка</label>
         <textarea className="c4-text" rows={3} value={v.note} onChange={(e) => setV({ ...v, note: e.target.value })} onKeyDown={(e) => e.stopPropagation()} />
       </div>

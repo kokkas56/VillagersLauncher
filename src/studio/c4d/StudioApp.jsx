@@ -1,5 +1,5 @@
-// Окно «Студия Кокка» в духе Cinema 4D: заголовок с макетами, меню, командная строка, палитра инструментов,
-// видовое окно (игра), менеджеры объектов и атрибутов, таймлайн, строка состояния, горячие клавиши C4D.
+// Окно «Студия Кокка»: заголовок с макетами, меню, командная строка, палитра инструментов слева, палитра «Создать»
+// и менеджеры объектов и атрибутов справа, видовое окно (игра), таймлайн, строка состояния, горячие клавиши.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { call, on, win } from '../../lib/api.js';
 import { Toasts } from '../../components/ui.jsx';
@@ -11,6 +11,7 @@ import ObjectsPane from './Objects.jsx';
 import AttributesPane from './Attributes.jsx';
 import Timeline from './Timeline.jsx';
 import Viewport from './Viewport.jsx';
+import CreatePalette, { runCreate } from './CreatePalette.jsx';
 import { Datalists } from '../fields.jsx';
 import DialogTab from '../DialogTab.jsx';
 import QuestTab from '../QuestTab.jsx';
@@ -39,24 +40,21 @@ export const LAYOUTS = [
   ['schemes', 'Схемы', 'Логика мира узлами: «событие → условие → действие» (как блюпринты). Живая трасса из игры.']
 ];
 const TOOLS = [
-  ['select', 'select', 'Выбор', 'Выбор (щёлкни объект в игре или на схеме). Пробел — прошлый инструмент.'],
-  ['move', 'move', 'Перемещение (E)', 'Перемещение (E): тяни стрелки гизмо в игре или объект на схеме. Красная — X, зелёная — Y, синяя — Z.'],
-  ['rotate', 'rotate', 'Поворот (R)', 'Поворот (R): крути объект за кольца гизмо в игре (камеру — и на схеме).'],
-  ['scale', 'scale', 'Масштаб (T)', 'Масштаб (T): пока работает как перемещение (гизмо масштаба в игре — позже).']
+  ['select', 'select', 'Выбор', 'Q', 'Выбор (Q): щёлкни объект в игре или на схеме — ничего не сдвинется. Пробел — прошлый инструмент.'],
+  ['move', 'move', 'Перемещение', 'E', 'Перемещение (E): тяни стрелки гизмо в игре или объект на схеме. Красная — X, зелёная — Y, синяя — Z; квадраты — плоскости, центр — свободно.'],
+  ['rotate', 'rotate', 'Поворот', 'R', 'Поворот (R): крути объект за кольца гизмо в игре (камеру — и на схеме).'],
+  ['scale', 'scale', 'Масштаб', 'T', 'Масштаб (T): пока работает как перемещение (гизмо масштаба в игре — позже).']
 ];
-const CREATE_TOOLS = [
-  ['camera', 'Камера'], ['path', 'Путь'], ['actor', 'Актёр'], ['light', 'Свет'], ['sound', 'Звук'], ['marker', 'Метка'], ['cloner', 'Клонер'], ['effector', 'Эффектор'], ['sky', 'Небо и солнце']
-];
-// сущности мира слева (как точечные сущности в Hammer): щелчок — поставить в точку под прицелом в игре
-const ENT_TOOLS = ['player_start', 'trigger_zone', 'actor', 'button', 'scene_point', 'timer', 'relay', 'counter', 'teleport', 'sound', 'light', 'particles', 'message', 'structure'];
 const KEYS = [
-  ['E / R / T', 'Перемещение / Поворот / Масштаб'], ['Пробел', 'прошлый инструмент'], ['Ctrl+Z, Ctrl+Y', 'отменить / вернуть'],
+  ['Q / E / R / T', 'Выбор / Перемещение / Поворот / Масштаб'], ['Пробел', 'прошлый инструмент'], ['X / Y / Z', 'открыть или закрыть ось (любой набор)'], ['A', 'все оси открыты'], ['Ctrl+Z, Ctrl+Y', 'отменить / вернуть'],
+  ['Ctrl+C / Ctrl+V', 'копировать выбранные ключи / вставить с бегунка'], ['рамка по таймлайну', 'выбрать ключи (Shift — добавить, Ctrl — переключить)'],
   ['Del', 'удалить выбранное (объект, ключи, событие)'], ['Ctrl+D', 'клонировать объект'], ['Alt+G', 'сгруппировать'], ['Ctrl+A', 'выбрать всё'],
   ['H', 'показать выбранное в игре'], ['F9', 'ключ на всё выбранное'], ['F / G', 'тик назад / вперёд'], ['F8', 'проиграть/стоп в Студии'],
-  ['Ctrl+S', 'сохранить всё сейчас'], ['Esc', 'снять выделение'], ['F5', '▶ Играть от старта игрока (ещё раз — стоп)'], ['Shift+F5', '▶ Играть с Камеры Студии'], ['F1', 'Справочник: статья о том, что под мышкой'],
+  ['Ctrl+S', 'сохранить всё сейчас'], ['Esc', 'выйти из взгляда через камеру / снять выделение'], ['F5', '▶ Играть от старта игрока (ещё раз — стоп)'], ['Shift+F5', '▶ Играть с Камеры Студии'], ['F1', 'Справочник: статья о том, что под мышкой'],
   ['— в игре —', ''], ['F6', 'Камера Студии вкл/выкл (Esc — выйти)'], ['ПКМ + WASD / Q E', 'полёт (Shift — быстрее, колесо — скорость)'],
   ['Alt+ЛКМ', 'вращать вокруг точки'], ['Alt+СКМ / СКМ', 'двигать вид'], ['Alt+ПКМ / колесо', 'приближать'], ['ЛКМ / Shift+ЛКМ', 'выбрать / добавить к выбору'],
-  ['Ctrl+ЛКМ', 'точка пути на блоке'], ['X / Y / Z', 'закрыть ось'], ['P', 'перенести игрока к камере'], ['F8 / F10', 'ключ камеры из вида / проиграть сцену']
+  ['Ctrl+ЛКМ', 'точка пути на блоке'], ['X / Y / Z, A', 'оси: закрыть / все открыть'], ['P', 'перенести игрока к камере'], ['F8 / F10', 'ключ камеры из вида / проиграть сцену'],
+  ['— взгляд через камеру —', ''], ['глаз в «Объектах»', 'смотреть через камеру (ещё раз — выйти)'], ['мышь и WASD в игре', 'двигают саму камеру'], ['Ctrl+колесо', 'угол обзора камеры'], ['F9', 'ключ камере из вида'], ['Esc', 'выйти']
 ];
 
 export default function StudioApp() {
@@ -91,6 +89,7 @@ function StudioMain() {
   core.newSceneModal = () => setModal('newScene');
   core.openLearn = () => setModal('learn');
   core.openRef = openRef;
+  core.dropCreate = (item, at) => runCreate(core, act, bc, item, at);
   const popped = (id) => core.pops.includes(id);
 
   // ---------- команды ----------
@@ -140,12 +139,17 @@ function StudioMain() {
       if (!['scene', 'build'].includes(layout)) return;
       if (ctrl && (code === 'KeyZ' || code === 'KeyY')) { e.preventDefault(); if (inField) e.target.blur(); if (code === 'KeyY' || e.shiftKey) core.redo(); else core.undo(); return; }
       if (inField) return;
+      if (ctrl && code === 'KeyC' && core.selKeys.length) { e.preventDefault(); act.copyKeys(); return; }
+      if (ctrl && code === 'KeyV') { e.preventDefault(); act.pasteKeys(); return; }
       if (ctrl && code === 'KeyD') { e.preventDefault(); run.clone(); return; }
       if (ctrl && code === 'KeyA') { e.preventDefault(); act.selectAll(); return; }
       if (e.altKey && code === 'KeyG') { e.preventDefault(); act.group(); return; }
       if (ctrl || e.altKey) return;
       switch (code) {
+        case 'KeyQ': core.setTool('select'); break;
         case 'KeyE': core.setTool('move'); break;
+        case 'KeyX': case 'KeyY': case 'KeyZ': { const ax = code.slice(3).toLowerCase(); core.setAxes({ ...core.axes, [ax]: !core.axes[ax] }); core.setHint('Ось ' + ax.toUpperCase() + (core.axes[ax] ? ' закрыта' : ' открыта') + '. A — открыть все оси.'); break; }
+        case 'KeyA': core.setAxes({ x: true, y: true, z: true }); core.setHint('Все оси открыты: гизмо двигает свободно.'); break;
         case 'KeyR': core.setTool('rotate'); break;
         case 'KeyT': core.setTool('scale'); break;
         case 'Space': e.preventDefault(); core.toggleLastTool(); break;
@@ -155,7 +159,7 @@ function StudioMain() {
         case 'KeyF': core.setTime(Math.max(0, core.timeRef.current - (e.shiftKey ? 10 : 1))); break;
         case 'KeyG': core.setTime(Math.min((scene && scene.length) || 0, core.timeRef.current + (e.shiftKey ? 10 : 1))); break;
         case 'Delete': case 'Backspace': e.preventDefault(); run.delete(); break;
-        case 'Escape': core.setSel({}); core.setSelKeys([]); break;
+        case 'Escape': if (core.game.lookThrough) { core.gameCmd.lookThrough(null); break; } core.setSel({}); core.setSelKeys([]); break;
         default:
       }
     };
@@ -189,22 +193,26 @@ function StudioMain() {
       { label: 'Вернуть', icon: 'redo', kb: 'Ctrl+Y', disabled: !core.canRedo, run: core.redo },
       { sep: true },
       { label: 'Клонировать', icon: 'copy', kb: 'Ctrl+D', disabled: !sel.objs.length, run: act.dup },
-      { label: 'Удалить', icon: 'trash', kb: 'Del', disabled: !sel.objs.length && !sel.ev && sel.stage == null && !core.selKeys.length, run: act.del },
+      { label: 'Удалить', icon: 'trash', kb: 'Del', disabled: !sel.objs.length && !sel.ev && !core.selKeys.length, run: act.del },
+      { label: 'Копировать ключи', icon: 'copy', kb: 'Ctrl+C', disabled: !core.selKeys.length, hint: 'Выбранные на таймлайне ключи — в буфер.', run: () => act.copyKeys() },
+      { label: 'Вставить ключи', icon: 'plus', kb: 'Ctrl+V', hint: 'Ключи из буфера — с момента бегунка (на тот же объект или на выбранный такого же вида).', run: () => act.pasteKeys() },
       { label: 'Сгруппировать', icon: 'group', kb: 'Alt+G', disabled: !sel.objs.length, run: act.group },
       { label: 'В клонер', icon: 'cloner', disabled: !sel.objs.length, hint: 'Положить выбранное в новый клонер.', run: () => act.toCloner('linear') },
       { sep: true },
       { label: 'Выбрать всё', kb: 'Ctrl+A', run: act.selectAll },
       { label: 'Снять выделение', kb: 'Esc', run: () => core.setSel({}) }
     ] },
-    { id: 'create', label: 'Создать', hint: 'Новые объекты сцены: камера, актёр, свет, звук, метка, путь, группа, клонер, эффектор.', items: () => createItems(core, act) },
+    { id: 'create', label: 'Создать', hint: 'Новые объекты сцены: камера, актёр, свет, звук, метка, путь, группа, клонер, эффектор. То же — палитра «Создать» справа.', items: () => createItems(core, act) },
     { id: 'tools', label: 'Инструменты', hint: 'Инструменты, оси, привязка, Камера Студии в игре.', items: () => [
-      ...TOOLS.map(([id, ic, l, h]) => ({ label: l, icon: ic, checked: core.tool === id, hint: h, run: () => core.setTool(id) })),
+      ...TOOLS.map(([id, ic, l, k, h]) => ({ label: l, icon: ic, kb: k, checked: core.tool === id, hint: h, run: () => core.setTool(id) })),
       { sep: true },
-      ...['x', 'y', 'z'].map((ax) => ({ label: 'Ось ' + ax.toUpperCase() + (core.axes[ax] ? '' : ' (закрыта)'), checked: core.axes[ax], hint: 'Закрытая ось не двигается гизмо (X — в игре тоже).', run: () => core.setAxes({ ...core.axes, [ax]: !core.axes[ax] }) })),
+      ...['x', 'y', 'z'].map((ax) => ({ label: 'Ось ' + ax.toUpperCase() + (core.axes[ax] ? '' : ' (закрыта)'), kb: ax.toUpperCase(), checked: core.axes[ax], hint: 'Открытые оси можно сочетать как угодно: одна ось — движение вдоль неё, две — в плоскости, три — свободно. Закрытая ось не меняется ни в игре, ни на схеме.', run: () => core.setAxes({ ...core.axes, [ax]: !core.axes[ax] }) })),
+      { label: 'Все оси', kb: 'A', hint: 'Открыть X, Y и Z — гизмо двигает свободно.', run: () => core.setAxes({ x: true, y: true, z: true }) },
       { label: core.space === 'world' ? 'Оси: мировые' : 'Оси: объекта', icon: core.space === 'world' ? 'world' : 'object', hint: 'Гизмо по осям мира или по повороту объекта.', run: () => core.setSpace(core.space === 'world' ? 'object' : 'world') },
       { label: 'Привязка (0,5 блока / 15°)', icon: 'snap', checked: core.snap, run: () => core.setSnap(!core.snap) },
       { sep: true },
       { label: 'Камера Студии в игре', icon: 'gamecam', kb: 'F6 в игре', checked: core.game.editorCam, run: () => core.gameCmd.editorCam(!core.game.editorCam) },
+      { label: 'Выйти из взгляда через камеру', icon: 'look', kb: 'Esc', disabled: !core.game.lookThrough, run: () => core.gameCmd.lookThrough(null) },
       { sep: true },
       { label: '3D-модель → блоки…', icon: 'cube3', hint: 'Открыть OBJ, glTF или GLB и превратить модель в блоки: превью, призрак в игре, запекание, шаблон в библиотеку.', run: () => bc.setVox(true) },
       { label: 'Кисть', icon: 'brush', hint: 'Рисовать блоками в игре: макет «Строительство» → «Кисть».', run: () => openDock('brush') },
@@ -326,7 +334,7 @@ function StudioMain() {
         <datalist id="sl-vars">{(core.project.vars || []).map((v) => <option key={v.name} value={v.name} />)}</datalist>
         {/* заголовок */}
         <div className="c4-title">
-          <div className="c4-logo nd" {...hp('Студия Кокка — редактор сюжета MineVillagers в духе Cinema 4D.')}><i>K</i>Студия Кокка</div>
+          <div className="c4-logo nd" {...hp('Студия Кокка — редактор сюжета MineVillagers: катсцены, логика, диалоги, задания и строительство.')}><i>K</i>Студия Кокка</div>
           <button className="c4-tbtn nd" disabled={!core.canUndo} onClick={core.undo} {...hp('Отменить (Ctrl+Z).')}><I name="undo" size={15} /></button>
           <button className="c4-tbtn nd" disabled={!core.canRedo} onClick={core.redo} {...hp('Вернуть (Ctrl+Y).')}><I name="redo" size={15} /></button>
           <button className="c4-proj nd" data-learn="title-project" onClick={() => setModal('openProject')} {...hp('Открытый проект «' + (projName || '') + '»' + (core.project.world ? ' — мир saves/' + core.project.world : '') + '. Щёлкни — открыть другой проект.')}><I name="project" size={13} color="#9fb0ff" /><span>{projName}</span></button>
@@ -360,6 +368,7 @@ function StudioMain() {
                 <Viewport visible={is3d} />
               </div>
               <div className="c4-splitter-v" onMouseDown={splitV} title="Тяни — ширина панелей" />
+              <CreatePalette act={act} layout={layout} />
               <div className="c4-right" style={{ width: rightW }}>
                 <div style={{ height: (objH * 100) + '%', display: 'flex', minHeight: 0 }} data-learn="objects"><ObjectsPane act={act} openDoc={shared.openDoc} /></div>
                 <div className="c4-splitter-h" onMouseDown={splitObj} />
@@ -507,9 +516,12 @@ function CommandBar({ play, playtest, build, openIssues, issuesN }) {
       <button className="c4-ib" disabled={!core.canUndo} onClick={core.undo} {...hp('Отменить (Ctrl+Z).')}><I name="undo" size={17} /></button>
       <button className="c4-ib" disabled={!core.canRedo} onClick={core.redo} {...hp('Вернуть (Ctrl+Y).')}><I name="redo" size={17} /></button>
       <div className="c4-sep" />
-      {['x', 'y', 'z'].map((ax) => (
-        <button key={ax} className={'c4-ib ax ' + ax + (axes[ax] ? '' : ' locked')} onClick={() => setAxes({ ...axes, [ax]: !axes[ax] })} {...hp('Ось ' + ax.toUpperCase() + ': ' + (axes[ax] ? 'открыта' : 'закрыта') + '. Закрытая ось не двигается гизмо в игре и на схеме (X/Y/Z в игре — то же).')}>{ax.toUpperCase()}</button>
-      ))}
+      <div className="c4-axes" data-learn="axes">
+        {['x', 'y', 'z'].map((ax) => (
+          <button key={ax} className={'c4-ib ax ' + ax + (axes[ax] ? ' open' : ' locked')} onClick={() => setAxes({ ...axes, [ax]: !axes[ax] })} {...hp('Ось ' + ax.toUpperCase() + ' (' + ax.toUpperCase() + '): ' + (axes[ax] ? 'открыта' : 'закрыта') + '. Оси сочетаются как угодно: одна открытая — движение вдоль неё, две — в их плоскости (в игре — квадратик между стрелками), три — свободно. Закрытая ось не меняется ни в игре, ни на схеме.')}>{ax.toUpperCase()}</button>
+        ))}
+        <button className={'c4-ib ax all' + (axes.x && axes.y && axes.z ? ' open' : '')} onClick={() => setAxes({ x: true, y: true, z: true })} {...hp('Все оси (A): открыть X, Y и Z — гизмо двигает свободно.')}>XYZ</button>
+      </div>
       <button className="c4-ib" onClick={() => setSpace(space === 'world' ? 'object' : 'world')} {...hp(space === 'world' ? 'Оси гизмо — мировые. Щёлкни — оси объекта.' : 'Оси гизмо — по повороту объекта. Щёлкни — мировые.')}><I name={space === 'world' ? 'world' : 'object'} size={17} /></button>
       <div className="c4-sep" />
       <button className={'c4-ib' + (snap ? ' on' : '')} onClick={() => setSnap(!snap)} {...hp('Привязка: двигать по 0,5–1 блоку и крутить по 15°. Shift при перетаскивании — наоборот.')}><I name="snap" size={17} /></button>
@@ -534,51 +546,33 @@ function CommandBar({ play, playtest, build, openIssues, issuesN }) {
 
 function ToolPalette({ act, openDock }) {
   const core = React.useContext(StudioCtx);
-  const bc = useBuild();
-  const { hp, tool, setTool } = core;
-  const [sub, setSub] = useState(null);
+  const { hp, tool, setTool, game, gameCmd } = core;
+  const pathTool = () => {
+    const s = core.scene;
+    const po = s && core.sel.objs.map((id) => s.objects.find((o) => o.id === id)).find((o) => o && o.type === 'path');
+    if (po) { core.toast('Путь «' + po.name + '» выбран: в игре Ctrl+ЛКМ или F9 по блоку — новая точка', 'ok', 4000); return; }
+    act.create('path');
+  };
   return (
-    <div className="c4-tools two">
-      {TOOLS.map(([id, ic, l, h]) => (
-        <button key={id} data-learn={'tool-' + id} className={'c4-ib' + (tool === id ? ' on' : '')} onClick={() => setTool(id)} {...hp(h)}><I name={ic} size={17} /></button>
-      ))}
-      <div className="c4-tsep" title="Сущности мира" />
-      {ENT_TOOLS.map((t) => {
-        const d = ENT_TYPES[t];
-        const has = d.one && core.ents.some((e) => e.type === t);
-        return (
-          <button key={t} data-learn={'ent-' + t} className={'c4-ib ent' + (has ? ' has' : '')} onClick={() => core.placeEntity(t)} {...hp('Сущность мира «' + d.label + '»: ' + d.hint + ' Щёлкни — поставить в точку под прицелом в игре (или в центр схемы).')}>
-            <EntIcon type={t} size={17} />
-          </button>
-        );
-      })}
-      <div className="c4-tsep" title="Объекты сцены" />
-      {CREATE_TOOLS.map(([type, l]) => (
-        <button key={type} data-learn={'create-' + type} className="c4-ib" onClick={(e) => {
-          if (type === 'actor' || type === 'cloner' || type === 'effector') { const r = e.currentTarget.getBoundingClientRect(); setSub({ type, x: r.right + 2, y: r.top }); return; }
-          if (type === 'sky' && core.scene && core.scene.objects.some((o) => o.type === 'sky')) { const sk = core.scene.objects.find((o) => o.type === 'sky'); core.setSel({ objs: [sk.id] }); core.toast('Небо в сцене одно — выбрал его', 'warn'); return; }
-          act.create(type);
-        }} {...hp(l + ' (объект сцены): ' + (TYPE_HINT[type] || ''))}>
-          <I name={type} size={17} color={type === 'cloner' ? '#7fd36b' : type === 'effector' ? '#b38cf0' : type === 'light' ? '#f2d76b' : type === 'sky' ? '#ffc861' : undefined} />
-          {(type === 'actor' || type === 'cloner' || type === 'effector') && <span className="corner" />}
-        </button>
-      ))}
+    <div className="c4-tools big">
+      <div className="c4-tgrp" title="Инструменты">
+        {TOOLS.map(([id, ic, l, k, h]) => (
+          <button key={id} data-learn={'tool-' + id} className={'c4-ib' + (tool === id ? ' on' : '')} onClick={() => setTool(id)} {...hp(h)} title={l + ' (' + k + ')'}><I name={ic} size={23} sw={1.7} /><kbd>{k}</kbd></button>
+        ))}
+      </div>
       <div className="c4-tsep" />
-      <button data-learn="tool-brush" className={'c4-ib' + (core.brushOn ? ' on' : '')} onClick={() => openDock('brush')} {...hp('Блок-кисть: рисовать блоками прямо в игре (шар, куб, цилиндр; ставить, заменять, стирать). Открывает «Строительство» → «Кисть».')}><I name="brush" size={17} /></button>
-      <button data-learn="tool-box" className="c4-ib" onClick={() => openDock('sel')} {...hp('Рамка: выделить область в мире и заполнить, заменить, очистить, скопировать, повернуть, сохранить шаблоном.')}><I name="frame" size={17} /></button>
-      <button data-learn="tool-vox" className="c4-ib" onClick={() => { bc.setVox(true); learnMark('vox'); }} {...hp('3D-модель → блоки: открыть OBJ / glTF / GLB и превратить в постройку.')}><I name="cube3" size={17} /></button>
-      {sub && <SubMenu sub={sub} act={act} close={() => setSub(null)} />}
+      <div className="c4-tgrp">
+        <button data-learn="tool-gamecam" className={'c4-ib' + (game.editorCam ? ' on' : '')} onClick={() => gameCmd.editorCam(!game.editorCam)} {...hp('Камера редактора (F6 в игре): вид отделяется от игрока. ПКМ+WASD/QE — полёт (Shift быстрее), Alt+ЛКМ — вращать, Alt+СКМ — двигать, Alt+ПКМ/колесо — приближать. Esc в игре — выйти.')} title="Камера редактора (F6)"><I name="gamecam" size={23} sw={1.7} /><kbd>F6</kbd></button>
+        <button data-learn="tool-path" className="c4-ib" onClick={pathTool} {...hp('Путь: создать сплайн-путь (или, если путь выбран, — подсказка: Ctrl+ЛКМ / F9 в игре добавляет точки). По пути летят камеры и раскладывают копии клонеры.')} title="Путь (точки: Ctrl+ЛКМ в игре)"><I name="path" size={23} sw={1.7} /></button>
+      </div>
+      <div className="c4-tsep" />
+      <div className="c4-tgrp">
+        <button data-learn="tool-brush" className={'c4-ib' + (core.brushOn ? ' on' : '')} onClick={() => openDock('brush')} {...hp('Блок-кисть: рисовать блоками прямо в игре (шар, куб, цилиндр; ставить, заменять, стирать). Открывает «Строительство» → «Кисть».')} title="Кисть (Ctrl+колесо — размер)"><I name="brush" size={23} sw={1.7} /></button>
+        <button data-learn="tool-box" className="c4-ib" onClick={() => openDock('sel')} {...hp('Рамка: выделить область в мире (B в игре) и заполнить, заменить, очистить, скопировать, повернуть, сохранить шаблоном.')} title="Рамка (B в игре)"><I name="frame" size={23} sw={1.7} /><kbd>B</kbd></button>
+      </div>
     </div>
   );
 }
-function SubMenu({ sub, act, close }) {
-  const core = React.useContext(StudioCtx);
-  useEffect(() => { const c = () => close(); window.addEventListener('mousedown', c); return () => window.removeEventListener('mousedown', c); }, [close]);
-  const all = createItems(core, act);
-  const it = all.find((x) => x.icon === sub.type);
-  return <PopMenu x={sub.x} y={sub.y} items={(it && it.sub) || []} onClose={close} hp={core.hp} />;
-}
-
 function DocLayout({ layout, shared, goto, popped, popOut }) {
   if (popped) {
     return (

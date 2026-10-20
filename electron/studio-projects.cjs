@@ -79,7 +79,7 @@ function setCurrent(root, id) {
 
 // project.json проекта v2 (поля v1 — actors, vars, templates, talkPriority, ui, schemes — сохраняются)
 function projectDefaults(id, name) {
-  return { v: 2, id, name: name || 'Проект', world: null, start: null, created: new Date().toISOString(), note: '', actors: [], vars: [], templates: [], talkPriority: 0, ui: { hud: true, markers: true, chat: false }, play: { time: null, weather: null, gamerules: {} } };
+  return { v: 2, id, name: name || 'Проект', world: null, start: null, created: new Date().toISOString(), note: '', actors: [], vars: [], templates: [], talkPriority: 0, ui: { hud: true, markers: true, chat: false }, play: { time: null, weather: null, gamerules: {}, immortal: false, deathStops: true, deathStopTicks: 20 } };
 }
 function readProject(root, id) {
   const f = path.join(projectDir(root, id), 'project.json');

@@ -10,6 +10,7 @@ import { worldPos, propsAt, activeCamera, clonerOutput, actorPosAt, isActive, ob
 import { smoothPath } from '../mograph.js';
 import { setChan } from './ops.js';
 import { ENT_TYPES } from '../entities.js';
+import { letterboxOf, letterboxBar } from '../validate.js';
 
 const r2 = (n) => Math.round(n * 100) / 100;
 const TOOL_RU = { select: 'Выбор', move: 'Перемещение', rotate: 'Поворот', scale: 'Масштаб' };
@@ -68,7 +69,9 @@ export default function Viewport({ visible = true }) {
       { label: 'Камера Студии в игре', icon: 'gamecam', checked: game.editorCam, hint: 'Камера отделяется от игрока: Alt+ЛКМ — вращать, Alt+СКМ — двигать, Alt+ПКМ/колесо — приближать, ПКМ+WASD/QE — лететь (Shift — быстрее). F6 или Esc в игре — выйти.', run: () => gameCmd.editorCam(!game.editorCam) },
       { sep: true }, { head: 'Смотреть через камеру' },
       { label: 'Не смотреть (свободно)', checked: !game.lookThrough, run: () => gameCmd.lookThrough(null) },
-      ...cams.map((c) => ({ label: c.name + (act && act.id === c.id ? ' — снимает сейчас' : ''), icon: 'camera', checked: game.lookThrough === c.id, hint: 'Вид в игре встанет на место камеры «' + c.name + '» и поедет с ней при прокрутке таймлайна.', run: () => gameCmd.lookThrough(c.id) }))
+      ...cams.map((c) => ({ label: c.name + (act && act.id === c.id ? ' — снимает сейчас' : ''), icon: 'camera', checked: game.lookThrough === c.id, hint: 'Вид в игре становится камерой «' + c.name + '»: двигаешь вид — двигается камера; прокрутка таймлайна ведёт её по ключам.', run: () => gameCmd.lookThrough(c.id) })),
+      { sep: true }, { head: 'Кинорамка в виде' },
+      ...[['through', 'При взгляде через камеру'], ['always', 'Всегда'], ['never', 'Не показывать']].map(([v, l]) => ({ label: l, checked: (core.lbShow || 'through') === v, hint: 'Чёрные полосы сцены поверх вида (настройка сцены «Кинорамка»). На саму сцену не влияет.', run: () => core.setLbShow(v) }))
     ], at);
     if (which === 'game') openMenu(e, [
       { label: 'Встроить окно игры', icon: 'embed', disabled: embedded, hint: 'Окно Minecraft станет частью Студии — прямо здесь, в видовом окне (только Windows).', run: () => embedCmd('embed') },
@@ -98,21 +101,22 @@ export default function Viewport({ visible = true }) {
         <button onMouseDown={(e) => { e.stopPropagation(); viewMenu(e, 'game'); }} {...hp('Окно игры: встроить сюда, разместить рядом, отстыковать; запустить игру.')}>Окно игры</button>
         <span className="dim" style={{ marginLeft: 10 }}>{mode}</span>
         <div className="c4-vp-ic">
-          <button className={'c4-ib' + (game.editorCam ? ' on' : '')} onClick={() => gameCmd.editorCam(!game.editorCam)} {...hp('Камера Студии в игре (F6 в игре). ПКМ+WASD/QE — полёт, Alt+мышь — как в C4D.')}><I name="gamecam" size={14} /></button>
+          <button className={'c4-ib' + (game.editorCam ? ' on' : '')} onClick={() => gameCmd.editorCam(!game.editorCam)} {...hp('Камера Студии в игре (F6 в игре). ПКМ+WASD/QE — полёт, Alt+ЛКМ/СКМ/ПКМ — вращать/двигать/приближать.')}><I name="gamecam" size={14} /></button>
           <button className={'c4-ib' + (embedded ? ' on' : '')} onClick={() => embedCmd(embedded ? 'undock' : 'embed')} {...hp(embedded ? 'Отстыковать окно игры.' : 'Встроить окно игры в Студию.')}><I name={embedded ? 'undock' : 'embed'} size={14} /></button>
           <button className="c4-ib" onClick={() => embedCmd('side')} {...hp('Разместить окна рядом: Студия слева, игра справа.')}><I name="side" size={14} /></button>
         </div>
       </div>
       <div ref={hostRef} className={'c4-vp-host' + (embedded ? ' embedded' : '')}>
         {!embedded && <Schematic />}
+        <ViewOverlays embedded={embedded} />
         {!embedded && <div className="c4-vp-label">{mode}</div>}
-        {!embedded && act && <div className="c4-vp-cam">{act.name} ⧉</div>}
+        {!embedded && act && !game.lookThrough && <div className="c4-vp-cam">{act.name} ⧉</div>}
         {!embedded && <div className="c4-vp-tool">{TOOL_RU[core.tool]} ✥</div>}
-        {!embedded && card && (
+        {!embedded && card && !game.lookThrough && (
           <div className="c4-vp-card" onMouseDown={(e) => e.stopPropagation()}>
             <h4><span className={'c4-led ' + (link.connected ? 'on' : running ? 'off' : 'bad')} />{link.connected ? 'Игра на связи' : running ? 'Игра запускается…' : 'Игра не запущена'}<span className="grow" /><button className="c4-ib" style={{ width: 20, height: 20 }} onClick={() => setCard(false)} title="Спрятать"><I name="close" size={11} /></button></h4>
             {link.connected
-              ? <p>{[link.info && link.info.world, link.info && link.info.dim].filter(Boolean).join(' · ') || 'мир открыт'}. Встрой окно игры сюда — оно станет видовым окном Студии (как в Cinema 4D). Или разложи окна рядом.</p>
+              ? <p>{[link.info && link.info.world, link.info && link.info.dim].filter(Boolean).join(' · ') || 'мир открыт'}. Встрой окно игры сюда — оно станет видовым окном Студии. Или разложи окна рядом.</p>
               : <p>Запусти игру через лаунчер с включённым режимом разработчика — Студия сама найдёт её. Пока игры нет, здесь схема сцены сверху: двигай объекты мышью.</p>}
             {embed.why && <p className="why">{embed.why}</p>}
             {embed.helper === 'missing' && <p className="why">Помощник встраивания (PowerShell) недоступен — доступно только «Разместить рядом».</p>}
@@ -128,6 +132,49 @@ export default function Viewport({ visible = true }) {
       </div>
       <MenuView menu={menu} close={closeMenu} hp={hp} />
     </div>
+  );
+}
+
+// ---------- поверх вида: «Вид через камеру» и кинорамка ----------
+function ViewOverlays({ embedded }) {
+  const core = useStudio();
+  const { scene, game, gameCmd, hp, link } = core;
+  const ref = useRef(null);
+  const [sz, setSz] = useState({ w: 0, h: 0 });
+  useLayoutEffect(() => {
+    const el = ref.current && ref.current.parentElement;
+    if (!el) return undefined;
+    const ro = new ResizeObserver(() => setSz({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
+    setSz({ w: el.clientWidth, h: el.clientHeight });
+    return () => ro.disconnect();
+  }, []);
+  const cam = scene && game.lookThrough ? objById(scene, game.lookThrough) : null;
+  const lb = scene ? letterboxOf((scene.options || {}).letterbox) : null;
+  const show = core.lbShow || 'through';
+  const caps = (link.info && Array.isArray(link.info.caps) && link.info.caps) || [];
+  // встроенная игра рисует рамку сама (caps: letterbox) — тогда не дублируем
+  const wantBars = lb && lb.on && show !== 'never' && (show === 'always' || !!cam) && !(embedded && caps.includes('letterbox'));
+  const frac = wantBars ? letterboxBar(lb, sz.w, sz.h) : 0;
+  const barH = Math.round(frac * sz.h);
+  const fov = cam ? Math.round(propsAt(cam, core.time).fov || 70) : null;
+  return (
+    <>
+      <span ref={ref} style={{ display: 'none' }} />
+      {barH > 0 && <>
+        <div className="c4-lbar t" data-float={embedded ? '' : undefined} style={{ height: barH, background: lb.color, opacity: lb.opacity }} />
+        <div className="c4-lbar b" data-float={embedded ? '' : undefined} style={{ height: barH, background: lb.color, opacity: lb.opacity }} />
+        <span className="c4-lbar-tag" style={{ bottom: barH + 4 }}>кинорамка {String(Math.round(lb.aspect * 100) / 100).replace('.', ',')}:1</span>
+      </>}
+      {cam && (
+        <div className="c4-lt-banner" data-float="" data-learn="lt-banner" onMouseDown={(e) => e.stopPropagation()} {...hp('Вид через камеру: двигай вид в игре (Alt+мышь, ПКМ+WASD/QE, Ctrl+колесо — угол обзора) — двигается сама камера, поля «Атрибутов» меняются сразу. Запись ● — ключи сами; F9 — ключ вручную. Прокрутка таймлайна ставит камеру в позу по ключам.')}>
+          <I name="eye" size={14} color="#9ff0bf" />
+          <span>Вид через <b>«{cam.name}»</b> · {fov}° · <span className="k">Esc — выйти</span></span>
+          {core.autoKey ? <span className="rec">● запись</span> : game.throughDirty ? <span className="rec" title="Камера анимирована, а запись выключена: вид ещё не записан. F9 или ◇ — поставить ключ; прокрутка таймлайна вернёт позу по ключам.">не записано — F9</span> : null}
+          <button onClick={() => gameCmd.lookThrough(null)}>Выйти</button>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -194,7 +241,7 @@ function Schematic() {
           const w = p.rot === 90 || p.rot === 270 ? st.size[2] : st.size[0], d = p.rot === 90 || p.rot === 270 ? st.size[0] : st.size[2];
           it.foot = p.anchor === 'center' ? [-Math.floor(w / 2), -Math.floor(d / 2), w, d] : [0, 0, w, d];
         }
-      } else if (['block', 'template', 'effector'].includes(o.type)) continue;
+      } else if (['block', 'template', 'effector', 'stage'].includes(o.type)) continue;
       else it.pos = worldPos(scene, o, time);
       if (it.pos || it.points) out.push(it);
     }
@@ -312,8 +359,10 @@ function Schematic() {
   };
   return (
     <svg className="schem" ref={ref} onMouseDown={onDown} onContextMenu={(e) => e.preventDefault()}
+      onDragOver={(e) => { if (e.dataTransfer.types.includes('text/c4create')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } }}
+      onDrop={(e) => { const cr = e.dataTransfer.getData('text/c4create'); if (!cr) return; e.preventDefault(); const r = ref.current.getBoundingClientRect(); const at = [Math.round(WX(e.clientX - r.left) * 2) / 2, viewCenter.pos[1] || 64, Math.round(WZ(e.clientY - r.top) * 2) / 2]; try { core.dropCreate && core.dropCreate(JSON.parse(cr), at); } catch (_) {} }}
       onMouseMove={(e) => { const r = ref.current.getBoundingClientRect(); setHover([Math.floor(WX(e.clientX - r.left)), Math.floor(WZ(e.clientY - r.top))]); }} onMouseLeave={() => setHover(null)}
-      {...hp('Схема сцены сверху (север вверху). ЛКМ — выбрать и тянуть (по X/Z), колесо — масштаб, СКМ или Alt+мышь — сдвиг. Инструмент «Поворот» (R) крутит камеру.')}>
+      {...hp('Схема сцены сверху (север вверху). ЛКМ — выбрать и тянуть (по открытым осям X/Z), колесо — масштаб, СКМ или Alt+мышь — сдвиг. Инструмент «Поворот» (R) крутит камеру. Сюда можно перетащить плитку из «Создать».')}>
       <Grid {...{ SX, SZ, WX, WZ, size, view }} />
       {items.filter((it) => it.clones).map((it) => <path key={'cl' + it.o.id} d={cloneD(it)} fill={selSet.has(it.o.id) ? 'rgba(160,230,140,0.75)' : 'rgba(127,211,107,0.42)'} stroke="rgba(20,40,20,0.6)" strokeWidth={view.k > 4 ? 0.6 : 0} />)}
       {items.map((it) => {

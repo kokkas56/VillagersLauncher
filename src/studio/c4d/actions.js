@@ -4,12 +4,17 @@ import { objById, isAnimated, OBJ_LABEL, clonerOutput, structurePlacements } fro
 import { CLONER_MODE_LABEL, EFFECTOR_LABEL, CLONER_MODES, EFFECTOR_KINDS } from '../mograph.js';
 import { selToPos } from '../fields.jsx';
 import { uniqueId } from '../model.js';
-import { addObject, addActorObject, removeObjects, cloneObjects, groupObjects, intoCloner, patchObj, stageCutAt, deleteKeysAt, setKeyField } from './ops.js';
+import { addObject, addActorObject, removeObjects, cloneObjects, groupObjects, intoCloner, patchObj, stageCutAt, deleteKeysAt, setKeyField, liveKeys, pasteKeys } from './ops.js';
+
+// буфер ключей (Ctrl+C / Ctrl+V на таймлайне): [{ obj, ch, dt, k }] — dt от самого раннего ключа
+let keyClip = null;
+export function keyClipInfo() { return keyClip ? { n: keyClip.length, objs: [...new Set(keyClip.map((x) => x.obj))] } : null; }
 
 export const viewCenter = { pos: [0, 64, 0] }; // центр схемы сверху — туда встают новые объекты без игры
 
 export const TYPE_HINT = {
-  camera: 'Камера: откуда смотрит сцена. Двигай и крути её, ставь ключи (◇) — между ключами она пролетает сама. Какая камера снимает в какой момент — решает дорожка «Монтаж».',
+  camera: 'Камера: откуда смотрит сцена. Двигай и крути её, ставь ключи (◇) — между ключами она пролетает сама. Глаз в «Объектах» — смотреть через неё в игре. Какая камера снимает в какой момент — решает «Монтаж».',
+  stage: '«Монтаж»: какая камера снимает сцену. Свойство «Камера» с ключами-ступеньками: в момент ключа кадр переключается на выбранную камеру. Ключи — в «Атрибутах» (◇) или правым кликом по дорожке «Монтаж». Он один на сцену и не удаляется.',
   actor: 'Актёр: житель, сущность или игрок. Где он стоит в начале — тут; что делает — на его дорожке событий внизу.',
   light: 'Свет: невидимые блоки света (light) в мире на время сцены. Ключи «Включён» и «Яркость» — зажечь и погасить в нужный момент.',
   sound: 'Звук: проигрывается в моменты ключей «Играть». С местом — слышно оттуда, без места — «в ушах».',
@@ -21,7 +26,7 @@ export const TYPE_HINT = {
   block: 'Блок: что клонирует клонер. Лежит внутри клонера. Можно задать состояние (axis=y, facing=north…).',
   template: 'Шаблон постройки внутри клонера: клонер расставит копии постройки из библиотеки.',
   structure: 'Постройка из библиотеки «Строительство» (studio/structures): ставится целиком, поворот по 90°, отражение. Призрак в игре, «Запечь в мир», может появляться во время сцены.',
-  sky: 'Небо и солнце (как Sky/Sun в C4D): время суток, погода, дождь, туман, оттенок неба. Ставь ключи — 18:00 → 06:00 проходит через ночь. Прокрутка таймлайна двигает солнце в игре. Одно на сцену.'
+  sky: 'Небо и солнце: время суток, погода, дождь, туман, оттенок неба. Ставь ключи — 18:00 → 06:00 проходит через ночь. Прокрутка таймлайна двигает солнце в игре. Одно на сцену.'
 };
 
 async function placeHere(core) {
@@ -54,9 +59,9 @@ export function makeActions(core) {
       if (id) { setSel({ objs: [id] }); core.setHint(TYPE_HINT[type] || ''); }
       return id;
     },
-    async createActor(actor) {
+    async createActor(actor, at0) {
       if (!sceneRef.current) { toast('Сначала открой сцену', 'warn'); return; }
-      const at = await placeHere(core);
+      const at = at0 || await placeHere(core);
       let id = null;
       edit((s) => { const r = addActorObject(s, { spawn: { pos: at, yaw: 0 }, existing: false, despawnAtEnd: true, ...actor }); id = r.id; return r.scene; });
       if (id) setSel({ objs: [id] });
@@ -70,9 +75,9 @@ export function makeActions(core) {
         setSel({ objs: cur.objs });
         return;
       }
-      if (cur.stage != null) { edit((sc) => ({ ...sc, stage: (sc.stage || []).filter((_, i) => i !== cur.stage) })); setSel({}); return; }
       if (core.selKeys.length) { a.deleteKeys(); return; }
       if (!ids.length) return;
+      if (ids.every((id) => (objById(s, id) || {}).type === 'stage')) { toast('«Монтаж» один на сцену и не удаляется. Удалить можно его ключи (выдели на дорожке «Монтаж» → Del)', 'warn', 4500); return; }
       const actors = ids.map((id) => objById(s, id)).filter((o) => o && o.type === 'actor');
       if (actors.length) {
         const n = actors.reduce((k, o) => k + (((s.tracks || []).find((tr) => tr.kind === 'actor' && tr.actor === o.actor) || {}).events || []).length, 0);
@@ -80,6 +85,28 @@ export function makeActions(core) {
       }
       edit((sc) => removeObjects(sc, ids));
       setSel({});
+    },
+    copyKeys() {
+      const s = sceneRef.current;
+      const ks = s ? liveKeys(s, core.selKeys) : [];
+      if (!ks.length) { toast('Выбери ключи на таймлайне (рамкой или щелчком) — потом Ctrl+C', 'warn'); return false; }
+      const t0 = Math.min(...ks.map((k) => k.t));
+      keyClip = ks.map((k) => { const o = objById(s, k.obj); return { obj: k.obj, ch: k.ch, dt: k.t - t0, k: { ...o.anim[k.ch].find((x) => x.t === k.t) }, type: o.type }; });
+      toast('Скопировано ключей: ' + keyClip.length + '. Ctrl+V — вставить с бегунка', 'ok', 2200);
+      return true;
+    },
+    pasteKeys() {
+      const s = sceneRef.current;
+      if (!s || !keyClip || !keyClip.length) { toast('Буфер ключей пуст — выдели ключи и нажми Ctrl+C', 'warn'); return false; }
+      const t = timeRef.current;
+      // ключи одного объекта и выбран другой объект того же вида — вставить ему
+      const srcObjs = [...new Set(keyClip.map((x) => x.obj))];
+      const sel1 = selected().map((id) => objById(s, id)).filter(Boolean);
+      const to = srcObjs.length === 1 && sel1.length === 1 && sel1[0].id !== srcObjs[0] && sel1[0].type === keyClip[0].type ? sel1[0].id : null;
+      edit((sc) => pasteKeys(sc, keyClip, t, to));
+      core.setSelKeys(keyClip.map((x) => ({ obj: to || x.obj, ch: x.ch, t: Math.max(0, t + x.dt) })));
+      toast('Вставлено ключей: ' + keyClip.length + (to ? ' → «' + objById(s, to).name + '»' : '') + ' с ' + t + ' т', 'ok', 2000);
+      return true;
     },
     deleteKeys() {
       const ks = core.selKeys;
@@ -115,7 +142,7 @@ export function makeActions(core) {
     rename(id, name) { if (name && name.trim()) edit((s) => patchObj(s, id, { name: name.trim().slice(0, 80) })); },
     toggleEnabled(id) { edit((s) => patchObj(s, id, (o) => ({ ...o, enabled: o.enabled === false }))); },
     toggleVisible(id) { edit((s) => patchObj(s, id, (o) => ({ ...o, visible: o.visible === false }))); },
-    selectAll() { const s = sceneRef.current; if (s) setSel({ objs: s.objects.map((o) => o.id) }); },
+    selectAll() { const s = sceneRef.current; if (s) setSel({ objs: s.objects.filter((o) => o.type !== 'stage').map((o) => o.id) }); },
     stageCut(camId) {
       const t = timeRef.current;
       edit((s) => stageCutAt(s, camId, t));

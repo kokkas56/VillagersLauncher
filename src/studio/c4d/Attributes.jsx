@@ -1,4 +1,4 @@
-// Менеджер атрибутов (как в C4D): вкладки, числовые поля с перетаскиванием (тяни подпись влево-вправо),
+// Менеджер атрибутов: вкладки, числовые поля с перетаскиванием (тяни подпись влево-вправо),
 // ромб ◇ рядом с каждым анимируемым свойством: щелчок — ключ в момент бегунка (◆ — ключ есть, ◇ жёлтый — анимировано).
 // Ctrl+щелчок по подписи — вернуть значение по умолчанию.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -7,11 +7,13 @@ import I, { TypeIcon, KeyDiamond } from './icons.jsx';
 import { TYPE_HINT } from './actions.js';
 import {
   objById, propsAt, chanGet, defaultProps, OBJ_LABEL, CHANNEL_LABEL, isAnimated, keyAt, clonerOutput, clonerInputs,
-  INTERP_LABEL, childrenOf, actorPosAt, CHANNELS, linkableChannels, splitRef, withLinks, ticksToHM, hmToTicks, WEATHER_RU, DAY, mapLink
+  INTERP_LABEL, childrenOf, actorPosAt, CHANNELS, linkableChannels, splitRef, withLinks, ticksToHM, hmToTicks, WEATHER_RU, DAY, mapLink,
+  stageBlocks, stageKeys, activeCamera
 } from '../scene3d.js';
+import { letterboxOf, letterboxBar, LETTERBOX_ASPECTS, LETTERBOX_DEFAULT } from '../validate.js';
 import EntityAttrs from './EntityAttrs.jsx';
 import { CLONER_MODES, CLONER_MODE_LABEL, EFFECTOR_KINDS, EFFECTOR_LABEL, MAX_SEND } from '../mograph.js';
-import { patchObj, setChan, toggleKeys, keyState, setKeyField, stageSet, stageRemove } from './ops.js';
+import { patchObj, setChan, toggleKeys, keyState, setKeyField, stageCutAt, deleteKeysAt, retimeKey } from './ops.js';
 import { ACTOR_FIELDS, SCENE_FIELDS, VERB_DEFS, TRACKS } from '../schema.js';
 import { Field, selToPos } from '../fields.jsx';
 import { getItem, getPath, setPath, kindOfKey, fmtTicks, renameActor } from '../model.js';
@@ -29,7 +31,7 @@ export function KeyBtn({ state, onClick, hint }) {
   );
 }
 
-// числовое поле в стиле C4D: ввод, стрелки, перетаскивание по ▲▼ или по подписи
+// числовое поле: ввод, стрелки, перетаскивание по ▲▼ или по подписи
 export function Num({ value, onChange, onScrubStart, onScrubEnd, step = 1, min, max, int, unit, ax, className, disabled }) {
   const [txt, setTxt] = useState(fmt(value));
   const focused = useRef(false);
@@ -129,7 +131,6 @@ export default function AttributesPane({ act }) {
     const objs = sel.objs.map((id) => objById(scene, id)).filter(Boolean);
     const ev = sel.ev && getItem(scene, sel.ev);
     if (ev) body = <EventAttrs ev={ev} />;
-    else if (sel.stage != null && (scene.stage || [])[sel.stage]) body = <StageAttrs i={sel.stage} />;
     else if (objs.length === 1) body = <ObjAttrs key={objs[0].id} o={objs[0]} act={act} issues={issuesFor((x) => x.sel && x.sel.obj === objs[0].id)} />;
     else if (objs.length > 1) body = <MultiAttrs objs={objs} />;
     else body = <SceneAttrs issues={issuesFor((x) => !x.sel)} />;
@@ -137,7 +138,7 @@ export default function AttributesPane({ act }) {
   return (
     <div className="c4-pane" style={{ flex: 1, minHeight: 0 }}>
       <div className="c4-ptabs">
-        <button className={tab === 'attr' ? 'on' : ''} onClick={() => setTab('attr')} {...hp('Свойства выбранного: объекта, события, блока «Монтажа» или всей сцены.')}>Атрибуты</button>
+        <button className={tab === 'attr' ? 'on' : ''} onClick={() => setTab('attr')} {...hp('Свойства выбранного: объекта, события, «Монтажа» или всей сцены.')}>Атрибуты</button>
         <button className={tab === 'issues' ? 'on' : ''} onClick={() => setTab('issues')} {...hp('Проверка сцены: ошибки (сцена не соберётся) и предупреждения. Щёлкни — выберется нужное.')}>
           Проверка{core.issues.length + core.entIssues.length ? <small style={{ color: core.nErr + core.entErr ? '#ff8f86' : '#e8c070' }}>{core.nErr + core.entErr || core.issues.length + core.entIssues.length}</small> : null}
         </button>
@@ -196,15 +197,16 @@ const TABS = {
   template: [['object', 'Шаблон'], ['basic', 'Основное']],
   structure: [['object', 'Постройка'], ['bake', 'В мир'], ['basic', 'Основное'], ['coord', 'Координаты'], ['anim', 'Анимация']],
   actor: [['object', 'Актёр'], ['basic', 'Основное'], ['events', 'Дорожка']],
-  sky: [['object', 'Небо'], ['links', 'Связи'], ['basic', 'Основное'], ['anim', 'Анимация']]
+  sky: [['object', 'Небо'], ['links', 'Связи'], ['basic', 'Основное'], ['anim', 'Анимация']],
+  stage: [['object', 'Монтаж'], ['basic', 'Основное']]
 };
 // «Связи» есть у всего, что можно анимировать
-for (const k of Object.keys(TABS)) if ((CHANNELS[k] || []).length && !TABS[k].some((t) => t[0] === 'links')) TABS[k].push(['links', 'Связи']);
+for (const k of Object.keys(TABS)) if (k !== 'stage' && (CHANNELS[k] || []).length && !TABS[k].some((t) => t[0] === 'links')) TABS[k].push(['links', 'Связи']);
 
 function ObjAttrs({ o, act, issues }) {
   const core = useStudio();
   const tabs = TABS[o.type] || [['basic', 'Основное']];
-  const [tab, setTab] = useState(() => (tabs.some((t) => t[0] === 'object') && ['cloner', 'effector', 'block', 'template', 'actor', 'structure', 'sky'].includes(o.type) ? 'object' : tabs[0][0]));
+  const [tab, setTab] = useState(() => (tabs.some((t) => t[0] === 'object') && ['cloner', 'effector', 'block', 'template', 'actor', 'structure', 'sky', 'stage'].includes(o.type) ? 'object' : tabs[0][0]));
   useEffect(() => { if (!tabs.some((t) => t[0] === tab)) setTab(tabs[0][0]); }, [o.type]); // eslint-disable-line
   const cur = tabs.some((t) => t[0] === tab) ? tab : tabs[0][0];
   return (
@@ -235,6 +237,7 @@ function ObjAttrs({ o, act, issues }) {
       {cur === 'object' && o.type === 'actor' && <ActorTab o={o} />}
       {cur === 'events' && <ActorEventsTab o={o} />}
       {cur === 'object' && o.type === 'sky' && <SkyTab o={o} />}
+      {cur === 'object' && o.type === 'stage' && <StageTab o={o} />}
       {cur === 'links' && <LinksTab o={o} />}
     </>
   );
@@ -287,12 +290,12 @@ function BasicTab({ o }) {
       <ARow label="Имя" hint="Как объект называется в дереве и в игре (подпись у гизмо).">
         <Text value={o.name} onChange={(v) => e.setField('name', v)} />
       </ARow>
-      <ARow label="Включён" hint="Выключенный объект не попадает в сцену и в сборку (как красный крестик в C4D).">
+      {o.type !== 'stage' && <ARow label="Включён" hint="Выключенный объект не попадает в сцену и в сборку (красный крестик в «Объектах»).">
         <Check value={o.enabled !== false} onChange={(v) => e.setField('enabled', v)} />
-      </ARow>
-      <ARow label="Виден в игре" hint="Показывать ли гизмо объекта в игре, пока ты редактируешь. На сцену не влияет.">
+      </ARow>}
+      {o.type !== 'stage' && <ARow label="Виден в игре" hint="Показывать ли гизмо объекта в игре, пока ты редактируешь. На сцену не влияет.">
         <Check value={o.visible !== false} onChange={(v) => e.setField('visible', v)} />
-      </ARow>
+      </ARow>}
       <ARow label="Заметка" hint="Любой комментарий для себя.">
         <Text area value={o.note || ''} onChange={(v) => e.setField('note', v || undefined)} />
       </ARow>
@@ -356,10 +359,11 @@ function CameraTab({ o }) {
           </ARow>
         )}
       </Sec>
-      <Sec title="Камера Студии в игре">
+      <Sec title="Смотреть через камеру">
         <div className="c4-btnrow" style={{ paddingLeft: 8 }}>
-          <button className={'c4-btn sm' + (core.game.lookThrough === o.id ? ' prim' : '')} onClick={() => core.gameCmd.lookThrough(core.game.lookThrough === o.id ? null : o.id)} {...core.hp('Смотреть в игре через эту камеру: при прокрутке таймлайна вид едет вместе с ней.')}><I name="look" size={12} /> {core.game.lookThrough === o.id ? 'Смотрю через неё' : 'Смотреть через камеру'}</button>
+          <button className={'c4-btn sm' + (core.game.lookThrough === o.id ? ' prim' : '')} onClick={() => core.gameCmd.lookThrough(core.game.lookThrough === o.id ? null : o.id)} {...core.hp('Вид в игре становится этой камерой: двигаешь вид (Alt+мышь, ПКМ+WASD, Ctrl+колесо — угол обзора) — двигается камера, поля здесь меняются сами. С записью ● ставятся ключи, F9 — ключ вручную. Прокрутка таймлайна ведёт камеру по ключам. Esc — выйти.')}><I name="eye" size={12} /> {core.game.lookThrough === o.id ? 'Смотрю через неё — выйти' : 'Смотреть через камеру'}</button>
         </div>
+        {core.game.lookThrough === o.id && <div className="c4-ahint">Двигай вид в игре — камера едет следом. {core.autoKey ? 'Запись ● включена: изменения сразу ставят ключи в ' + core.time + ' т.' : 'Запись выключена: анимированные свойства ждут F9 (или ◇), неанимированные меняются сразу.'}</div>}
       </Sec>
     </>
   );
@@ -367,18 +371,66 @@ function CameraTab({ o }) {
 
 function CamStageTab({ o, act }) {
   const core = useStudio();
-  const st = (core.scene.stage || []).map((b, i) => ({ ...b, i })).filter((b) => b.cam === o.id);
+  const st = stageBlocks(core.scene).filter((b) => b.cam === o.id);
+  const so = core.scene.objects.find((x) => x.type === 'stage');
   return (
-    <Sec title="Монтаж (Stage)">
-      <div className="c4-ahint">«Монтаж» решает, какая камера снимает сцену в какой момент — как Stage в C4D. Блоки видно на дорожке «Монтаж» внизу; края блоков можно тянуть.</div>
-      <div className="c4-btnrow"><button className="c4-btn sm prim" onClick={() => act.stageCut(o.id)} {...core.hp('С момента бегунка сцену снимает эта камера (предыдущий блок укоротится).')}><I name="stage" size={12} /> С текущего кадра ({core.time} т)</button></div>
+    <Sec title="Монтаж">
+      <div className="c4-ahint">Какая камера снимает в какой момент, решает объект «Монтаж» (в «Объектах» первым): его ключи «Камера». Здесь — где снимает эта камера.</div>
+      <div className="c4-btnrow"><button className="c4-btn sm prim" onClick={() => act.stageCut(o.id)} {...core.hp('Ключ «Монтажа» в момент бегунка: с этого кадра сцену снимает эта камера.')}><I name="stage" size={12} /> Снимает с {core.time} т</button>
+        {so && <button className="c4-btn sm" onClick={() => core.setSel({ objs: [so.id] })} {...core.hp('Открыть «Монтаж» в «Атрибутах».')}>Открыть «Монтаж»</button>}</div>
       {st.map((b) => (
-        <div key={b.i} className="c4-aitem" style={{ margin: '3px 8px' }} onClick={() => core.setSel({ stage: b.i })}>
+        <div key={b.t0} className="c4-aitem" style={{ margin: '3px 8px' }} onClick={() => core.setTime(b.t0)}>
           <I name="film" size={12} /> <span className="grow">{fmtTicks(b.t0)} — {fmtTicks(b.t1)}</span><span className="dim">{b.t0}–{b.t1} т</span>
         </div>
       ))}
       {!st.length && <div className="c4-ahint">Эта камера пока ничего не снимает.</div>}
     </Sec>
+  );
+}
+
+// «Монтаж»: камера в момент бегунка с ромбом ключа и список переключений
+function StageTab({ o }) {
+  const core = useStudio();
+  const { scene, time, edit, hp } = core;
+  const cams = scene.objects.filter((x) => x.type === 'camera');
+  const keys = stageKeys(scene);
+  const cur = activeCamera(scene, time);
+  const ki = keyAt(o, 'camera', time);
+  const st = ki >= 0 ? 'key' : keys.length ? 'anim' : 'none';
+  const opts = cams.map((c) => [c.id, c.name]);
+  const setCam = (id) => {
+    if (!id) return;
+    if (keys.length || core.autoKey) edit((s) => stageCutAt(s, id, time), { key: 'stagecam' });
+    else edit((s) => patchObj(s, o.id, (x) => ({ ...x, props: { ...x.props, camera: id } })), { key: 'stagecam' });
+  };
+  const toggleKey = () => {
+    if (ki >= 0) edit((s) => deleteKeysAt(s, o.id, ['camera'], time));
+    else if (cur) edit((s) => stageCutAt(s, cur.id, time));
+  };
+  return (
+    <>
+      <Sec title="Кто снимает">
+        <div className="c4-ahint">«Монтаж» решает, какая камера снимает сцену. Свойство «Камера» меняется ступеньками: в момент ключа кадр переключается. Выбери камеру и нажми ◇ — ключ в момент бегунка ({time} т). То же — правый клик по дорожке «Монтаж» внизу.</div>
+        <ARow label="Камера" learnKey="stage-camera" hint={'Какая камера снимает в ' + time + ' т. Есть ключи — смена камеры ставит ключ в момент бегунка; ключей нет — это камера на всю сцену.'}
+          keyBtn={<KeyBtn state={st} onClick={toggleKey} hint={ki >= 0 ? 'Ключ «Монтажа» в этот момент. Щёлкни — убрать' : 'Поставить ключ: с ' + time + ' т снимает выбранная камера'} />}>
+          {cams.length ? <Select value={cur ? cur.id : ''} options={opts} onChange={setCam} /> : <span className="dim">камер нет — «Создать» → «Камеры»</span>}
+        </ARow>
+      </Sec>
+      <Sec title={'Переключения (' + keys.length + ')'}>
+        {!keys.length && <div className="c4-ahint">Ключей нет — всю сцену снимает «{cur ? cur.name : '—'}». Поставь бегунок туда, где нужна другая камера, выбери её выше и нажми ◇.</div>}
+        {keys.map((k, i) => {
+          const c = cams.find((x) => x.id === k.v);
+          return (
+            <div key={k.t} className={'c4-aitem' + (k.t === time ? ' on' : '')} style={{ margin: '3px 8px', gap: 6 }} onClick={() => core.setTime(k.t)} {...hp('Щёлкни — бегунок на ' + k.t + ' т.')}>
+              <I name="key" size={11} color="#e6c23c" />
+              <Num value={k.t} int min={0} unit="т" onChange={(v) => edit((s) => retimeKey(s, o.id, 'camera', k.t, v), { key: 'stk' + i })} />
+              <span style={{ flex: 1, minWidth: 0 }} onClick={(e) => e.stopPropagation()}><Select value={k.v} options={c ? opts : [[k.v, '(нет камеры ' + k.v + ')'], ...opts]} onChange={(v) => edit((s) => stageCutAt(s, v, k.t))} /></span>
+              <button className="c4-ib" style={{ width: 22, height: 22 }} title="Удалить ключ" onClick={(e) => { e.stopPropagation(); edit((s) => deleteKeysAt(s, o.id, ['camera'], k.t)); }}><I name="trash" size={12} /></button>
+            </div>
+          );
+        })}
+      </Sec>
+    </>
   );
 }
 
@@ -752,26 +804,6 @@ function EventAttrs({ ev }) {
 }
 function trKey(tr) { return tr.kind === 'actor' ? 'actor:' + tr.actor : tr.kind; }
 
-function StageAttrs({ i }) {
-  const core = useStudio();
-  const b = core.scene.stage[i];
-  const cams = core.scene.objects.filter((o) => o.type === 'camera');
-  return (
-    <>
-      <div className="c4-ahead"><I name="stage" size={16} color="#9fb0ff" /><div className="grow"><b>Монтаж: блок {i + 1}</b><div className="dim">какая камера снимает с {b.t0} по {b.t1} т</div></div>
-        <button className="c4-ib" title="Удалить блок" onClick={() => { core.edit((s) => stageRemove(s, i)); core.setSel({}); }}><I name="trash" size={14} /></button>
-      </div>
-      <Sec title="Блок «Монтажа»">
-        <ARow label="Камера" hint="Какая камера снимает в этом промежутке.">
-          <Select value={b.cam} options={cams.map((c) => [c.id, c.name])} onChange={(v) => core.edit((s) => stageSet(s, i, { cam: v }))} />
-        </ARow>
-        <ARow label="С (тик)" hint="Начало блока, в тиках (20 = 1 с)."><Num value={b.t0} int min={0} unit="т" onChange={(v) => core.edit((s) => stageSet(s, i, { t0: v }), { key: 'st0' + i })} /></ARow>
-        <ARow label="По (тик)" hint="Конец блока, в тиках."><Num value={b.t1} int min={1} unit="т" onChange={(v) => core.edit((s) => stageSet(s, i, { t1: v }), { key: 'st1' + i })} /></ARow>
-      </Sec>
-    </>
-  );
-}
-
 function MultiAttrs({ objs }) {
   const core = useStudio();
   return (
@@ -798,14 +830,56 @@ function SceneAttrs({ issues }) {
       <div className="c4-ahead"><TypeIcon type="scene" size={17} /><div className="grow"><b>Сцена [{s.title || s.id}]</b><div className="dim mono">{s.id}.json · {fmtTicks(s.length || 0)}</div></div></div>
       <div className="c4-atabs"><button className={tab === 'scene' ? 'on' : ''} onClick={() => setTab('scene')}>Сцена</button><button className={tab === 'links' ? 'on' : ''} onClick={() => setTab('links')} {...core.hp('Все «Связи» сцены: какое свойство ведёт какое.')}>Связи{(s.links || []).length ? <small>{s.links.length}</small> : null}</button></div>
       <Issues list={issues} />
-      {tab === 'links' ? <LinksTab o={null} /> : <div className="st-fields">
-        {SCENE_FIELDS.filter((f) => !f.when || f.when(s)).map((f) => (
-          <Field key={f.k} f={f} value={getPath(s, f.k)} ctx={ctx} onChange={(v) => core.edit((sc) => setPath(sc, f.k, v), { key: 's:' + f.k })} />
-        ))}
-      </div>}
+      {tab === 'links' ? <LinksTab o={null} /> : <>
+        <LetterboxSec />
+        <div className="st-fields">
+          {SCENE_FIELDS.filter((f) => !f.when || f.when(s)).map((f) => (
+            <Field key={f.k} f={f} value={getPath(s, f.k)} ctx={ctx} onChange={(v) => core.edit((sc) => setPath(sc, f.k, v), { key: 's:' + f.k })} />
+          ))}
+        </div>
+      </>}
     </>
   );
 }
+
+// ---------- «Кинорамка» (чёрные полосы) ----------
+const LB_HINT = 'Чёрные полосы — кинематографичный кадр. Это не угол обзора камеры: угол обзора (FOV) меняет ширину охвата, а рамка просто закрывает верх и низ экрана.';
+function LetterboxSec() {
+  const core = useStudio();
+  const s = core.scene;
+  const lb = letterboxOf((s.options || {}).letterbox);
+  const set = (patch) => core.edit((sc) => ({ ...sc, options: { ...(sc.options || {}), letterbox: { ...letterboxOf((sc.options || {}).letterbox), ...patch } } }), { key: 'lb:' + Object.keys(patch).join(',') });
+  const known = LETTERBOX_ASPECTS.some(([v]) => Math.abs(v - lb.aspect) < 0.005);
+  const [custom, setCustom] = useState(!known);
+  const bar = letterboxBar({ ...lb, on: true }, 16, 9) * 100;
+  const cam = activeCamera(s, core.time);
+  const fov = cam ? Math.round(propsAt(cam, core.time).fov || 70) : 70;
+  return (
+    <Sec title="Кинорамка">
+      <div className="c4-ahint">{LB_HINT}</div>
+      <ARow label="Включена" learnKey="lb-on" hint={'Показывать полосы, пока идёт сцена. ' + LB_HINT}><Check value={lb.on} onChange={(v) => set({ on: v })} /></ARow>
+      <ARow label="Пропорция" learnKey="lb-aspect" hint="Формат кадра (ширина к высоте). 2,39:1 — широкое кино, 1,85:1 — полосы тоньше, 16:9 — полос нет. Высота полос считается от окна игрока.">
+        <Select value={custom ? 'custom' : String(LETTERBOX_ASPECTS.find(([v]) => Math.abs(v - lb.aspect) < 0.005)[0])} options={[...LETTERBOX_ASPECTS.map(([v, l]) => [String(v), l]), ['custom', 'свой…']]}
+          onChange={(v) => { if (v === 'custom') { setCustom(true); return; } setCustom(false); set({ aspect: Number(v) }); }} />
+      </ARow>
+      {custom && <ARow label="Своя пропорция" hint="Ширина кадра к высоте, например 2,2 — это 2,2:1. 1,78 и меньше — полос нет."><Num value={lb.aspect} step={0.01} min={1} max={5} unit=":1" onChange={(v) => set({ aspect: v })} /></ARow>}
+      <ARow label="Цвет" hint="Цвет полос. Обычно чёрный; тёмно-синий или сепия — для настроения."><ColorField value={lb.color} onChange={(v) => set({ color: v })} /></ARow>
+      <ARow label="Непрозрачность" hint="1 — полосы сплошные, 0,5 — полупрозрачные (сквозь них видно мир)."><Num value={lb.opacity} step={0.05} min={0} max={1} onChange={(v) => set({ opacity: v })} /></ARow>
+      <ARow label="Появление" hint="За сколько тиков полосы выезжают в начале сцены (20 = 1 с, 0 — сразу)."><Num value={lb.inTicks} int min={0} unit="т" onChange={(v) => set({ inTicks: v })} /></ARow>
+      <ARow label="Уход" hint="За сколько тиков полосы уезжают в конце сцены."><Num value={lb.outTicks} int min={0} unit="т" onChange={(v) => set({ outTicks: v })} /></ARow>
+      <div className="c4-lbprev" data-learn="lb-preview" {...core.hp('Так рамка ляжет на экран 16:9. Угол обзора камеры при этом не меняется: видно то же самое, только верх и низ закрыты.')}>
+        <div className="hill" /><div className="who" /><div className="sun" />
+        {lb.on && bar > 0 && <><div className="bar t" style={{ height: bar + '%', background: lb.color, opacity: lb.opacity }} /><div className="bar b" style={{ height: bar + '%', background: lb.color, opacity: lb.opacity }} /></>}
+        <span className="fovbox" style={{ top: 'calc(' + (lb.on ? bar : 0) + '% + 4px)' }}>угол обзора {fov}° — не меняется</span>
+        <span className="cap" style={{ bottom: 'calc(' + (lb.on ? bar : 0) + '% + 4px)' }}>{lb.on ? (bar > 0 ? 'экран 16:9 · кадр ' + String(Math.round(lb.aspect * 100) / 100).replace('.', ',') + ':1' : 'полос нет (16:9)') : 'рамка выключена'}</span>
+      </div>
+      <ARow label="Рамка в видовом окне" hint="Показывать полосы поверх вида, пока смотришь через камеру (в игре и в Студии). На сцену не влияет.">
+        <Select value={core.lbShow || 'through'} options={[['through', 'при взгляде через камеру'], ['always', 'всегда'], ['never', 'не показывать']]} onChange={(v) => core.setLbShow(v)} />
+      </ARow>
+    </Sec>
+  );
+}
+void LETTERBOX_DEFAULT;
 
 // ---------- «Небо и солнце» (фаза 5) ----------
 // время показывается как ЧЧ:ММ (0 тиков = 06:00); ключи времени идут только вперёд — 18:00 → 06:00 проходит через ночь
@@ -891,7 +965,7 @@ export function LinksTab({ o }) {
   };
   return (
     <Sec title={o ? 'Связи «' + o.name + '»' : 'Связи сцены'}>
-      <div className="c4-ahint">Связь — одно свойство ведёт другое (как XPresso в C4D, но проще): <i>Небо.Время → Свет.Яркость</i> по таблице. Работает и при прокрутке таймлайна, и в игре. Быстро: перетащи подпись свойства (с точками) на другое свойство или на объект в дереве.</div>
+      <div className="c4-ahint">Связь — одно свойство ведёт другое: <i>Небо.Время → Свет.Яркость</i> по таблице. Работает и при прокрутке таймлайна, и в игре. Быстро: перетащи подпись свойства (с точками) на другое свойство или на объект в дереве.</div>
       {mine.map(({ l, i }) => <LinkCard key={i} l={l} i={i} />)}
       {!mine.length && <div className="c4-ahint">Связей нет.</div>}
       <div className="c4-btnrow"><button className="c4-btn sm prim" onClick={add} {...core.hp('Новая связь: откуда → куда, таблица значений.')}><I name="links" size={12} /> Связь</button></div>
