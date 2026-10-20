@@ -6,6 +6,7 @@ import {
 } from './scheme.js';
 import { condText, actionText, wrap, clip, docTitle, speakerName, evalCond } from './dialog.js';
 import { timeAtTick } from './scheme.js';
+import { FX_LIB } from './fxlib.js';
 import { HEAD, NW } from './dialog.js';
 
 export const CAT_COLOR = { event: '#e5534b', cond: '#e6c13c', action: '#4f9cf5', flow: '#a3a8b0', note: '#9a9a78' };
@@ -94,9 +95,10 @@ export function sActionText(a, refs) {
     case 'say': return whoTxt(a.say, refs) + ': «' + (a.text || '') + '»';
     case 'block': return 'блок ' + short(a.state) + ' ' + posTxt(a.block);
     case 'structure': return 'постройка «' + ((((refs && refs.structures) || []).find((x) => x.id === a.structure) || {}).name || a.structure || '?') + '» ' + posTxt(a.pos) + (a.rot ? ' ↻' + a.rot : '');
-    case 'fx': return 'эффект: ' + ({ fade_in: 'из темноты', fade_out: 'в темноту', flash: 'вспышка', shake: 'тряска', particles: 'частицы ' + short(a.name), story_fx: a.name || '?', title: '«' + (a.text || '') + '»' }[a.fx] || a.fx);
+    case 'fx': return 'эффект: ' + ({ fade_in: 'из темноты', fade_out: 'в темноту', flash: 'вспышка', shake: 'тряска', particles: 'частицы ' + short(a.name), story_fx: a.name || '?', title: '«' + (a.text || '') + '»' }[a.fx] || (FX_LIB[a.fx] ? FX_LIB[a.fx].label.toLowerCase() : a.fx));
     case 'message': return (a.to === 'all' ? 'всем' : a.to === 'near' ? 'рядом' : 'игроку') + ': «' + (a.message || '') + '»';
-    case 'tp': return 'перенести игрока в ' + posTxt(a.tp);
+    case 'tp': return 'перенести игрока в ' + posTxt(a.tp) + (a.dim ? ' (' + String(a.dim).replace(/^minecraft:/, '') + ')' : '');
+    case 'transition': return 'переход' + (a.transition && a.transition.video ? ' с видео «' + a.transition.video + '»' : a.transition && a.transition.scene ? ' со сценой «' + a.transition.scene + '»' : '') + ' → ' + posTxt(a.transition && a.transition.to && a.transition.to.pos);
     case 'effect': return short(a.effect) + ' ' + (a.level || 1) + ' на ' + (a.seconds || 0) + ' с';
     case 'weather': return 'погода: ' + ({ clear: 'ясно', rain: 'дождь', thunder: 'гроза' }[a.weather] || '?');
     case 'time': return 'время суток ' + a.time;

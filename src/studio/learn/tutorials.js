@@ -3,6 +3,8 @@
 //     layout? (макет, который открыть), target может перечислять запасные цели через запятую — берётся первая видимая; game?: { text, at?(c) → [x,y,z], entity?(c) → id } (подсказка в игре),
 //     done?(c) → true, когда шаг сделан; без done — кнопка «Готово» }
 // c (контекст проверки): { core, layout, modal, events:Set (что нажимал автор в этом сеансе) }
+import { AI_TUTORIALS } from './tutorialsAi.js';
+import { CINE_TUTORIALS } from './tutorialsCine.js'; // фаза 6, трек A
 const L = (k) => '[data-learn="' + k + '"]';
 const scene = (c) => c.core.scene;
 const objs = (c, type) => ((scene(c) && scene(c).objects) || []).filter((o) => !type || o.type === type);
@@ -27,7 +29,7 @@ export const TOPICS = [
   ['vox', '3D-модели в блоки', 'cube3'],
   ['sky', 'Небо, время и связи', 'sky'],
   ['ship', 'Сборка и выпуск', 'build'],
-  ['ai', 'Жители и их ИИ', 'actor', true],
+  ['ai', 'Жители и их ИИ', 'actor'],
   ['mode', 'Свой режим игры', 'play', true],
   ['worldgen', 'Генерация мира и биомы', 'world', true]
 ];
@@ -218,5 +220,8 @@ export const TUTORIALS = [
     ]
   }
 ];
+
+TUTORIALS.push(...CINE_TUTORIALS); // фаза 6, трек A: запекание, видео, переходы, эффекты (learn/tutorialsCine.js)
+TUTORIALS.push(...AI_TUTORIALS); // фаза 6, трек B: уроки «Жителей» (learn/tutorialsAi.js)
 
 export function tutorialById(id) { return TUTORIALS.find((t) => t.id === id) || null; }

@@ -5,6 +5,7 @@
 // { v:1, id, title, note, enabled, nodes: { <id>: { type, x, y, …поля вида…, выходы… } } }
 // Выходы узлов: next | then/else | outs[i] | body (+ next у цикла). Комментарий выходов не имеет.
 import { condKind, actionKind, checkConds, checkActions, isResId, isPos, isNum, isDocId, isVarName, checkSpeaker, OPS, ERR, WARN } from './validate.js';
+import { FX_LIB, checkFxEvent, checkTransition } from './fxlib.js';
 
 export const SCHEME_NODE_TYPES = ['event', 'cond', 'action', 'wait', 'sequence', 'random', 'loop', 'gate', 'once', 'comment'];
 export const SCHEME_NODE_LABEL = {
@@ -33,13 +34,16 @@ export const WHO_ZONE = ['player', 'any_player'];
 export const SCHEME_COND_EXTRA = ['zone', 'players_online', 'weather', 'dim', 'random'];
 export const SCHEME_COND_EXTRA_LABEL = { zone: 'Игрок в зоне', players_online: 'Игроков онлайн', weather: 'Погода', dim: 'Измерение', random: 'Случайно (доля)' };
 // действия схем: всё из диалогов + новые (порядок важен для распознавания вида)
-export const SCHEME_ACTION_EXTRA = ['spawn', 'despawn', 'move', 'say', 'block', 'structure', 'fx', 'message', 'tp', 'effect', 'weather', 'time', 'signal', 'scheme', 'gate', 'once'];
+export const SCHEME_ACTION_EXTRA = ['transition', 'spawn', 'despawn', 'move', 'say', 'block', 'structure', 'fx', 'message', 'tp', 'effect', 'weather', 'time', 'signal', 'scheme', 'gate', 'once'];
 export const SCHEME_ACTION_EXTRA_LABEL = {
   spawn: 'Создать актёра/моба', despawn: 'Убрать актёра/моба', move: 'Отправить идти', say: 'Сказать над головой', block: 'Поставить блок',
   structure: 'Поставить постройку', fx: 'Эффект', message: 'Сообщение', tp: 'Перенести игрока', effect: 'Эффект зелья', weather: 'Погода',
-  time: 'Время суток', signal: 'Подать сигнал', scheme: 'Вкл/выкл схему', gate: 'Открыть/закрыть ворота', once: 'Сбросить «Один раз»'
+  time: 'Время суток', signal: 'Подать сигнал', scheme: 'Вкл/выкл схему', gate: 'Открыть/закрыть ворота', once: 'Сбросить «Один раз»',
+  transition: 'Переход (перенос с видео/сценой)'
 };
-export const FX_KINDS = ['fade_in', 'fade_out', 'flash', 'shake', 'particles', 'story_fx', 'title'];
+export const FX_BASE_KINDS = ['fade_in', 'fade_out', 'flash', 'shake', 'particles', 'story_fx', 'title'];
+// фаза 6: и эффекты библиотеки (кроме существ и замедления — они только в сценах)
+export const FX_KINDS = [...FX_BASE_KINDS, ...Object.keys(FX_LIB).filter((k) => FX_LIB[k].track !== 'actor' && k !== 'slowmo')];
 export const MSG_STYLES = ['chat', 'title', 'actionbar'];
 export const WEATHER_KINDS = ['clear', 'rain', 'thunder'];
 export const ROTS = [0, 90, 180, 270];
@@ -62,7 +66,7 @@ export function schemeCondKind(c) {
 }
 export function schemeActionKind(a) {
   // { gate, set } и { once, reset } — раньше «set» (переменная) и «scheme»
-  if (a && typeof a === 'object' && !Array.isArray(a)) { if ('gate' in a) return 'gate'; if ('once' in a) return 'once'; }
+  if (a && typeof a === 'object' && !Array.isArray(a)) { if ('gate' in a) return 'gate'; if ('once' in a) return 'once'; if (typeof a.fx === 'string' && FX_LIB[a.fx]) return 'fx'; if ('transition' in a) return 'transition'; }
   const k = actionKind(a);
   if (k) return k;
   if (!a || typeof a !== 'object' || Array.isArray(a)) return null;
@@ -191,7 +195,9 @@ function checkSchemeAction(a, where, add, R, sel, info) {
       if (a.mirror !== undefined && !MIRRORS.includes(a.mirror)) add(ERR, w + ': отражение — нет, по X или по Z', sel);
       if (a.anchor !== undefined && !['corner', 'center'].includes(a.anchor)) add(ERR, w + ': точка — угол или центр низа', sel);
       return;
+    case 'transition': checkTransition(a.transition, w, (sev, msg) => add(sev, msg, sel), ERR, WARN, { scenes: R.scenes }); if (a.to !== undefined && !MSG_TO.includes(a.to)) add(ERR, w + ': кого — игрока, всех или рядом', sel); return;
     case 'fx':
+      if (FX_LIB[a.fx]) { checkFxEvent(a.fx, a, w, add, sel, ERR, WARN, { structures: R.structures, ctxPos: true }); return; }
       if (!FX_KINDS.includes(a.fx)) { add(ERR, w + ': неизвестный эффект «' + a.fx + '»', sel); return; }
       if (a.fx === 'particles') { if (!isResId(a.name)) add(ERR, w + ': частицы пиши вида minecraft:flame', sel); pe(a.pos, true); }
       if (a.fx === 'story_fx' && !a.name) add(ERR, w + ': не выбран сюжетный эффект', sel);
@@ -204,7 +210,7 @@ function checkSchemeAction(a, where, add, R, sel, info) {
       if (a.to === 'near' && a.radius !== undefined && (!isNum(a.radius) || a.radius <= 0)) add(ERR, w + ': радиус «рядом» — число больше нуля', sel);
       if (a.style !== undefined && !MSG_STYLES.includes(a.style)) add(ERR, w + ': вид — чат, заголовок или над хотбаром', sel);
       return;
-    case 'tp': pe(a.tp, false); return;
+    case 'tp': pe(a.tp, false); if (a.dim !== undefined && a.dim !== null && a.dim !== '' && !isResId(a.dim)) add(ERR, w + ': измерение пиши вида minecraft:the_nether', sel); return;
     case 'effect':
       if (!isResId(a.effect)) add(ERR, w + ': эффект пиши вида minecraft:speed', sel);
       if (!isNum(a.seconds) || a.seconds <= 0 || a.seconds > 3600) add(ERR, w + ': сколько секунд — от 1 до 3600', sel);

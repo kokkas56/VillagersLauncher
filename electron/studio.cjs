@@ -84,7 +84,7 @@ module.exports = function setupStudio({ handle, send, store, getGame }) {
   }
   function list() {
     ensure();
-    return fs.readdirSync(scenesDir()).filter((f) => f.endsWith('.json')).map((f) => {
+    return fs.readdirSync(scenesDir()).filter((f) => f.endsWith('.json') && !f.endsWith('.bake.json')).map((f) => { // .bake.json — запекание (фаза 6), не сцена
       const id = f.slice(0, -5);
       const file = path.join(scenesDir(), f);
       let mtime = 0;
@@ -499,8 +499,13 @@ module.exports = function setupStudio({ handle, send, store, getGame }) {
       }
     }
     for (const f of fs.readdirSync(sOut)) if (/\.(nbt|json)$/.test(f) && !keepS.has(f)) { fs.unlinkSync(path.join(sOut, f)); removed++; }
+    // фаза 6: запекания сцен и видео, отмеченные «Отдавать игрокам» (из <игра>/kokkstory-videos/<проект>/)
+    let cine = null;
+    try { cine = require('./studio-cine.cjs').shipBuild({ gameDir: gameDir(), projectDir: root(), projectId: curId(), out, sceneIds: scenes.map((s) => s.id) }); } catch (e) { issues.push({ sev: V.WARN, kind: 'project', doc: 'видео', sel: null, msg: 'Запекания и видео не скопированы: ' + e.message }); }
+    if (cine) for (const x of cine.skipped) issues.push({ sev: V.WARN, kind: 'scene', doc: x.id, sel: null, msg: 'Видео не уехало игрокам: ' + x.why });
+    if (cine) for (const id of cine.bakesStale) issues.push({ sev: V.WARN, kind: 'scene', doc: id, sel: null, msg: 'Запекание устарело (сцену меняли) — в сборку не взято, сцена сыграет вживую. Запеки заново' });
     writeJson(path.join(out, 'index.json'), { v: 5, project: curId(), name: project.name, world: project.world || null, built: new Date().toISOString(), scenes: scenes.map((s) => s.id), dialogs: docs.dialogs.map((d) => d.id), quests: docs.quests.map((d) => d.id), schemes: docs.schemes.map((d) => d.id), structures: structs.map((x) => x.id), entities: ents.length });
-    return { ok: true, issues, errors: 0, count: scenes.length, dialogs: docs.dialogs.length, quests: docs.quests.length, schemes: docs.schemes.length, structures: structs.length, entities: ents.length, removed, dir: out, project: curId() };
+    return { ok: true, cine, issues, errors: 0, count: scenes.length, dialogs: docs.dialogs.length, quests: docs.quests.length, schemes: docs.schemes.length, structures: structs.length, entities: ents.length, removed, dir: out, project: curId() };
   });
 
   // ---------- живая связь с игрой (фаза 5: надёжная) ----------

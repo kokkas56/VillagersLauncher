@@ -7,6 +7,8 @@ import {
   SCHEME_COND_EXTRA, SCHEME_COND_EXTRA_LABEL, SCHEME_ACTION_EXTRA, SCHEME_ACTION_EXTRA_LABEL, schemeCondKind, schemeActionKind,
   FX_KINDS, MSG_STYLES, WEATHER_KINDS, ROTS
 } from './scheme.js';
+import { FX_LIB, TRANSITION_DEFAULT } from './fxlib.js';
+import { FxFields } from './c4d/Cine.jsx'; // фаза 6: поля эффектов библиотеки
 
 // «Схемы» добавляют свои виды условий и действий (в диалогах и заданиях их нет — игра их там не поймёт)
 const S_COND_KINDS = [...COND_KINDS, ...SCHEME_COND_EXTRA];
@@ -118,6 +120,7 @@ export function actionDefault(k, refs) {
     case 'block': return { block: [0, 64, 0], state: 'minecraft:air' };
     case 'structure': return { structure: ((refs.structures || [])[0] || {}).id || '', pos: 'player', rot: 0, mirror: false };
     case 'fx': return { fx: 'flash' };
+    case 'transition': return { transition: { video: s ? s.id : '', scene: s ? s.id : '', to: { ...TRANSITION_DEFAULT.to, pos: [0, 64, 0] }, loadWhile: true, maxWait: 15, fadeIn: 20 } };
     case 'message': return { message: 'Привет, {player}!', to: 'player', style: 'chat' };
     case 'tp': return { tp: [0, 70, 0] };
     case 'effect': return { effect: 'minecraft:speed', seconds: 10, level: 1 };
@@ -474,7 +477,8 @@ function ActionFields({ a, set, refs, hp, scheme }) {
       <select className="input sm" value={a.anchor || 'corner'} onChange={(e) => set({ ...a, anchor: e.target.value === 'corner' ? undefined : e.target.value })} title="Точка — наименьший угол постройки (уже повёрнутой) или центр её низа"><option value="corner">точка — угол постройки</option><option value="center">точка — центр низа</option></select>
     </>);
     case 'fx': return (<>
-      <select className="input sm" value={a.fx} onChange={(e) => set({ fx: e.target.value, ...(e.target.value === 'title' ? { text: 'Глава 1' } : e.target.value === 'particles' ? { name: 'minecraft:flame', pos: 'player', count: 20 } : e.target.value === 'shake' ? { power: 0.6, ticks: 30 } : {}) })}>{FX_KINDS.map((f) => <option key={f} value={f}>{FX_LABEL[f]}</option>)}</select>
+      <select className="input sm" value={a.fx} onChange={(e) => set({ fx: e.target.value, ...(FX_LIB[e.target.value] ? JSON.parse(JSON.stringify(FX_LIB[e.target.value].def)) : {}), ...(FX_LIB[e.target.value] && FX_LIB[e.target.value].def.pos !== undefined ? { pos: 'event' } : {}), ...(e.target.value === 'title' ? { text: 'Глава 1' } : e.target.value === 'particles' ? { name: 'minecraft:flame', pos: 'player', count: 20 } : e.target.value === 'shake' ? { power: 0.6, ticks: 30 } : {}) })}>{FX_KINDS.map((f) => <option key={f} value={f}>{FX_LABEL[f] || (FX_LIB[f] ? FX_LIB[f].label + ' (библиотека)' : f)}</option>)}</select>
+      {FX_LIB[a.fx] && <>{FX_LIB[a.fx].fields.some((f) => f.k === 'pos') && <Row label="где"><SchemePos value={a.pos} refs={refs} onChange={(p) => set({ ...a, pos: p })} /></Row>}<FxFields a={a} set={set} refs={refs} hp={hp} api={refs.api} /></>}
       {a.fx === 'particles' && <><input className="input sm mono" list="sl-particles" value={a.name || ''} onChange={(e) => set({ ...a, name: e.target.value.trim() })} /><Row label="где"><SchemePos value={a.pos} refs={refs} onChange={(p) => set({ ...a, pos: p })} /></Row><Row label="сколько"><NumInput value={a.count || 20} int min={1} max={2000} onChange={(n) => set({ ...a, count: n || 1 })} /></Row></>}
       {a.fx === 'story_fx' && <input className="input sm mono" list="sl-storyFx" value={a.name || ''} placeholder="vortex" onChange={(e) => set({ ...a, name: e.target.value.trim() })} />}
       {a.fx === 'title' && <><input className="input sm" value={a.text || ''} placeholder="Заголовок" onChange={(e) => set({ ...a, text: e.target.value })} /><input className="input sm" value={a.sub || ''} placeholder="подзаголовок (необязательно)" onChange={(e) => set({ ...a, sub: e.target.value || undefined })} /></>}
@@ -488,7 +492,23 @@ function ActionFields({ a, set, refs, hp, scheme }) {
         <select className="input sm" value={a.style || 'chat'} onChange={(e) => set({ ...a, style: e.target.value })}>{MSG_STYLES.map((m) => <option key={m} value={m}>{STYLE_LABEL[m]}</option>)}</select>
       </div>
     </>);
-    case 'tp': return <PosField value={Array.isArray(a.tp) ? a.tp : null} onChange={(p) => set({ tp: p || [0, 64, 0] })} api={refs.api || { connected: false, toast: () => {}, tp: () => {} }} f={{ source: 'sel' }} />;
+    case 'tp': return (<>
+      <PosField value={Array.isArray(a.tp) ? a.tp : null} onChange={(p) => set({ ...a, tp: p || [0, 64, 0] })} api={refs.api || { connected: false, toast: () => {}, tp: () => {} }} f={{ source: 'sel' }} />
+      <select className="input sm" value={a.dim || ''} onChange={(e) => set({ ...a, dim: e.target.value || undefined })} title="Измерение назначения (фаза 6): пусто — то же, где игрок"><option value="">то же измерение</option><option value="minecraft:overworld">обычный мир</option><option value="minecraft:the_nether">Незер</option><option value="minecraft:the_end">Край</option>{a.dim && !['minecraft:overworld', 'minecraft:the_nether', 'minecraft:the_end'].includes(a.dim) && <option value={a.dim}>{a.dim}</option>}</select>
+    </>);
+    case 'transition': { const tr = { ...TRANSITION_DEFAULT, ...(a.transition || {}) }; const to = tr.to || {}; const setTr = (patch) => set({ ...a, transition: { ...tr, ...patch } }); return (<>
+      <Row label="видео" hint="Видео какой сцены играть, пока грузится место (если у игрока оно есть)." hp={hp}><select className="input sm" value={tr.video || ''} onChange={(e) => setTr({ video: e.target.value || undefined })}><option value="">— без видео —</option>{(refs.scenes || []).map((x) => <option key={x.id} value={x.id}>{x.title || x.id}</option>)}</select></Row>
+      <Row label="сцена" hint="Если видео у игрока нет — сыграть эту сцену вживую, потом перенести (экран «загрузка»)." hp={hp}><select className="input sm" value={tr.scene || ''} onChange={(e) => setTr({ scene: e.target.value || undefined })}><option value="">— без сцены —</option>{(refs.scenes || []).map((x) => <option key={x.id} value={x.id}>{x.title || x.id}</option>)}</select></Row>
+      <Row label="куда"><PosField value={Array.isArray(to.pos) ? to.pos : null} onChange={(p) => setTr({ to: { ...to, pos: p || [0, 64, 0] } })} api={refs.api || { connected: false, toast: () => {}, tp: () => {} }} f={{ source: 'sel' }} /></Row>
+      <div className="lg-two">
+        <select className="input sm" value={to.dim || 'minecraft:overworld'} onChange={(e) => setTr({ to: { ...to, dim: e.target.value } })} title="Измерение назначения"><option value="minecraft:overworld">обычный мир</option><option value="minecraft:the_nether">Незер</option><option value="minecraft:the_end">Край</option></select>
+        <label className="check small" title="Переносить сразу, пока идёт видео (мир грузится за кадром)"><input type="checkbox" checked={tr.loadWhile !== false} onChange={(e) => setTr({ loadWhile: e.target.checked })} /> грузить во время</label>
+      </div>
+      <div className="lg-two">
+        <Row label="ждать, с"><NumInput value={tr.maxWait == null ? 15 : tr.maxWait} min={1} max={120} onChange={(n) => setTr({ maxWait: n || 15 })} /></Row>
+        <Row label="проявл., т"><NumInput value={tr.fadeIn == null ? 20 : tr.fadeIn} int min={0} max={200} onChange={(n) => setTr({ fadeIn: n == null ? 20 : n })} /></Row>
+      </div>
+    </>); }
     case 'effect': return (<>
       <input className="input sm mono" list="sl-effects" value={a.effect || ''} onChange={(e) => set({ ...a, effect: e.target.value.trim() })} placeholder="minecraft:speed" />
       <div className="lg-two">

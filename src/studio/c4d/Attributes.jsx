@@ -18,6 +18,7 @@ import { ACTOR_FIELDS, SCENE_FIELDS, VERB_DEFS, TRACKS } from '../schema.js';
 import { Field, selToPos } from '../fields.jsx';
 import { getItem, getPath, setPath, kindOfKey, fmtTicks, renameActor } from '../model.js';
 import { isActorId, ERR } from '../validate.js';
+import { FxPreviewRow, CineSceneSec } from './Cine.jsx'; // фаза 6: «▶ в игре» у эффекта, «Запекание» и «Переход» сцены
 
 const r3 = (n) => Math.round(n * 1000) / 1000;
 
@@ -782,7 +783,7 @@ function EventAttrs({ ev }) {
   const kind = kindOfKey(sel.ev.track);
   const verb = kind === 'subtitles' ? 'line' : ev.do;
   const vd = (VERB_DEFS[kind] || {})[verb];
-  const ctx = { hp: core.hp, api: core.api, actors: scene.actors, projActors: core.project.actors || [], dialogs: core.dialogs };
+  const ctx = { hp: core.hp, api: core.api, actors: scene.actors, projActors: core.project.actors || [], dialogs: core.dialogs, structures: core.structures };
   const list = core.issues.filter((x) => x.sel && x.sel.track === sel.ev.track && x.sel.i === sel.ev.i);
   const onEvent = (k, v) => {
     const cur = sel.ev;
@@ -795,9 +796,10 @@ function EventAttrs({ ev }) {
         <button className="c4-ib" title="Удалить событие (Del)" onClick={() => { core.edit((s) => ({ ...s, tracks: s.tracks.map((tr) => (trKey(tr) === sel.ev.track ? { ...tr, events: tr.events.filter((_, i) => i !== sel.ev.i) } : tr)) })); core.setSel({ objs: sel.objs }); }}><I name="trash" size={14} /></button>
       </div>
       {vd && <div className="c4-ahint">{vd.hint}</div>}
+      <FxPreviewRow track={kind} ev={ev} />
       <Issues list={list} />
       <div className="st-fields">
-        {(vd ? vd.fields : []).map((f) => <Field key={f.k} f={f} value={ev[f.k]} ctx={ctx} onChange={(v) => onEvent(f.k, v)} />)}
+        {(vd ? vd.fields : []).filter((f) => !f.when || f.when(ev)).map((f) => <Field key={f.k} f={f} value={ev[f.k]} ctx={ctx} onChange={(v) => onEvent(f.k, v)} />)}
       </div>
     </>
   );
@@ -831,6 +833,7 @@ function SceneAttrs({ issues }) {
       <div className="c4-atabs"><button className={tab === 'scene' ? 'on' : ''} onClick={() => setTab('scene')}>Сцена</button><button className={tab === 'links' ? 'on' : ''} onClick={() => setTab('links')} {...core.hp('Все «Связи» сцены: какое свойство ведёт какое.')}>Связи{(s.links || []).length ? <small>{s.links.length}</small> : null}</button></div>
       <Issues list={issues} />
       {tab === 'links' ? <LinksTab o={null} /> : <>
+        <CineSceneSec />
         <LetterboxSec />
         <div className="st-fields">
           {SCENE_FIELDS.filter((f) => !f.when || f.when(s)).map((f) => (
