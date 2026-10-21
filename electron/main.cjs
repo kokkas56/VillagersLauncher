@@ -809,6 +809,18 @@ handle('game:status', () => ({ running: !!game, busy, what: busyWhat }));
 async function prepareGame({ verify = false, update = false, noUpdate = false } = {}) {
   const s = store.get();
   const gameDir = s.gameDir;
+  // прошлый запуск упал из-за повреждённой установки: переустановить NeoForge и проверить все файлы
+  const repair = s.repairPending;
+  if (repair) {
+    verify = true;
+    if (repair.neo) {
+      try {
+        const neoV = s.neoforgeVersion;
+        progress({ stage: 'neo', text: 'Чиню установку NeoForge…', indeterminate: true });
+        for (const d of [path.join(mc.VER_DIR, 'neoforge-' + neoV), path.join(mc.LIB_DIR, 'net', 'neoforged', 'minecraft-client-patched')]) fs.rmSync(d, { recursive: true, force: true });
+      } catch (e) { console.error('repair neo', e); }
+    }
+  }
   if (dirStatus().lost && !verify) throw new Error('Сборка не найдена в папке «' + gameDir + '». Если ты переименовал или перенёс папку — укажи её в «Настройках», иначе нажми «Скачать заново» в баннере сверху.');
   fs.mkdirSync(gameDir, { recursive: true });
   let manifest = null;
@@ -838,6 +850,7 @@ async function prepareGame({ verify = false, update = false, noUpdate = false } 
     await pack.sync(manifest, gameDir, progress, { verify });
   }
   if (hasPackIn(gameDir) && !samePath(store.get().lastPackDir, gameDir)) store.set({ lastPackDir: gameDir });
+  if (repair) store.set({ repairPending: null });
   return { installed, gameDir };
 }
 
@@ -879,8 +892,15 @@ handle('game:play', async (opts = {}) => {
     game = { proc, started: Date.now() };
     let tail = [];
     let shown = false;
+    // поломки установки, которые лаунчер умеет чинить сам (ловим по строкам лога игры)
+    const broken = { neo: false, jars: new Set() };
     const onLine = (d) => {
       const lines = d.toString('utf8').split(/\r?\n/).filter(Boolean);
+      for (const l of lines) {
+        if (/Mod ID: 'minecraft'.*Actual version: '\[MISSING\]'/.test(l)) broken.neo = true;
+        const z = /from mod ([^\s,]+\.jar), cause java\.util\.zip\.ZipException/.exec(l) || /ZipException[^\n]*?([\w.+\-]+\.jar)/.exec(l);
+        if (z) broken.jars.add(path.basename(z[1]));
+      }
       tail.push(...lines);
       if (tail.length > 400) tail = tail.slice(-400);
       send('game-log', lines);
@@ -903,6 +923,17 @@ handle('game:play', async (opts = {}) => {
       const s2 = store.get();
       store.set({ playTimeMs: (s2.playTimeMs || 0) + played, lastPlayed: Date.now() });
       if (win && !win.isDestroyed()) { win.show(); win.restore(); }
+      // повреждённая установка: битые jar удаляем (скачаются заново с полной проверкой), NeoForge переустановим при следующем запуске
+      if (broken.neo || broken.jars.size) {
+        const fixed = [];
+        if (!pack.isAuthorHome(gameDir)) {
+          for (const j of broken.jars) {
+            try { fs.rmSync(path.join(gameDir, 'mods', j), { force: true }); fixed.push(j); } catch (_) {}
+          }
+        }
+        store.set({ repairPending: { neo: broken.neo || !!(s2.repairPending && s2.repairPending.neo), verify: true, at: Date.now() } });
+        send('toast', { kind: 'warn', text: 'Игра не запустилась из-за повреждённых файлов' + (broken.neo ? ' (установка Minecraft/NeoForge)' : '') + (fixed.length ? ': ' + fixed.join(', ') : '') + '. Нажми «Играть» ещё раз — лаунчер всё перекачает и проверит сам.' });
+      }
       send('game-state', { state: 'stopped', code, crashed: code !== 0 && code !== null && played < 24 * 3600e3 && code !== 130, tail: tail.slice(-80) });
       if (!win || win.isDestroyed()) app.quit();
     });
