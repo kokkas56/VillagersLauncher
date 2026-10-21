@@ -292,7 +292,7 @@ export default function Author() {
     try {
       const r = await call('pack:publish', { title: title.trim(), text: text.trim(), noNews, early: earlyOn, freeAt: earlyOn ? freeAt : null, replaceTag: earlyOn && earlyTarget ? earlyTarget : null });
       if (r.newsWarn) toast(r.newsWarn, 'warn', 10000);
-      toast(`${t('Сборка')} #${r.version} ${t('залита!')} ${t('Загружено файлов')}: ${r.uploaded}, ${t('с Modrinth')}: ${r.fromModrinth}`, 'ok', 9000);
+      toast(`${t('Сборка')} #${r.version} ${t('залита!')} ${t('Загружено файлов')}: ${r.uploaded}, ${t('с Modrinth')}: ${r.fromModrinth}` + (r.healed ? ` · ${t('восстановлено пропавших')}: ${r.healed}` : ''), 'ok', 9000);
       setTitle(''); setText('');
       await scan();
       loadReleases();
