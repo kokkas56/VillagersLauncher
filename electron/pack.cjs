@@ -158,7 +158,7 @@ async function listReleases() {
   const list = await gh('GET', `/repos/${repo()}/releases?per_page=50`, token);
   let latestId = null;
   try { latestId = (await gh('GET', `/repos/${repo()}/releases/latest`, token)).id; } catch (_) {}
-  return list.filter((r) => r.tag_name.startsWith('pack-') && !r.draft).map((r) => ({
+  return list.filter((r) => r.tag_name.startsWith('pack-') && !r.draft && (r.assets || []).some((a) => a.name === 'manifest.json')).map((r) => ({
     id: r.id, tag: r.tag_name, name: r.name, body: r.body, date: r.published_at, latest: r.id === latestId, hidden: !!r.prerelease,
     version: parseInt(r.tag_name.slice(5), 10)
   }));
@@ -338,7 +338,24 @@ async function publish({ title, text, noNews, early: isEarly, freeAt, replaceTag
   // что нужно загрузить
   // для всех: файлы, лежащие только в раннем доступе (адрес воркера), заливаем заново — иначе бесплатные их не скачают
   const sameRel = (p) => replacing && p && p.enc === tag;
-  const need = ch.files.filter((f) => { const p = prev.get(f.path); return !p || p.sha1 !== f.sha1 || !p.url || (isEarlyFile(p) && !sameRel(p)); });
+  // файлы, лежащие в выпуске, которого уже нет (удалён или закрыт старым способом), заливаем заново — иначе у игроков «Не удалось скачать»
+  let liveTags = null;
+  try {
+    liveTags = new Set();
+    for (let page = 1; page <= 10; page++) {
+      const part = await gh('GET', `/repos/${R}/releases?per_page=100&page=${page}`, token);
+      for (const r of part) if (!r.draft) liveTags.add(r.tag_name);
+      if (part.length < 100) break;
+    }
+  } catch (_) { liveTags = null; }
+  const ghPrefix = `https://github.com/${R}/releases/download/`.toLowerCase();
+  const brokenUrl = (p) => {
+    if (!liveTags || !p || !p.url || !p.url.toLowerCase().startsWith(ghPrefix)) return false;
+    const t = decodeURIComponent(p.url.slice(ghPrefix.length).split('/')[0]);
+    return !liveTags.has(t);
+  };
+  let healed = 0;
+  const need = ch.files.filter((f) => { const p = prev.get(f.path); return !p || p.sha1 !== f.sha1 || !p.url || (isEarlyFile(p) && !sameRel(p)) || brokenUrl(p); });
   progress({ stage: 'publish', text: 'Ищу моды на Modrinth (их не нужно заливать)…', indeterminate: true });
   const jars = need.filter((f) => f.path.startsWith('mods/') && f.path.endsWith('.jar'));
   const mr = await modrinthLookup(jars.map((f) => f.sha1));
@@ -351,9 +368,10 @@ async function publish({ title, text, noNews, early: isEarly, freeAt, replaceTag
     const p = prev.get(f.path);
     const entry = { path: f.path, sha1: f.sha1, size: f.size };
     if (optional.has(f.path)) entry.optional = true;
-    if (p && p.sha1 === f.sha1 && p.url && (!isEarlyFile(p) || sameRel(p))) { entry.url = p.url; if (sameRel(p)) entry.enc = tag; }
+    if (p && p.sha1 === f.sha1 && p.url && (!isEarlyFile(p) || sameRel(p)) && !brokenUrl(p)) { entry.url = p.url; if (sameRel(p)) entry.enc = tag; }
     else if (mr[f.sha1]) { entry.url = mr[f.sha1].url; entry.source = 'modrinth'; }
     else {
+      if (p && p.sha1 === f.sha1 && brokenUrl(p)) healed++;
       let name = safeAssetName(f.sha1, f.path);
       while (usedNames.has(name.toLowerCase())) name = 'x' + name;
       usedNames.add(name.toLowerCase());
@@ -465,7 +483,7 @@ async function publish({ title, text, noNews, early: isEarly, freeAt, replaceTag
       }, `Новость #${version}`);
     }
   } catch (e) { newsWarn = 'Сборка залита, но новость не удалось скрыть: ' + e.message; }
-  return { version, tag, uploaded: uploads.length, fromModrinth: Object.keys(mr).length, files: files.length, newsWarn };
+  return { version, tag, uploaded: uploads.length, healed, fromModrinth: Object.keys(mr).length, files: files.length, newsWarn };
 }
 
 
@@ -526,7 +544,8 @@ async function openEarly(tag, progress = () => {}) {
   const old = (pr.assets || []).find((a) => a.name === 'manifest.json');
   if (old) await gh('DELETE', `/repos/${pub}/releases/assets/${old.id}`, token).catch(() => {});
   await gh('POST', `https://uploads.github.com/repos/${pub}/releases/${pr.id}/assets?name=manifest.json`, token, Buffer.from(JSON.stringify(m)), { 'Content-Type': 'application/json' });
-  await gh('PATCH', `/repos/${pub}/releases/${pr.id}`, token, { draft: false, make_latest: 'true' });
+  // (выпуск мог остаться «хранилищем» после закрытия в ранний доступ — снова обычная открытая версия)
+  await gh('PATCH', `/repos/${pub}/releases/${pr.id}`, token, { draft: false, prerelease: false, make_latest: 'true', name: '#' + rel.version + (rel.title ? ' ' + rel.title : ''), body: text + counts });
   // зашифрованный выпуск больше не нужен: те, у кого он стоит, обновятся на открытый
   await early.updateRelease(tag, { opened: true });
   await gh('DELETE', `/repos/${pub}/releases/${er.id}`, token).catch(() => {});
@@ -575,9 +594,11 @@ async function closeToEarly(tag, progress = () => {}) {
     await gh('DELETE', `/repos/${pub}/releases/${er.id}`, token).catch(() => {});
     throw e;
   }
-  // открытый выпуск убираем (файлы старых версий, на которые ссылаются другие выпуски, не трогаем)
-  await gh('DELETE', `/repos/${pub}/releases/${pr.id}`, token).catch(() => {});
-  await gh('DELETE', `/repos/${pub}/git/refs/tags/${encodeURIComponent(tag)}`, token).catch(() => {});
+  // открытый выпуск НЕ удаляем: более новые версии берут из него неизменённые файлы (иначе у игроков «Не удалось скачать»).
+  // Убираем только его манифест — версия пропадает из списка и не скачивается, файлы остаются хранилищем.
+  const om = (pr.assets || []).find((a) => a.name === 'manifest.json');
+  if (om) await gh('DELETE', `/repos/${pub}/releases/assets/${om.id}`, token).catch(() => {});
+  await gh('PATCH', `/repos/${pub}/releases/${pr.id}`, token, { prerelease: true, make_latest: 'false', name: '(закрыт, файлы для других версий) #' + version, body: 'Эта версия закрыта в ранний доступ (' + newTag + '). Файлы оставлены: их используют более новые версии.' }).catch(() => {});
   try { const c = await early.config(true); if (!c.latest || c.latest.version < version) await early.setConfig({ latest: { version, title, freeAt: null } }); } catch (_) {}
   return newTag;
 }
