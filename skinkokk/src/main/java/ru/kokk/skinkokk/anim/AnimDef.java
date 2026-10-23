@@ -1,10 +1,15 @@
 package ru.kokk.skinkokk.anim;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 import com.google.gson.JsonArray;
@@ -30,6 +35,55 @@ public final class AnimDef {
     public final List<Event> events;
     /** true — из мода (assets/skinkokk/anims). */
     public final boolean builtin;
+    /** Свои кости анимации (группа, предмет, кубик) — «родитель раньше детей», без кругов и неизвестных родителей. */
+    public final List<Bone> bones;
+    /** Кость тела → id группы, которая её двигает (туловище в группе несёт голову и руки, если они не в своей группе). */
+    public final Map<String, String> groupOf;
+    /** Есть предметы или кубики — их рисует слой {@code AnimBones}. */
+    public final boolean drawBones;
+
+    public static final int MAX_BONES = 16;
+    static final Pattern BONE_ID = Pattern.compile("x_[a-z0-9_]{1,40}");
+    static final Pattern ITEM_ID = Pattern.compile("[a-z0-9_.-]+:[a-z0-9_./-]+");
+    /** Кости тела, к которым можно крепить свои кости. */
+    static final Set<String> PARENTABLE = Set.of("root", "body", "head", "hat", "right_arm", "left_arm", "right_leg", "left_leg", "arms", "nose");
+    /** Кости тела, которые можно положить в группу. */
+    static final Set<String> GROUPABLE = Set.of("body", "head", "right_arm", "left_arm", "right_leg", "left_leg", "arms");
+    static final String[] BODY_CARRIED = {"head", "arms", "right_arm", "left_arm"};
+
+    /**
+     * Своя кость (формат «bones» Студии): группа-пустышка (двигает кости тела из children вокруг своей опоры), предмет
+     * (item, display hand|fixed) или кубик (from, size, color). pivot — пиксели в пространстве родителя, rot — градусы.
+     */
+    public static final class Bone {
+        public static final int GROUP = 0, ITEM = 1, CUBE = 2;
+        public final String id, name, parent, item, display;
+        public final int kind, color;
+        public final float[] pivot, rot, from, size;
+        public final List<String> children;
+        /** Кость тела (или root), к которой цепь своих костей крепится в итоге. */
+        public String anchor = "root";
+        /** Вся цепь до root — группы: такая группа может двигать кости тела. */
+        public boolean rootChain;
+        /** Свои кости сверху вниз: от первой под anchor до этой (включительно). */
+        public Bone[] chain = new Bone[0];
+
+        Bone(String id, String name, int kind, String parent, float[] pivot, float[] rot, List<String> children, String item, String display, float[] from,
+             float[] size, int color) {
+            this.id = id;
+            this.name = name;
+            this.kind = kind;
+            this.parent = parent;
+            this.pivot = pivot;
+            this.rot = rot;
+            this.children = children;
+            this.item = item;
+            this.display = display;
+            this.from = from;
+            this.size = size;
+            this.color = color;
+        }
+    }
 
     /** Дорожка кости: три канала (null — канала нет). */
     public static final class Track {
@@ -157,6 +211,99 @@ public final class AnimDef {
         }
         ev.sort((a, b) -> Integer.compare(a.t, b.t));
         this.events = Collections.unmodifiableList(ev);
+        this.bones = parseBones(o);
+        Map<String, String> gof = new HashMap<>();
+        boolean draw = false;
+        for (Bone b : bones) {
+            if (b.kind != Bone.GROUP) draw = true;
+            else if (b.rootChain) for (String c : b.children) gof.putIfAbsent(c, b.id);
+        }
+        String bodyGroup = gof.get("body");
+        if (bodyGroup != null) for (String c : BODY_CARRIED) gof.putIfAbsent(c, bodyGroup);
+        this.groupOf = Collections.unmodifiableMap(gof);
+        this.drawBones = draw;
+    }
+
+    /** Свои кости: безопасные пределы, не больше {@link #MAX_BONES}, мусор пропускается. */
+    private static List<Bone> parseBones(JsonObject o) {
+        if (!o.has("bones") || !o.get("bones").isJsonArray()) return List.of();
+        Map<String, Bone> byId = new LinkedHashMap<>();
+        for (JsonElement el : o.getAsJsonArray("bones")) {
+            if (byId.size() >= MAX_BONES) break;
+            if (!el.isJsonObject()) continue;
+            JsonObject b = el.getAsJsonObject();
+            String id = str(b, "id", "");
+            if (!BONE_ID.matcher(id).matches() || byId.containsKey(id) || PARENTABLE.contains(id)) continue;
+            int kind = switch (str(b, "kind", "group")) {
+                case "group" -> Bone.GROUP;
+                case "item" -> Bone.ITEM;
+                case "cube" -> Bone.CUBE;
+                default -> -1;
+            };
+            if (kind < 0) continue;
+            String item = str(b, "item", "").trim();
+            if (kind == Bone.ITEM && !ITEM_ID.matcher(item).matches()) continue;
+            List<String> ch = new ArrayList<>();
+            if (kind == Bone.GROUP && b.has("children") && b.get("children").isJsonArray()) {
+                for (JsonElement c : b.getAsJsonArray("children")) {
+                    if (c.isJsonPrimitive() && GROUPABLE.contains(c.getAsString()) && !ch.contains(c.getAsString())) ch.add(c.getAsString());
+                }
+            }
+            int color = 0xC08040;
+            String cs = str(b, "color", "");
+            if (cs.matches("#[0-9a-fA-F]{6}")) color = Integer.parseInt(cs.substring(1), 16);
+            byId.put(id, new Bone(id, str(b, "name", id), kind, str(b, "parent", "root"), vec(b, "pivot", 0, -64, 64), vec(b, "rot", 0, -360, 360),
+                    Collections.unmodifiableList(ch), item, "fixed".equals(str(b, "display", "hand")) ? "fixed" : "hand", vec(b, "from", -2, -32, 32),
+                    vec(b, "size", 4, 0.1f, 32), color));
+        }
+        List<Bone> ok = new ArrayList<>();
+        for (Bone b : byId.values()) {
+            ArrayDeque<Bone> chain = new ArrayDeque<>();
+            Set<String> seen = new HashSet<>();
+            Bone cur = b;
+            boolean good = true, groups = true;
+            while (true) {
+                if (!seen.add(cur.id)) {
+                    good = false; // круг
+                    break;
+                }
+                chain.addFirst(cur);
+                if (cur.kind != Bone.GROUP) groups = false;
+                Bone p = byId.get(cur.parent);
+                if (p == null) break;
+                cur = p;
+            }
+            if (!good || !PARENTABLE.contains(cur.parent)) continue;
+            b.anchor = cur.parent;
+            b.rootChain = groups && "root".equals(cur.parent);
+            b.chain = chain.toArray(new Bone[0]);
+            ok.add(b);
+        }
+        ok.sort(Comparator.comparingInt(x -> x.chain.length));
+        return Collections.unmodifiableList(ok);
+    }
+
+    private static float[] vec(JsonObject o, String k, float def, float lo, float hi) {
+        float[] v = {def, def, def};
+        JsonElement e = o.get(k);
+        if (e != null && e.isJsonArray()) {
+            JsonArray a = e.getAsJsonArray();
+            for (int i = 0; i < 3 && i < a.size(); i++) {
+                try {
+                    float f = a.get(i).getAsFloat();
+                    if (Float.isFinite(f)) v[i] = f;
+                } catch (RuntimeException x) {
+                    // мусор — значение по умолчанию
+                }
+            }
+        }
+        for (int i = 0; i < 3; i++) v[i] = Math.max(lo, Math.min(hi, v[i]));
+        return v;
+    }
+
+    public Bone bone(String id) {
+        for (Bone b : bones) if (b.id.equals(id)) return b;
+        return null;
     }
 
     /** Разобрать JSON анимации; бросает IllegalArgumentException с русским текстом. */

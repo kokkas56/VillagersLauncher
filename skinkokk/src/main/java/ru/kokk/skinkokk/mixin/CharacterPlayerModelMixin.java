@@ -35,6 +35,8 @@ public abstract class CharacterPlayerModelMixin {
         try {
             CharacterData d = CharRender.bodyFor(entity);
             if (d != null) skinkokk$bodyUndo = Proportions.apply((PlayerModel<?>) (Object) this, d, null);
+            // второй слой головы под причёской (лицо дорисует CharModel, если выбрано «кроме лица»)
+            if (CharRender.hideHatLayer(entity)) ((PlayerModel<?>) (Object) this).hat.visible = false;
         } catch (RuntimeException ignored) {
             // настройки ещё не загружены и т. п. — без телосложения
         }

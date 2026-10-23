@@ -114,6 +114,15 @@ public final class SkinKokkCharacters {
         Proportions.undo(model, undo);
     }
 
+    /** Спрятать ли второй слой головы скина (под причёской персонажа; лицо дорисует {@link #renderParts}). */
+    public static boolean hideHatLayer(@Nullable String json, ItemStack head) {
+        try {
+            return CharRender.hideHatLayer(parse(json), true, head);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     /**
      * Дорисовать части персонажа на уже нарисованной модели (поза модели — та, что сейчас стоит). key — кто это
      * (для физики), age — его возраст в тиках с долей, walking — идёт ли (шаг для пружин). head/chest — что надето
@@ -130,7 +139,7 @@ public final class SkinKokkCharacters {
             boolean armourChest = plate && CharacterConfig.CHEST_ARMOR.get() == CharacterConfig.ChestArmor.ARMOR;
             boolean hideHead = head != null && !head.isEmpty() && CharacterConfig.HIDE_UNDER_HELMET.get();
             CharRender.Opts o = new CharRender.Opts(true, showChest, true, hideHead, chest != null && chest.getItem() instanceof ElytraItem, plate,
-                    armourChest ? chest : ItemStack.EMPTY);
+                    armourChest ? chest : ItemStack.EMPTY, true, false);
             CharPhysics.Body phys = CharPhysics.lobby(key == null ? "?" : key, cm, ageTicks, walking, CharacterConfig.PHYSICS_STRENGTH.get().floatValue());
             CharRender.render(model, ps, buf, cm, skin, light, OverlayTexture.NO_OVERLAY, color, phys, ageTicks - (float) Math.floor(ageTicks), o, null);
         } catch (RuntimeException e) {

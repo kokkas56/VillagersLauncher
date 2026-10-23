@@ -16,9 +16,10 @@ export const PATTERN_HINTS = {
 export const MAX_JSON = 16384;
 
 export const DEFAULT_CHARACTER = Object.freeze({
-  v: 1, on: true, gender: 'male', body: 'normal', height: 1, arms: 'auto', chest: { size: 0.45, phys: 0.6 }, phys: 1, parts: []
+  v: 1, on: true, gender: 'male', body: 'normal', height: 1, arms: 'auto', chest: { size: 0.45, phys: 0.6, gap: 0.4, height: 1.5, tilt: 0.5, cleave: 0.3 }, phys: 1, hatLayer: 'face', parts: []
 });
 
+export const HAT_LAYERS = ['face', 'hide', 'show'];
 const HEX = /^#?[0-9a-fA-F]{6}$/;
 const ID = /^[a-z0-9_]{1,24}$/;
 const clamp = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d; };
@@ -34,8 +35,12 @@ export function cleanCharacter(c) {
   const out = {
     v: 1, on: c.on !== false, gender: female ? 'female' : 'male', body: BODIES.includes(c.body) ? c.body : 'normal',
     height: clamp(c.height, 0.9, 1.08, 1), arms: ['slim', 'wide'].includes(c.arms) ? c.arms : 'auto',
-    chest: { size: clamp(c.chest && c.chest.size, 0, 1, 0.45), phys: clamp(c.chest && c.chest.phys, 0, 1, 0.6) },
-    phys: clamp(c.phys, 0, 1, 1), parts: []
+    chest: {
+      size: clamp(c.chest && c.chest.size, 0, 1, 0.45), phys: clamp(c.chest && c.chest.phys, 0, 1, 0.6),
+      gap: clamp(c.chest && c.chest.gap, -1, 2, 0.4), height: clamp(c.chest && c.chest.height, -0.5, 3, 1.5),
+      tilt: clamp(c.chest && c.chest.tilt, 0, 1, 0.5), cleave: clamp(c.chest && c.chest.cleave, 0, 1, 0.3)
+    },
+    phys: clamp(c.phys, 0, 1, 1), hatLayer: HAT_LAYERS.includes(c.hatLayer) ? c.hatLayer : 'face', parts: []
   };
   const single = new Set(); const clothes = new Set();
   for (const p of Array.isArray(c.parts) ? c.parts : []) {
@@ -199,6 +204,42 @@ export function patternSwatch(c, style = 'smooth', size = 8, scale = 3) {
 // ---------------------------------------------------------------- кости + атлас
 const ATLAS_W = 128, ATLAS_MAX_H = 256;
 
+// ---------------------------------------------------------------- слои (как Layering.java в моде)
+// Кубы-оболочки (с раздуванием) одной группы получают каждый свою толщину слоя, головной убор поверх причёски чуть
+// увеличивается вокруг центра головы, а раздувание обходит слои ванили (куртка 0.25, «шапка» и поножи 0.5, броня 1.0).
+const LAYER_STEP = 0.035, OVER_HAIR = 1.08, HEAD_C = [0, -4, 0];
+const NO_SCALE = new Set(['glasses']);
+const AVOID = [[0.2, 0.3], [0.42, 0.57], [0.94, 1.06]];
+const GROUPS = ['head', 'body', 'right_arm', 'left_arm', 'right_leg', 'left_leg'];
+export function scalePivot(p, rootBone) {
+  const f = OVER_HAIR;
+  if (!rootBone) return p.map((v) => v * f);
+  return p.map((v, i) => HEAD_C[i] + (v - HEAD_C[i]) * f);
+}
+export function layerCube(from0, size, grow0, scale, shells, group) {
+  const from = from0.slice(), grow = grow0.slice();
+  const shell = Math.max(...grow) > 0.001;
+  if (scale) for (let i = 0; i < 3; i++) { const half = size[i] / 2, center = from[i] + half; from[i] = center * OVER_HAIR - half; grow[i] = (half + grow[i]) * OVER_HAIR - half; }
+  if (shell && group >= 0) {
+    let add = LAYER_STEP * (shells[group]++);
+    const m = Math.max(...grow) + add;
+    for (const [lo, hi] of AVOID) if (m > lo && m < hi) add += hi - m;
+    for (let i = 0; i < 3; i++) grow[i] += add;
+  }
+  return { from, grow };
+}
+/** Форма груди (как Layering.chest): side 0 — правая (−X). Наклон «+» опускает перед. */
+export function chestShape(ch, side) {
+  const s = ch.size, w = 3 + s, dep = 0.8 + 2.6 * s;
+  let px = Math.min(w / 2 + ch.gap / 2, 4.3 - w / 2);
+  px = Math.max(px, w / 2 - 1);
+  const tilt = -5 + 45 * ch.tilt, cleave = 20 * ch.cleave;
+  return {
+    pivot: [side === 0 ? -px : px, ch.height, -2], rot: [tilt, side === 0 ? cleave : -cleave, 0],
+    zc: (-dep + 0.5) / 2, gx: (w - 4) / 2, gy: 0.1 * s, gz: (dep + 0.5 - 1) / 2
+  };
+}
+
 /**
  * Кости персонажа в формате оснастки (§2.2) + атлас. Кубы: uv — texOffs в атласе (развёртка Minecraft) или, при
  * tex: 'skin', в скине игрока; color — запасной сплошной цвет; grow — раздувание по осям.
@@ -209,15 +250,27 @@ export function buildCharacter(character) {
   const names = new Set();
   const paints = [];
   let sx = 0, sy = 0, sh = 0, usedH = 0;
+  const hair = c.parts.some((p) => p.k === 'hair');
+  const shells = GROUPS.map(() => 0);
+  const groupOf = {};
   c.parts.forEach((part) => {
     const def = partDef(part.k, part.id);
     if (!def) return;
+    const overHair = hair && part.k === 'clothes' && !NO_SCALE.has(part.id);
     for (const b of def.bones) {
       if (names.has(b.name)) continue;
+      const group = GROUPS.includes(b.parent) ? b.parent : groupOf[b.parent];
+      if (!group) continue;
       names.add(b.name);
+      groupOf[b.name] = group;
+      const scale = overHair && group === 'head';
+      const pivot = scale ? scalePivot(b.pivot, GROUPS.includes(b.parent)) : b.pivot;
       const cubes = [];
-      for (const cu of b.cubes) {
-        const g = Array.isArray(cu.grow) ? cu.grow : [cu.grow || 0, cu.grow || 0, cu.grow || 0];
+      for (const cu0 of b.cubes) {
+        const g0 = Array.isArray(cu0.grow) ? cu0.grow : [cu0.grow || 0, cu0.grow || 0, cu0.grow || 0];
+        const L = layerCube(cu0.from, cu0.size, g0, scale, shells, GROUPS.indexOf(group));
+        const cu = { ...cu0, from: L.from };
+        const g = L.grow;
         const color = '#' + slotC(cu.slot || 'base', part.c).toString(16).padStart(6, '0');
         if (cu.tex === 'skin') { cubes.push({ from: cu.from, size: cu.size, uv: cu.uv || [0, 8], tex: 'skin', grow: g, mirror: !!cu.mirror, color: '#e0b089' }); continue; }
         const w = Math.round(cu.size[0]), h = Math.round(cu.size[1]), d = Math.round(cu.size[2]);
@@ -227,23 +280,23 @@ export function buildCharacter(character) {
         if (sy + rh > ATLAS_MAX_H) continue;
         const u = sx, v = sy;
         sx += rw; sh = Math.max(sh, rh); usedH = Math.max(usedH, v + rh);
-        paints.push({ u, v, w, h, d, cube: cu, col: part.c, style: def.style });
+        paints.push({ u, v, w, h, d, cube: cu0, col: part.c, style: def.style });
         cubes.push({ from: cu.from, size: cu.size, uv: [u, v], grow: g, color });
       }
-      const bone = { name: b.name, parent: b.parent, pivot: b.pivot, rot: b.rot, cubes, kind: part.k, hideWith: def.hideWith || null };
+      const bone = { name: b.name, parent: b.parent, pivot, rot: b.rot, cubes, kind: part.k, hideWith: def.hideWith || null };
       if (b.spring) bone.spring = { ...b.spring, strength: c.phys * part.phys };
       bones.push(bone);
     }
   });
   if (c.gender === 'female' && c.chest.size > 0.01) {
-    const s = c.chest.size;
-    const dep = 0.6 + 2.6 * s, gz = (dep + 0.3) / 2, zc = (-dep + 1.2) / 2, gy = 0.1 * s;
-    [['chest_r', -2, 19, 4], ['chest_l', 2, 23, -4]].forEach(([name, px, u, ry]) => {
+    [['chest_r', 0, 19], ['chest_l', 1, 23]].forEach(([name, side, u]) => {
+      const sh = chestShape(c.chest, side);
+      const { zc, gx, gy, gz } = sh;
       bones.push({
-        name, parent: 'body', pivot: [px, 1, -2], rot: [-(4 + 12 * s), ry, 0], kind: 'chest',
+        name, parent: 'body', pivot: sh.pivot, rot: sh.rot, kind: 'chest',
         cubes: [
-          { from: [-2, 0, zc - 0.5], size: [4, 4, 1], uv: [u, 20], tex: 'skin', grow: [0.02, gy, gz], color: '#d8a888' },
-          { from: [-2, 0, zc - 0.5], size: [4, 4, 1], uv: [u, 36], tex: 'skin', grow: [0.27, gy + 0.25, gz + 0.25], layer: 'jacket' }
+          { from: [-2, 0, zc - 0.5], size: [4, 4, 1], uv: [u, 20], tex: 'skin', grow: [gx, gy, gz], color: '#d8a888' },
+          { from: [-2, 0, zc - 0.5], size: [4, 4, 1], uv: [u, 36], tex: 'skin', grow: [gx + 0.25, gy + 0.25, gz + 0.25], layer: 'jacket' }
         ],
         spring: { ...CATALOG.chest.spring, strength: c.chest.phys }
       });
@@ -467,6 +520,28 @@ export function attachCharacter(THREE, viewer, character, opts = {}) {
     if (parent) parent.add(grp);
   }
 
+  // второй слой головы скина под причёской: прятать целиком или кроме лица (передняя сторона — своя плоскость)
+  const cc = built.character;
+  const outer = sk.head && sk.head.outerLayer;
+  const outerVis = outer ? outer.visible : true;
+  if (outer && cc.parts.some((p) => p.k === 'hair') && cc.hatLayer !== 'show') {
+    outer.visible = false;
+    if (cc.hatLayer === 'face' && holders.head) {
+      const geo = new THREE.PlaneGeometry(9, 9);
+      const pos = geo.attributes.position, uv = geo.attributes.uv;
+      for (let i = 0; i < pos.count; i++) {
+        const u = 40 + ((pos.getX(i) + 4.5) / 9) * 8, v = 8 + ((pos.getY(i) + 4.5) / 9) * 8;
+        uv.setXY(i, u / 64, 1 - v / 64);
+      }
+      uv.needsUpdate = true;
+      const face = new THREE.Mesh(geo, skinMat);
+      face.position.set(0, -4, -4.5);
+      face.renderOrder = 2;
+      holders.head.add(face);
+      disposables.push(geo);
+    }
+  }
+
   // телосложение: масштабы костей skinview3d и сдвиг плеч; рост — масштаб всей фигуры
   const sc = bodyScales(character);
   const saved = [];
@@ -527,6 +602,7 @@ export function attachCharacter(THREE, viewer, character, opts = {}) {
     dispose() {
       if (raf) cancelAnimationFrame(raf);
       for (const h of Object.values(holders)) if (h.parent) h.parent.remove(h);
+      if (outer) outer.visible = outerVis;
       for (const [obj, s, p] of saved) { obj.scale.copy(s); obj.position.copy(p); }
       po.scale.copy(rootSaved);
       for (const d of disposables) { try { d.dispose(); } catch (_) {} }

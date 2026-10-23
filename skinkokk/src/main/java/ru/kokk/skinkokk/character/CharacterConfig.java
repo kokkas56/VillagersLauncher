@@ -25,6 +25,9 @@ public final class CharacterConfig {
     public static final ModConfigSpec.BooleanValue ARMS_OVERRIDE;
     public static final ModConfigSpec.BooleanValue HIDE_UNDER_HELMET;
     public static final ModConfigSpec.EnumValue<ChestArmor> CHEST_ARMOR;
+    public static final ModConfigSpec.BooleanValue BACKPACK_HIDES_CLOAK;
+    public static final ModConfigSpec.BooleanValue BACKPACK_HIDES_HAIR;
+    public static final ModConfigSpec.BooleanValue BACKPACK_HIDES_TAIL;
     public static final ModConfigSpec.IntValue RENDER_DISTANCE;
     public static final ModConfigSpec.IntValue PHYSICS_DISTANCE;
     public static final ModConfigSpec.BooleanValue NOTIFY;
@@ -59,6 +62,13 @@ public final class CharacterConfig {
         CHEST_ARMOR = CLIENT.comment("Грудь под нагрудником: ARMOR — повторяет броню, HIDE — прятать, SHOW — как без брони.",
                 "Breasts with a chestplate: ARMOR (armour-textured), HIDE, SHOW.").translation("config.skinkokk.character.chestArmor")
                 .defineEnum("chestArmor", ChestArmor.ARMOR);
+        BACKPACK_HIDES_CLOAK = CLIENT.comment("С рюкзаком (StorageKokk) прятать плащ и накидку капюшона — иначе они торчат сквозь рюкзак.",
+                "Hide the cloak and hood drape while a backpack is worn.").translation("config.skinkokk.character.backpackHidesCloak")
+                .define("backpackHidesCloak", true);
+        BACKPACK_HIDES_HAIR = CLIENT.comment("С рюкзаком прятать длинные волосы сзади (пряди на спине).", "Hide long back hair while a backpack is worn.")
+                .translation("config.skinkokk.character.backpackHidesHair").define("backpackHidesHair", true);
+        BACKPACK_HIDES_TAIL = CLIENT.comment("С рюкзаком прятать хвост (обычно он торчит снизу и не мешает).", "Hide the tail while a backpack is worn.")
+                .translation("config.skinkokk.character.backpackHidesTail").define("backpackHidesTail", false);
         RENDER_DISTANCE = CLIENT.comment("Дальше скольких блоков части персонажей не рисуются (экономия FPS).", "Max distance to draw character parts.")
                 .translation("config.skinkokk.character.renderDistance").defineInRange("renderDistance", 64, 8, 256);
         PHYSICS_DISTANCE = CLIENT.comment("Дальше скольких блоков физика не считается (части просто неподвижны).", "Max distance for physics.")

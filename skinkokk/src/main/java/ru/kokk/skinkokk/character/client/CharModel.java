@@ -64,6 +64,8 @@ public final class CharModel {
     final boolean hasAtlas, hasSkin, hasChest;
     /** Куртка-слой поверх груди (видна, если у игрока включён слой «куртка»). */
     final List<ModelPart> jacketParts = new ArrayList<>();
+    /** Передняя сторона второго слоя головы (лицо), когда сам слой спрятан под причёской. */
+    @Nullable ModelPart hatFacePart;
     private final List<java.util.Set<String>> used = List.of(new java.util.HashSet<>(), new java.util.HashSet<>(), new java.util.HashSet<>());
 
     private record Node(String name, String parent, String group, PartPose pose, CubeListBuilder atlas, CubeListBuilder skin, CubeListBuilder armor) {}
@@ -78,16 +80,24 @@ public final class CharModel {
         boolean anyAtlas = false, anySkin = false;
         Map<String, Node> nodes = new LinkedHashMap<>();
         Map<String, BoneInfo> pending = new LinkedHashMap<>();
+        boolean hair = d.hasKind("hair");
+        int[] shells = new int[GROUPS.size()];
         for (int pi = 0; pi < d.parts.size(); pi++) {
             CharacterData.Part part = d.parts.get(pi);
             Catalog.PartDef def = cat.part(part.kind(), part.id());
             if (def == null) continue;
+            // головной убор поверх причёски: вся часть чуть больше вокруг центра головы, чтобы не резалась о волосы
+            boolean overHair = hair && "clothes".equals(part.kind()) && !Layering.NO_SCALE.contains(part.id());
             for (Catalog.Bone b : def.bones()) {
                 if (nodes.containsKey(b.name())) continue;
                 String group = GROUPS.contains(b.parent()) ? b.parent() : nodes.containsKey(b.parent()) ? nodes.get(b.parent()).group : null;
                 if (group == null) continue;
+                boolean scale = overHair && "head".equals(group);
+                float[] pivot = scale ? Layering.scalePivot(b.pivot(), GROUPS.contains(b.parent())) : b.pivot();
                 CubeListBuilder atlas = CubeListBuilder.create(), skin = CubeListBuilder.create();
-                for (Catalog.Cube c : b.cubes()) {
+                for (Catalog.Cube c0 : b.cubes()) {
+                    // кубы-«оболочки» (с раздуванием) разводятся по слоям, чтобы не мерцали друг о друга и о второй слой скина
+                    Catalog.Cube c = Layering.cube(c0, scale, shells, GROUPS.indexOf(group));
                     CubeDeformation g = new CubeDeformation(c.grow()[0], c.grow()[1], c.grow()[2]);
                     if (c.skin()) {
                         int[] uv = c.uv() != null ? c.uv() : new int[] {0, 8};
@@ -108,38 +118,43 @@ public final class CharModel {
                     shelf[0] += rw;
                     shelf[2] = Math.max(shelf[2], rh);
                     usedH = Math.max(usedH, v + rh);
-                    paintCube(img, u, v, w, h, dd, c, part.colors(), def.style());
+                    paintCube(img, u, v, w, h, dd, c0, part.colors(), def.style());
                     atlas.texOffs(u, v).addBox(c.from()[0], c.from()[1], c.from()[2], c.size()[0], c.size()[1], c.size()[2], g);
                     anyAtlas = true;
                 }
-                PartPose pose = PartPose.offsetAndRotation(b.pivot()[0], b.pivot()[1], b.pivot()[2], b.rot()[0] * Mth.DEG_TO_RAD,
+                PartPose pose = PartPose.offsetAndRotation(pivot[0], pivot[1], pivot[2], b.rot()[0] * Mth.DEG_TO_RAD,
                         b.rot()[1] * Mth.DEG_TO_RAD, b.rot()[2] * Mth.DEG_TO_RAD);
                 nodes.put(b.name(), new Node(b.name(), b.parent(), group, pose, atlas, skin, CubeListBuilder.create()));
                 float strength = d.phys * part.phys();
                 pending.put(b.name(), new BoneInfo(b.name(), group, part.kind(), def.hideWith(), b.parent(), b.spring(), strength, direction(b), false));
             }
         }
-        // ---- грудь (цвет и рисунок — со скина: те же пиксели, что под ней)
+        // ---- грудь (цвет и рисунок — со скина: те же пиксели, что под ней). Форма — Layering.chest (так же в лаунчере).
         boolean chest = d.female && d.chestSize > 0.01F;
         if (chest) {
-            float s = d.chestSize;
-            float dep = 0.6F + 2.6F * s;
-            float gz = (dep + 0.3F) / 2F, zc = (-dep + 1.2F) / 2F;
-            float gy = 0.1F * s;
             for (int side = 0; side < 2; side++) {
+                Layering.Chest c = Layering.chest(d, side);
                 String name = side == 0 ? "chest_r" : "chest_l";
-                float px = side == 0 ? -2F : 2F;
                 int u = side == 0 ? 19 : 23;
-                CubeListBuilder sk = CubeListBuilder.create().texOffs(u, 20).addBox(-2F, 0F, zc - 0.5F, 4F, 4F, 1F, new CubeDeformation(0.02F, gy, gz));
-                CubeListBuilder ar = CubeListBuilder.create().texOffs(u, 20).addBox(-2F, 0F, zc - 0.5F, 4F, 4F, 1F, new CubeDeformation(0.5F, gy + 1.0F, gz + 0.6F));
-                PartPose pose = PartPose.offsetAndRotation(px, 1F, -2F, -(4F + 12F * s) * Mth.DEG_TO_RAD, (side == 0 ? 4F : -4F) * Mth.DEG_TO_RAD, 0F);
+                CubeListBuilder sk = CubeListBuilder.create().texOffs(u, 20).addBox(-2F, 0F, c.zc() - 0.5F, 4F, 4F, 1F, new CubeDeformation(c.gx(), c.gy(), c.gz()));
+                CubeListBuilder ar = CubeListBuilder.create().texOffs(u, 20).addBox(-2F, 0F, c.zc() - 0.5F, 4F, 4F, 1F,
+                        new CubeDeformation(c.gx() + 0.5F, c.gy() + 1.0F, c.gz() + 0.6F));
+                PartPose pose = PartPose.offsetAndRotation(c.px(), c.py(), c.pz(), c.rx() * Mth.DEG_TO_RAD, c.ry() * Mth.DEG_TO_RAD, 0F);
                 nodes.put(name, new Node(name, "body", "body", pose, CubeListBuilder.create(), sk, ar));
                 // куртка (второй слой скина): дочерняя кость, чтобы её можно было спрятать
-                CubeListBuilder jk = CubeListBuilder.create().texOffs(u, 36).addBox(-2F, 0F, zc - 0.5F, 4F, 4F, 1F, new CubeDeformation(0.27F, gy + 0.25F, gz + 0.25F));
+                CubeListBuilder jk = CubeListBuilder.create().texOffs(u, 36).addBox(-2F, 0F, c.zc() - 0.5F, 4F, 4F, 1F,
+                        new CubeDeformation(c.gx() + 0.25F, c.gy() + 0.25F, c.gz() + 0.25F));
                 nodes.put(name + "_jacket", new Node(name + "_jacket", name, "body", PartPose.ZERO, CubeListBuilder.create(), jk, CubeListBuilder.create()));
                 Catalog.Spring sp = cat.chest;
                 pending.put(name, new BoneInfo(name, "body", "chest", "chest", "body", sp, d.chestPhys, new float[] {0F, 0.8F, -0.6F}, true));
             }
+            anySkin = true;
+        }
+        // ---- второй слой головы скина под причёской: «кроме лица» — рисуем только его переднюю сторону (сам слой прячет миксин)
+        boolean hatFace = hair && "face".equals(d.hatLayer);
+        if (hatFace) {
+            CubeListBuilder hf = CubeListBuilder.create().texOffs(32, 0).addBox(-4F, -4F, -4F, 8F, 8F, 8F, java.util.EnumSet.of(net.minecraft.core.Direction.NORTH));
+            nodes.put("hat_face", new Node("hat_face", "head", "head", PartPose.offset(0F, -4F, 0F), CubeListBuilder.create(), hf, CubeListBuilder.create()));
             anySkin = true;
         }
         hasAtlas = anyAtlas;
@@ -162,6 +177,10 @@ public final class CharModel {
             bi.armor = find(armorRoot, nodes, bi.name);
             bones.add(bi);
             byName.put(bi.name, bi);
+        }
+        if (hatFace) {
+            hatFacePart = find(skinRoot, nodes, "hat_face");
+            hatFacePart.xScale = hatFacePart.yScale = hatFacePart.zScale = 9F / 8F; // как слой «шапка» (+0.5 пикс.)
         }
         if (chest) {
             jacketParts.add(find(skinRoot, nodes, "chest_r_jacket"));

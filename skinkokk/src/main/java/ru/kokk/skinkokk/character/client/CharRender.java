@@ -47,7 +47,12 @@ public final class CharRender {
     private CharRender() {}
 
     /** Что показывать на этот раз. */
-    public record Opts(boolean parts, boolean chest, boolean jacket, boolean hideHead, boolean elytra, boolean chestplate, ItemStack chestArmor) {}
+    public record Opts(boolean parts, boolean chest, boolean jacket, boolean hideHead, boolean elytra, boolean chestplate, ItemStack chestArmor, boolean hat,
+                       boolean backpack) {
+        public Opts(boolean parts, boolean chest, boolean jacket, boolean hideHead, boolean elytra, boolean chestplate, ItemStack chestArmor) {
+            this(parts, chest, jacket, hideHead, elytra, chestplate, chestArmor, true, false);
+        }
+    }
 
     public static ModelPart vanilla(PlayerModel<?> m, String g) {
         return switch (g) {
@@ -97,6 +102,7 @@ public final class CharRender {
                 if ("head".equals(bi.hideWith) && o.hideHead) vis = false;
                 if ("elytra".equals(bi.hideWith) && o.elytra) vis = false;
                 if ("chest".equals(bi.hideWith) && o.chestplate) vis = false;
+                if (o.backpack && Backpack.hides(bi)) vis = false;
             }
             a.visible = vis;
             bi.skin.copyFrom(a);
@@ -105,6 +111,7 @@ public final class CharRender {
             bi.armor.visible = vis;
         }
         for (ModelPart j : cm.jacketParts) j.visible = o.jacket;
+        if (cm.hatFacePart != null) cm.hatFacePart.visible = o.parts && o.hat && !o.hideHead;
         boolean translucent = (color >>> 24) < 250;
         // ---- атлас (уши, хвост, волосы, одежда)
         if (cm.hasAtlas && cm.atlasTex != null && o.parts) {
@@ -197,7 +204,23 @@ public final class CharRender {
         boolean armourChest = plate && CharacterConfig.CHEST_ARMOR.get() == CharacterConfig.ChestArmor.ARMOR;
         boolean hideHead = CharacterConfig.HIDE_UNDER_HELMET.get() && !p.getItemBySlot(EquipmentSlot.HEAD).isEmpty();
         return new Opts(parts, showChest, p.isModelPartShown(PlayerModelPart.JACKET), hideHead, elytra, plate,
-                armourChest ? chest : ItemStack.EMPTY);
+                armourChest ? chest : ItemStack.EMPTY, p.isModelPartShown(PlayerModelPart.HAT), Backpack.worn(p));
+    }
+
+    /**
+     * Прятать ли ванильный второй слой головы (миксин PlayerModel, после позы): у персонажа есть причёска, она сейчас
+     * видна (не под шлемом), и в «Персонаже» выбрано «прятать» или «кроме лица» (лицо тогда дорисовывает CharModel).
+     */
+    public static boolean hideHatLayer(LivingEntity entity) {
+        if (!(entity instanceof AbstractClientPlayer p)) return false;
+        CharacterClient.Entry e = CharacterClient.forRender(p);
+        if (e == null) return false;
+        return hideHatLayer(e.data(), CharacterClient.isSelf(p.getUUID()) || CharacterConfig.SHOW_OTHERS.get(), p.getItemBySlot(EquipmentSlot.HEAD));
+    }
+
+    public static boolean hideHatLayer(ru.kokk.skinkokk.character.CharacterData d, boolean partsShown, ItemStack head) {
+        if (d == null || !partsShown || !d.hasKind("hair") || "show".equals(d.hatLayer)) return false;
+        return !(CharacterConfig.HIDE_UNDER_HELMET.get() && head != null && !head.isEmpty());
     }
 
     /** Слой рендера игрока. */

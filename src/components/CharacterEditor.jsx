@@ -207,6 +207,10 @@ export default function CharacterEditor({ skin, slim, fallback, account }) {
             <div className="card-head"><Icon name="heart" /><h3>{t('Грудь')}</h3><div className="grow" /><span className="muted small">{t(CATALOG.chest.hint)}</span></div>
             <Slider label={t('Размер')} hint={t('0 — плоская (не рисуется).')} value={ch.chest.size} onChange={(v) => set({ ...ch, chest: { ...ch.chest, size: v } })} />
             <Slider label={t('Физика')} hint={t('Покачивание при ходьбе и прыжках. 0 — неподвижная.')} value={ch.chest.phys} onChange={(v) => set({ ...ch, chest: { ...ch.chest, phys: v } })} />
+            <Slider label={t('Расстояние между')} hint={t('Зазор посередине в пикселях скина: меньше — ближе друг к другу, больше — дальше.')} value={ch.chest.gap} min={-1} max={2} step={0.05} fmt={(v) => (v > 0 ? '+' : '') + v.toFixed(2) + ' px'} onChange={(v) => set({ ...ch, chest: { ...ch.chest, gap: v } })} />
+            <Slider label={t('Высота')} hint={t('Насколько ниже ключиц начинается грудь (в пикселях). Больше — ниже.')} value={ch.chest.height} min={-0.5} max={3} step={0.05} fmt={(v) => v.toFixed(2) + ' px'} onChange={(v) => set({ ...ch, chest: { ...ch.chest, height: v } })} />
+            <Slider label={t('Наклон вниз')} hint={t('0 — смотрит прямо вперёд и чуть вверх, 100% — заметно опущена. Середина — естественно.')} value={ch.chest.tilt} onChange={(v) => set({ ...ch, chest: { ...ch.chest, tilt: v } })} />
+            <Slider label={t('Развести в стороны')} hint={t('Поворот наружу: 0 — обе смотрят прямо, больше — в стороны.')} value={ch.chest.cleave} onChange={(v) => set({ ...ch, chest: { ...ch.chest, cleave: v } })} />
             <p className="muted small ch-note">{t('Под нагрудником грудь повторяет броню. Каждый игрок может у себя выключить грудь и физику у других (настройки мода SkinKokk → Персонаж).')}</p>
           </section>
         )}
@@ -214,6 +218,17 @@ export default function CharacterEditor({ skin, slim, fallback, account }) {
         <KindPicker kind="ears" ch={ch} set={set} t={t} />
         <KindPicker kind="tail" ch={ch} set={set} t={t} />
         <KindPicker kind="hair" ch={ch} set={set} t={t} />
+        {getPart(ch, 'hair') && (
+          <section className="card ch-card">
+            <div className="card-head"><Icon name="user" /><h3>{t('Второй слой головы скина')}</h3></div>
+            <div className="seg sm" title={t('Что делать с верхним слоем головы твоего скина (нарисованные волосы, шапка), чтобы он не спорил с причёской.')}>
+              <button type="button" className={ch.hatLayer === 'face' ? 'on' : ''} onClick={() => set({ ...ch, hatLayer: 'face' })} title={t('Сверху, сзади и по бокам слой прячется под причёску, а спереди остаётся: очки, чёлка, маска на скине видны.')}>{t('Прятать, кроме лица')}</button>
+              <button type="button" className={ch.hatLayer === 'hide' ? 'on' : ''} onClick={() => set({ ...ch, hatLayer: 'hide' })} title={t('С причёской второй слой головы не рисуется совсем.')}>{t('Прятать')}</button>
+              <button type="button" className={ch.hatLayer === 'show' ? 'on' : ''} onClick={() => set({ ...ch, hatLayer: 'show' })} title={t('Слой остаётся как есть, причёска — поверх него.')}>{t('Оставлять')}</button>
+            </div>
+            <p className="muted small ch-note">{t('Головные уборы (капюшон, повязка, венок…) с причёской сами становятся чуть больше, чтобы сидеть поверх волос, а не резаться о них. Под шлемом причёска прячется (настройка мода).')}</p>
+          </section>
+        )}
 
         <section className="card ch-card">
           <div className="card-head"><Icon name="cape" /><h3>{t('Одежда')}</h3><div className="grow" /><span className="muted small">{t(CATALOG.kinds.clothes.hint)}</span></div>
@@ -239,7 +254,7 @@ export default function CharacterEditor({ skin, slim, fallback, account }) {
         <section className="card ch-card">
           <div className="card-head"><Icon name="gear" /><h3>{t('Физика')}</h3></div>
           <Slider label={t('Общая сила физики')} hint={t('Множитель для всех частей твоего персонажа: хвост, волосы, плащ, грудь. 0 — всё неподвижно.')} value={ch.phys} onChange={(v) => set({ ...ch, phys: v })} />
-          <p className="muted small ch-note">{t('В игре у каждого свои настройки (мод SkinKokk → Персонаж): показывать ли части, грудь и физику у других, сила физики, прятать ли уши и волосы под шлемом.')}</p>
+          <p className="muted small ch-note">{t('В игре у каждого свои настройки (мод SkinKokk → Персонаж): показывать ли части, грудь и физику у других, сила физики, прятать ли уши и волосы под шлемом, а плащ, волосы сзади и хвост — с рюкзаком.')}</p>
         </section>
       </div>
     </div>

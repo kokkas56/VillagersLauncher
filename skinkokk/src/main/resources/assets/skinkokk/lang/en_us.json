@@ -61,6 +61,8 @@
   "config.skinkokk.anim.particles": "Animation particles",
   "config.skinkokk.anim.root": "Animations move the whole body",
   "config.skinkokk.anim.firstPerson": "Keep first-person hands",
+  "config.skinkokk.anim.customBones": "Animation items and cubes",
+  "config.skinkokk.anim.customBonesDistance": "Animation items distance (blocks)",
   "config.skinkokk.anim.wheelPerPage": "Emotes per wheel page",
   "config.skinkokk.anim.favorites": "Favourite emotes (first page)",
   "config.skinkokk.anim.allowEmotes": "Allow emotes",
@@ -68,5 +70,8 @@
   "config.skinkokk.anim.locked": "Locked emotes",
   "config.skinkokk.anim.folder": "Animation folder",
   "config.skinkokk.anim.opLevel": "Operator level for commands",
-  "config.skinkokk.anim.cooldown": "Emote cooldown (ticks)"
+  "config.skinkokk.anim.cooldown": "Emote cooldown (ticks)",
+  "config.skinkokk.character.backpackHidesCloak": "Hide cloak with a backpack",
+  "config.skinkokk.character.backpackHidesHair": "Hide back hair with a backpack",
+  "config.skinkokk.character.backpackHidesTail": "Hide tail with a backpack"
 }

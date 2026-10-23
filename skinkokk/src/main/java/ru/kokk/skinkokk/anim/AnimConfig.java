@@ -18,6 +18,8 @@ public final class AnimConfig {
     public static final ModConfigSpec.BooleanValue EVENTS_PARTICLES;
     public static final ModConfigSpec.BooleanValue ROOT_MOVES;
     public static final ModConfigSpec.BooleanValue FIRST_PERSON;
+    public static final ModConfigSpec.BooleanValue BONES_SHOW;
+    public static final ModConfigSpec.IntValue BONES_DISTANCE;
     public static final ModConfigSpec.IntValue WHEEL_PER_PAGE;
     public static final ModConfigSpec.ConfigValue<List<? extends String>> FAVORITES;
 
@@ -35,6 +37,11 @@ public final class AnimConfig {
                 .translation("config.skinkokk.anim.root").define("wholeBody", true);
         FIRST_PERSON = C.comment("Не трогать руки от первого лица (рекомендуется).", "Keep first-person hands untouched (recommended).")
                 .translation("config.skinkokk.anim.firstPerson").define("keepFirstPersonHands", true);
+        BONES_SHOW = C.comment("Показывать предметы и кубики из анимаций (свои кости: меч в руке, факел, коробка…). Видны, только пока играет анимация.",
+                        "Show items and cubes from animations (custom bones: a sword in hand, a torch, a box…).")
+                .translation("config.skinkokk.anim.customBones").define("customBones", true);
+        BONES_DISTANCE = C.comment("До какого расстояния (в блоках) рисовать предметы и кубики анимаций.", "Max distance (blocks) to draw animation items and cubes.")
+                .translation("config.skinkokk.anim.customBonesDistance").defineInRange("customBonesDistance", 48, 4, 256);
         WHEEL_PER_PAGE = C.comment("Сколько эмоций на одной странице колеса.", "Emotes per wheel page.")
                 .translation("config.skinkokk.anim.wheelPerPage").defineInRange("wheelPerPage", 8, 4, 12);
         FAVORITES = C.comment("Эмоции на первой странице колеса (id по порядку). Пусто — все по группам.", "Emotes on the first wheel page (ids). Empty — all by group.")
