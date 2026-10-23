@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useApp } from './lib/app.jsx';
 import { call, on } from './lib/api.js';
 import SceneHost, { SCENES, scenesFor, sceneById } from './components/SceneHost.jsx';
@@ -123,10 +123,14 @@ export default function App() {
   const [skin, setSkin] = useState(null);
   const [skinTick, setSkinTick] = useState(0);
 
+  // окно «Игра закрылась с ошибкой» — один раз на каждый вылет (не при любой смене настроек)
+  const crashShown = useRef(null);
   useEffect(() => {
-    if (gameState.state === 'stopped' && gameState.crashed) setCrash(gameState);
+    if (gameState.state === 'stopped' && gameState.crashed && crashShown.current !== gameState) { crashShown.current = gameState; setCrash(gameState); }
+  }, [gameState]);
+  useEffect(() => {
     if (gameState.state === 'starting' && settings && settings.showConsole) setConsoleOpen(true);
-  }, [gameState, settings]);
+  }, [gameState]); // eslint-disable-line
 
   useEffect(() => {
     let alive = true;
