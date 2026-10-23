@@ -7,6 +7,7 @@ const store = require('./store.cjs');
 const netu = require('./net.cjs');
 const java = require('./java.cjs');
 const hosting = require('./hosting.cjs');
+const modsides = require('./modsides.cjs');
 
 let proc = null;
 let state = 'stopped'; // stopped | installing | starting | running | stopping
@@ -25,13 +26,7 @@ function line(l) { tail.push(l); if (tail.length > 600) tail = tail.slice(-500);
 
 function status() {
   const m = readMarker();
-  return { state, installed: !!m.neo, neo: m.neo || null, dir: dir(), port: store.get().serverPort || 25565, eula: !!store.get().serverEulaAccepted, tail: tail.slice(-200), players: [...players], crash: lastCrash };
-}
-
-function excluded(name) {
-  const pats = store.get().serverExcludeMods || [];
-  const n = name.toLowerCase();
-  return pats.some((p) => p && n.includes(String(p).toLowerCase()));
+  return { state, installed: !!m.neo, neo: m.neo || null, dir: dir(), port: store.get().serverPort || 25565, eula: !!store.get().serverEulaAccepted, tail: tail.slice(-200), players: [...players], crash: lastCrash, mods: m.lastSync || null };
 }
 
 async function install(versions, progress) {
@@ -77,7 +72,24 @@ function copyDir(src, dst, overwrite) {
   }
 }
 
-// моды и настройки сборки → сервер (без чисто клиентских модов; лишние старые убираем)
+// моды и настройки сборки → сервер. Решаем по neoforge.mods.toml каждого jar (modsides.cjs) + ручные списки
+// «всегда на сервер» / «никогда на сервер». Мир сервера и свои файлы сервера не трогаем.
+function modPlan() {
+  const s = store.get();
+  const src = path.join(s.gameDir, 'mods');
+  const m = readMarker();
+  const cache = m.modScan || {};
+  const plan = [];
+  for (const f of fs.existsSync(src) ? fs.readdirSync(src) : []) {
+    if (!f.toLowerCase().endsWith('.jar')) continue;
+    plan.push(modsides.classify(path.join(src, f), f, { always: s.serverModsAlways || [], never: s.serverModsNever || [], cache }));
+  }
+  // кеш только по живым файлам
+  const live = new Set(plan.map((p) => p.file));
+  for (const k of Object.keys(cache)) if (!live.has(k) && !k.startsWith('server:')) delete cache[k];
+  return { plan, cache };
+}
+
 function syncPack() {
   const s = store.get();
   const d = dir();
@@ -86,22 +98,42 @@ function syncPack() {
   fs.mkdirSync(dst, { recursive: true });
   const m = readMarker();
   const prev = new Set(m.mods || []);
-  const now = [];
-  const skipped = [];
-  for (const f of fs.existsSync(src) ? fs.readdirSync(src) : []) {
-    if (!f.endsWith('.jar')) continue;
-    if (excluded(f)) { skipped.push(f); continue; }
-    const a = path.join(src, f), b = path.join(dst, f);
+  const { plan, cache } = modPlan();
+  const want = plan.filter((p) => p.server);
+  const wantFiles = new Set(want.map((p) => p.file.toLowerCase()));
+  const packFiles = new Set(plan.map((p) => p.file.toLowerCase()));
+  const packIds = new Set(plan.flatMap((p) => p.ids));
+  const added = [];
+  const removed = [];
+  const own = [];
+  for (const p of want) {
+    const a = path.join(src, p.file), b = path.join(dst, p.file);
     const sa = fs.statSync(a);
-    if (!fs.existsSync(b) || fs.statSync(b).size !== sa.size) fs.copyFileSync(a, b);
-    now.push(f);
+    let same = false;
+    try { const sb = fs.statSync(b); same = sb.size === sa.size && sb.mtimeMs >= sa.mtimeMs - 2000; } catch (_) {}
+    if (!same) { fs.copyFileSync(a, b); try { fs.utimesSync(b, sa.atime, sa.mtime); } catch (_) {} if (!prev.has(p.file)) added.push(p.file); }
   }
-  for (const f of prev) if (!now.includes(f)) try { fs.rmSync(path.join(dst, f), { force: true }); } catch (_) {}
-  for (const f of skipped) if (prev.has(f)) try { fs.rmSync(path.join(dst, f), { force: true }); } catch (_) {}
+  // лишнее в server/mods: то, что клали мы раньше; файлы сборки, которые серверу не нужны (клиентские);
+  // старые версии модов сборки под другим именем (тот же id). Чужие серверные моды не трогаем — только показываем.
+  const trash = path.join(d, 'mods-removed');
+  for (const f of fs.readdirSync(dst)) {
+    if (!f.toLowerCase().endsWith('.jar') || wantFiles.has(f.toLowerCase())) continue;
+    const abs = path.join(dst, f);
+    if (prev.has(f)) { try { fs.rmSync(abs, { force: true }); removed.push(f); } catch (_) {} continue; }
+    let ids = [];
+    try { ids = modsides.classify(abs, f, { cache: (cache['server:'] = cache['server:'] || {}) }).ids; } catch (_) {}
+    if (packFiles.has(f.toLowerCase()) || ids.some((id) => packIds.has(id))) {
+      // положено вручную: не удаляем насовсем, а убираем в server/mods-removed
+      try { fs.mkdirSync(trash, { recursive: true }); fs.renameSync(abs, path.join(trash, f)); removed.push(f); } catch (_) {}
+    } else own.push(f);
+  }
   copyDir(path.join(s.gameDir, 'defaultconfigs'), path.join(d, 'defaultconfigs'), true);
   copyDir(path.join(s.gameDir, 'config'), path.join(d, 'config'), false);
-  writeMarker({ ...m, mods: now });
-  return { mods: now.length, skipped };
+  const skipped = plan.filter((p) => !p.server).map((p) => ({ file: p.file, ids: p.ids, reason: p.reason }));
+  const result = { at: Date.now(), total: plan.length, mods: want.length, skipped, added, removed, own,
+    kept: want.filter((p) => /канал|вручную/.test(p.reason)).map((p) => ({ file: p.file, ids: p.ids, reason: p.reason })) };
+  writeMarker({ ...readMarker(), mods: want.map((p) => p.file), modScan: cache, lastSync: result });
+  return result;
 }
 
 function writeProps() {
@@ -135,9 +167,12 @@ async function start(versions, progress) {
   const m = await install(versions, progress);
   progress({ stage: 'server', text: 'Переношу моды сборки на сервер…', indeterminate: true });
   const r = syncPack();
-  if (r.skipped.length) line(`[лаунчер] Без клиентских модов: ${r.skipped.join(', ')}`);
+  line(`[лаунчер] Модов на сервере: ${r.mods} из ${r.total}` + (r.added.length ? `, добавлено ${r.added.length}` : '') + (r.removed.length ? `, убрано ${r.removed.length}` : ''));
+  if (r.skipped.length) line(`[лаунчер] Только для клиента (не на сервер): ${r.skipped.map((x) => x.file).join(', ')}`);
+  if (r.own.length) line(`[лаунчер] Свои моды сервера (не из сборки, оставлены): ${r.own.join(', ')}`);
   fs.writeFileSync(path.join(dir(), 'eula.txt'), 'eula=true\n');
   writeProps();
+  hosting.writeAccess(dir());
   const argsFile = path.join('libraries', 'net', 'neoforged', 'neoforge', m.neo, process.platform === 'win32' ? 'win_args.txt' : 'unix_args.txt');
   if (!fs.existsSync(path.join(dir(), argsFile))) throw new Error('Сервер установлен не полностью — удали папку server и запусти снова');
   const javaPath = await java.resolveJava(21, progress);
@@ -164,23 +199,56 @@ async function start(versions, progress) {
     line(`[лаунчер] Сервер остановлен (код ${code})`);
     const crashed = state !== 'stopping' && (code !== 0 || state === 'starting');
     players = new Set();
-    if (crashed) lastCrash = { at: Date.now(), code, hint: hint(), lines: tail.filter((x) => /ERROR|Exception|Caused by|FATAL|failed|Missing|requires|incompatible/i.test(x)).slice(-12) };
+    if (crashed) lastCrash = { at: Date.now(), code, hint: hint(), reason: reasonLine(), lines: tail.filter((x) => /ERROR|Exception|Caused by|FATAL|failed|Missing|requires|incompatible/i.test(x)).slice(-12) };
     setState('stopped', crashed ? { crashed: true, hint: lastCrash.hint } : {});
   });
   return true;
 }
 
+// главная строка причины падения из лога сервера (+ какой мод виноват)
+function reasonLine() {
+  const t = tail.slice(-400);
+  const pats = [/Failed to create mod instance\. ModID: \S+.*/i, /for invalid dist DEDICATED_SERVER.*/i, /Mod (\S+) only supports CLIENT.*/i,
+    /Missing or unsupported mandatory dependencies.*/i, /Mod \S+ requires .*/i, /Address already in use.*|FAILED TO BIND TO PORT.*/i,
+    /OutOfMemoryError.*|Could not reserve enough space.*/i, /Failed to load level.*|Exception reading .*level\.dat.*/i,
+    /Caused by: .*/, /Exception in thread .*/, /\b(ERROR|FATAL)\]: .*/];
+  for (const re of pats) for (let i = t.length - 1; i >= 0; i--) { const m = re.exec(t[i]); if (m) return t[i].replace(/^\[[^\]]*\]\s*(\[[^\]]*\]\s*)*:?\s*/, '').trim().slice(0, 300); }
+  return null;
+}
+function modFileOf(id) {
+  const cache = readMarker().modScan || {};
+  for (const [f, c] of Object.entries(cache)) if (c && c.info && (c.info.ids || []).includes(id)) return f;
+  return null;
+}
 function hint() {
-  const t = tail.slice(-120).join('\n');
-  const m = /Attempted to load class (net\/minecraft\/client\S*)|invalid dist DEDICATED_SERVER|Mod (\S+) only supports CLIENT/i.exec(t);
-  const mod = /mod file \S*?([^/\\\s]+\.jar)/i.exec(t);
-  if (m) return 'Похоже, один из модов только для клиента' + (mod ? `: ${mod[1]}` : '') + '. Добавь часть его имени в «Не брать на сервер».';
+  const t = tail.slice(-400).join('\n');
+  const inst = /Failed to create mod instance\. ModID: (\S+?),/i.exec(t);
+  const only = /Mod (\S+) only supports CLIENT/i.exec(t);
+  const client = /Attempted to load class (net\/minecraft\/client\S*)|invalid dist DEDICATED_SERVER/i.test(t);
+  if (client || only) {
+    const id = (inst && inst[1]) || (only && only[1]);
+    const file = id ? modFileOf(id) : null;
+    const jar = /mod file \S*?([^/\\\s]+\.jar)/i.exec(t);
+    const who = id ? `«${id}»${file ? ' (' + file + ')' : ''}` : jar ? jar[1] : '';
+    return `Мод ${who || 'из сборки'} на сервере обращается к клиентским классам. Если это мод только для клиента — впиши его id в «Никогда на сервер» (блок «Моды сервера») и запусти снова. Если мод нужен на сервере (например, свой мод) — это ошибка в самом моде.`;
+  }
   if (/Address already in use|FAILED TO BIND TO PORT/i.test(t)) return 'Порт занят: уже запущен другой сервер или игра. Закрой его или поменяй порт.';
   if (/OutOfMemoryError|Could not reserve enough space/i.test(t)) return 'Серверу не хватило памяти. Уменьши «Память, МБ» или закрой лишние программы.';
-  if (/Missing or unsupported mandatory dependencies|requires .* or above/i.test(t)) return 'Не хватает мода-зависимости или версия не та — смотри строки ниже.';
+  if (/Missing or unsupported mandatory dependencies|requires .* or above/i.test(t)) return 'Не хватает мода-зависимости или версия не та — смотри строки ниже. Если зависимость нужна только клиенту, а сервер её требует — добавь мод в «Всегда на сервер».';
   if (/Failed to load level|level\.dat|corrupt/i.test(t)) return 'Не получилось открыть мир — возможно, он повреждён. Выбери другой мир.';
   if (/EULA/i.test(t)) return 'Нужно принять лицензию Minecraft (EULA).';
   return 'Сервер упал при запуске. Ниже — строки с ошибкой; пришли автору файл server/logs/latest.log.';
+}
+
+// пересобрать моды сервера без запуска (кнопка в карточке)
+function syncMods() {
+  if (proc) throw new Error('Сначала останови сервер: пока он работает, файлы модов заняты');
+  return syncPack();
+}
+// что будет на сервере (без копирования) — для карточки
+function previewMods() {
+  const { plan } = modPlan();
+  return { total: plan.length, mods: plan.filter((p) => p.server).length, skipped: plan.filter((p) => !p.server).map((p) => ({ file: p.file, ids: p.ids, reason: p.reason })) };
 }
 
 function command(text) { if (proc && text) proc.stdin.write(String(text).trim() + '\n'); }
@@ -199,4 +267,4 @@ function stop() {
 function running() { return !!proc; }
 function playerList() { return [...players]; }
 
-module.exports = { init: (fn) => { emit = fn; }, status, install, start, stop, command, running, dir, playerList, state: () => state };
+module.exports = { init: (fn) => { emit = fn; }, status, install, start, stop, command, running, dir, playerList, syncMods, previewMods, state: () => state };

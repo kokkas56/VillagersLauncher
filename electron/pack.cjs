@@ -320,6 +320,18 @@ async function publish({ title, text, noNews, early: isEarly, freeAt, replaceTag
       if (top && (!prevManifest || top.version > (prevManifest.version || 0))) prevManifest = (await authorEarlyManifest(top.tag)) || prevManifest;
     } catch (_) {}
   }
+  // нет изменений в файлах (и в «по желанию») — новая версия не нужна: публикуем только новость,
+  // чтобы у игроков не было «доступна новая сборка» и лишних скачиваний. Ранний доступ — как раньше (явный выбор).
+  if (!isEarly && prevManifest && !ch.added.length && !ch.changed.length && !ch.removed.length) {
+    const opt = new Set(s.authorOptional || []);
+    const optChanged = (prevManifest.files || []).some((f) => !!f.optional !== opt.has(f.path));
+    if (!optChanged) {
+      if (noNews) throw new Error('Нечего заливать: изменений в файлах нет, а новость выключена');
+      progress({ stage: 'publish', text: 'Изменений в файлах нет — публикую только новость…', indeterminate: true });
+      const post = await addNewsPost({ title, text, version: prevManifest.version || 0 });
+      return { newsOnly: true, version: prevManifest.version || 0, post: post.id, message: 'Изменений в файлах нет — новость опубликована без новой версии' };
+    }
+  }
   const prev = new Map(((prevManifest && prevManifest.files) || []).map((f) => [f.path, f]));
   let releases = [];
   try { releases = await listReleases(); } catch (_) {}
@@ -636,9 +648,19 @@ function normNews(n) {
   return {
     hidden: Array.isArray(n.hidden) ? n.hidden.map(Number).filter(Boolean) : [],
     deleted: Array.isArray(n.deleted) ? n.deleted.map(Number).filter(Boolean) : [],
-    edits: n.edits && typeof n.edits === 'object' ? n.edits : {}
+    edits: n.edits && typeof n.edits === 'object' ? n.edits : {},
+    // новости без новой версии сборки: { id, date, title, text, version (какая сборка была), hidden?, deleted? }
+    posts: Array.isArray(n.posts) ? n.posts.filter((p) => p && typeof p === 'object' && p.id && (p.title || p.text)) : []
   };
 }
+// новость без новой версии: запись в news.json (сборка и манифест не меняются)
+async function addNewsPost({ title, text, version }) {
+  const post = { id: 'p' + Date.now().toString(36), date: new Date().toISOString(), title: String(title || '').trim() || 'Новость', text: String(text || '').trim(), version: Number(version) || 0 };
+  await writeNews((n) => { n.posts.push(post); }, 'Новость: ' + post.title);
+  return post;
+}
+const byDate = (a, b) => String(b.date || '').localeCompare(String(a.date || ''));
+const postItem = (p) => ({ post: p.id, version: p.version, date: p.date, title: p.title, text: p.text });
 async function readNews() {
   const token = store.getSecret('githubToken');
   try {
@@ -687,9 +709,11 @@ async function writeNews(mutate, message) {
 }
 // для игроков: убрать скрытые/удалённые, подставить исправленный текст
 function applyNews(changelog, n) {
-  return (changelog || [])
+  const list = (changelog || [])
     .filter((c) => !n.hidden.includes(c.version) && !n.deleted.includes(c.version))
     .map((c) => (n.edits[c.version] ? { ...c, ...n.edits[c.version] } : c));
+  const posts = (n.posts || []).filter((p) => !p.hidden && !p.deleted).map(postItem);
+  return posts.length ? [...list, ...posts].sort(byDate) : list;
 }
 // для автора: все записи с пометками
 async function authorNews() {
@@ -697,16 +721,26 @@ async function authorNews() {
   const n = await readNews();
   const list = ((m && m.changelog) || []).map((c) => ({ ...c, ...(n.edits[c.version] || {}), edited: !!n.edits[c.version],
     hidden: n.hidden.includes(c.version), deleted: n.deleted.includes(c.version) }));
-  return list;
+  const posts = (n.posts || []).map((p) => ({ ...postItem(p), hidden: !!p.hidden, deleted: !!p.deleted }));
+  return posts.length ? [...list, ...posts].sort(byDate) : list;
 }
-async function setNews({ version, hidden, deleted, title, text, restoreAll }) {
+async function setNews({ version, post, hidden, deleted, title, text, restoreAll }) {
   version = Number(version);
   await writeNews((n) => {
-    if (restoreAll) { n.deleted = []; return; }
+    if (restoreAll) { n.deleted = []; n.posts.forEach((p) => { delete p.deleted; }); return; }
+    if (post) {
+      const p = n.posts.find((x) => x.id === post);
+      if (!p) throw new Error('Новость не найдена — обнови список');
+      if (hidden != null) p.hidden = !!hidden;
+      if (deleted != null) p.deleted = !!deleted;
+      if (title != null) p.title = title;
+      if (text != null) p.text = text;
+      return;
+    }
     if (hidden != null) { n.hidden = n.hidden.filter((v) => v !== version); if (hidden) n.hidden.push(version); }
     if (deleted != null) { n.deleted = n.deleted.filter((v) => v !== version); if (deleted) n.deleted.push(version); }
     if (title != null || text != null) n.edits[version] = { ...(n.edits[version] || {}), ...(title != null ? { title } : {}), ...(text != null ? { text } : {}) };
-  }, `Новости: #${version || 'все'}`);
+  }, `Новости: ${post ? 'новость' : '#' + (version || 'все')}`);
   return true;
 }
 

@@ -632,8 +632,23 @@ function onServerState(d) {
     if (win && !win.isVisible()) { tray && tray.destroy(); tray = null; app.quit(); } // сервер закрыли из трея — выходим
   }
 }
-handle('hosting:get', () => ({ ...hosting.profile(), key: hosting.keyOf(), worlds: hosting.worlds(), radminNow: hosting.radmin() }));
-handle('hosting:update', (patch) => { hosting.update(patch || {}); if (server.running()) publishPresence(true); return { ...hosting.profile(), key: hosting.keyOf() }; });
+handle('hosting:get', () => ({ ...hosting.profile(), key: hosting.keyOf(), worlds: hosting.worlds(), radminNow: hosting.radmin(), game: hosting.game() }));
+// настройки игры на сервере: сохраняем; если сервер работает — что можно, применяем командами сразу
+handle('hosting:game', (patch) => {
+  const r = hosting.updateGame(patch || {}, server.running());
+  for (const c of r.commands) server.command(c);
+  return r;
+});
+handle('hosting:update', async (patch) => {
+  const pwBefore = hosting.hostTunnelPassword();
+  hosting.update(patch || {});
+  if (server.running()) {
+    publishPresence(true);
+    // пароль сменили на ходу — комната туннеля переоткрывается с новым (иначе он заработал бы только после перезапуска)
+    if (hosting.hostTunnelPassword() !== pwBefore) { const p = hosting.profile(); await tunnelCmd('host', tunnelOpts({ name: p.room, password: hosting.hostTunnelPassword(), mode: 'server' })).catch(() => {}); }
+  }
+  return { ...hosting.profile(), key: hosting.keyOf() };
+});
 handle('hosting:resetKey', async () => {
   hosting.resetKey();
   if (server.running()) { const p = hosting.profile(); await tunnelCmd('host', tunnelOpts({ name: p.room, password: hosting.hostTunnelPassword(), mode: 'server' })); }
@@ -692,6 +707,8 @@ handle('server:start', async () => {
   try { return await server.start(await packVersions(), progress); } finally { progress(null); }
 });
 handle('server:stop', () => server.stop());
+handle('server:syncMods', () => server.syncMods());
+handle('server:previewMods', () => server.previewMods());
 handle('server:command', (text) => server.command(text));
 handle('server:openDir', () => { fs.mkdirSync(server.dir(), { recursive: true }); shell.openPath(server.dir()); return true; });
 let studioReleased = false;

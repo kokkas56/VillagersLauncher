@@ -20,11 +20,11 @@ export default function News() {
       {list.length === 0 && <Empty icon="news">{t('Новостей пока нет. Когда автор нажмёт «Залить сборку», здесь появится запись с описанием.')}</Empty>}
       <div className="timeline">
         {list.map((n, i) => (
-          <article key={n.version} className={'tl-item' + (i === 0 ? ' first' : '')}>
+          <article key={n.post || n.version} className={'tl-item' + (i === 0 ? ' first' : '')}>
             <div className="tl-dot"><Icon name={i === 0 ? 'star' : 'emerald'} size={12} /></div>
             <div className="card tl-card">
               <div className="tl-head">
-                <span className="tl-ver">#{n.version}</span>
+                {n.post ? <span className="tl-ver">{t('новость')}</span> : <span className="tl-ver">#{n.version}</span>}
                 <h3>{n.title}</h3>
                 <div className="grow" />
                 <span className="muted">{fmtDate(n.date, lang)}</span>
