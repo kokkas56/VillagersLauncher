@@ -124,7 +124,7 @@ function StudioMain() {
   };
   core.openProjectWorld = openProjectWorld;
   const build = async () => {
-    try { await core.flush(); await core.flushEnts(); let pre = null; try { pre = await cinePrebuild(core); } catch (e) { pre = null; } const r = await call('studio:build'); if (r) r.pre = pre; if (r && r.ok) { try { r.ai = await call('studio:aiBuild'); } catch (e) { r.aiError = e.message; } try { r.anims = await call('studio:animBuild'); } catch (e) { r.animsError = e.message; } } setReport(r); setModal('report'); if (r && r.ok) learnMark('build'); } catch (e) { toast(e.message, 'error', 8000); }
+    try { await core.flush(); await core.flushEnts(); let pre = null; try { pre = await cinePrebuild(core); } catch (e) { pre = null; } const r = await call('studio:build'); if (r) r.pre = pre; if (r && r.ok) { try { r.ai = await call('studio:aiBuild'); } catch (e) { r.aiError = e.message; } } if (r) { try { r.anims = await call('studio:animBuild'); } catch (e) { r.animsError = e.message; } } setReport(r); setModal('report'); if (r && r.ok) learnMark('build'); } catch (e) { toast(e.message, 'error', 8000); }
   };
   const popOut = (tab) => call('studio:popout', tab).catch((e) => toast(e.message, 'error'));
   const run = {
@@ -414,9 +414,10 @@ function StudioMain() {
         </Modal>}
         {modal === 'report' && report && <Modal title={report.ok ? 'Собрано для игроков' : 'Не собрано — есть ошибки'} wide onClose={() => setModal(null)} footer={<>
           {report.ok && <button className="c4-btn" onClick={() => call('shell:openPath', 'config/kokkstory/studio/' + (report.project || ''))}>Открыть папку</button>}
+          {!report.ok && (report.issues || []).some((x) => /цели «.+» нет/.test(x.msg || '')) && <button className="c4-btn" title="Выходы, которые ведут на удалённые объекты, убираются (Ctrl+Z вернёт), и проект собирается заново." onClick={async () => { const n = core.pruneDeadOutputs(); toast('Убрано битых выходов: ' + n, 'ok', 3000); setModal(null); await new Promise((res) => setTimeout(res, 50)); build(); }}>Убрать битые выходы и собрать</button>}
           <button className="c4-btn prim" onClick={() => setModal(null)}>Понятно</button>
         </>}>
-          {report.ok ? <p>Проект собран: сцен <b>{report.count}</b>, диалогов <b>{report.dialogs || 0}</b>, заданий <b>{report.quests || 0}</b>, схем <b>{report.schemes || 0}</b>, построек <b>{report.structures || 0}</b>, сущностей <b>{report.entities || 0}</b>. Лежат в <span className="mono">{report.dir}</span> и уйдут игрокам со следующей публикацией сборки.</p> : <p>Ошибок: <b>{report.errors}</b>. Пока они есть, ничего не записано.</p>}
+          {report.ok ? <p>Проект собран: сцен <b>{report.count}</b>, диалогов <b>{report.dialogs || 0}</b>, заданий <b>{report.quests || 0}</b>, схем <b>{report.schemes || 0}</b>, построек <b>{report.structures || 0}</b>, сущностей <b>{report.entities || 0}</b>. Лежат в <span className="mono">{report.dir}</span> и уйдут игрокам со следующей публикацией сборки.</p> : <p>Ошибок: <b>{report.errors}</b>. Пока они есть, сцены, диалоги и остальное не записаны{report.anims ? ' (анимации собраны отдельно — они от этих ошибок не зависят)' : ''}.</p>}
           <CineReport report={report} />
           {report.ai && <p>ИИ жителей: параметров <b>{report.ai.params}</b>, поведений <b>{report.ai.scripts}</b>{report.ai.skipped && report.ai.skipped.length ? ' (с ошибками не собраны: ' + report.ai.skipped.join(', ') + ')' : ''}, реплик <b>{report.ai.lines}</b> → <span className="mono">config/villagerskokk/</span>.</p>}
           {report.aiError && <p className="dim">ИИ жителей не собран: {report.aiError}</p>}

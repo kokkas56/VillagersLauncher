@@ -764,10 +764,20 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
   const removeEnt = useCallback((id) => {
     const e = entsRef.current.find((x) => x.id === id);
     if (!e) return;
-    const refs = entsRef.current.filter((x) => x.id !== id && (x.outputs || []).some((o) => o.target === id)).length;
-    if (refs && !window.confirm('На «' + e.name + '» ссылаются выходы других сущностей (' + refs + '). Удалить всё равно? Эти выходы станут ошибками.')) return;
-    editEnts((l) => l.filter((x) => x.id !== id));
+    const refs = entsRef.current.reduce((n, x) => n + (x.id !== id ? (x.outputs || []).filter((o) => o.target === id).length : 0), 0);
+    // выходы других сущностей на удалённую — убираются вместе с ней (Ctrl+Z вернёт всё)
+    editEnts((l) => l.filter((x) => x.id !== id).map((x) => ((x.outputs || []).some((o) => o.target === id) ? { ...x, outputs: x.outputs.filter((o) => o.target !== id) } : x)));
     setSelEntState(null);
+    if (refs) toast('Удалено «' + e.name + '» и выходы на него у других сущностей: ' + refs + ' (Ctrl+Z — вернуть)', 'ok', 5000);
+  }, [editEnts, toast]);
+  /** Убрать выходы, цели которых (сущности) больше нет. Возвращает, сколько убрано. */
+  const pruneDeadOutputs = useCallback(() => {
+    const l0 = entsRef.current;
+    const ids = new Set(l0.map((x) => x.id));
+    const dead = (o) => { const t = o && o.target; return typeof t === 'string' && t && t !== 'player' && t !== '!activator' && !/^(scene|quest|scheme|dialog|signal):/.test(t) && !ids.has(t); };
+    const n = l0.reduce((k, x) => k + (x.outputs || []).filter(dead).length, 0);
+    if (n) editEnts((l) => l.map((x) => ((x.outputs || []).some(dead) ? { ...x, outputs: x.outputs.filter((o) => !dead(o)) } : x)));
+    return n;
   }, [editEnts]);
   const dupEnt = useCallback((id) => {
     const e = entsRef.current.find((x) => x.id === id);
@@ -862,7 +872,7 @@ export function useStudioCore({ withScene = true, who = 'window' } = {}) {
   }, [edit, toast]);
   flushAllRef.current = flushEnts;
   return {
-    addLink, ents, editEnts, entGesture, selEnt, setSelEnt, placeEntity, removeEnt, dupEnt, entIssues, entErr, flushEnts,
+    addLink, ents, editEnts, entGesture, selEnt, setSelEnt, placeEntity, removeEnt, pruneDeadOutputs, dupEnt, entIssues, entErr, flushEnts,
     playState, playtest, stopPlaytest, gameEnts, editorOn, setEditorOn, worldMatch, refreshWorldMatch,
     projectId: boot && boot.projectId, hasProject: !!(boot && boot.project),
     boot, setBoot, bootErr, project, saveProject, list, setList, dialogs, quests, schemes, structures, reloadList, reloadAny, patchList, baseRefs, addVar,
