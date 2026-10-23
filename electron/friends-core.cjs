@@ -20,6 +20,23 @@ const DROP_AFTER = 90e3; // в лобби пропавшего убираем и
 const MSG_MAX_AGE = 10 * 60e3; // inbox/отряд: старые сообщения не принимаем
 const INVITE_TTL = 120e3;
 const ENTER_WAIT = 60e3; // совместная загрузка: ждём остальных не дольше минуты
+const PARTY_MAX = 10; // в отряде не больше 10 игроков, лидер тоже считается
+const FULL_TEXT = 'Отряд полон (' + PARTY_MAX + '/' + PARTY_MAX + ')';
+// «Максимум игроков» на сервере для игры отрядом (лидер ставит в лобби): отряд сам по себе вход не ограничивает
+const PLAYERS = { def: 20, min: 2, max: 100 };
+function clampPlayers(v, def) {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) && n > 0 ? Math.max(PLAYERS.min, Math.min(PLAYERS.max, n)) : def === undefined ? PLAYERS.def : def;
+}
+const partyFull = (st) => !!(st && Array.isArray(st.members) && st.members.length >= PARTY_MAX);
+// файл отряда для мода VillagersKokk на «Моём сервере»: <папка сервера>/config/villagerskokk/party.json
+// { v:1, id, leader:'Ник', members:['Ник', …] (лидер тоже), at } ; без отряда — members: []
+function partyFileDoc(st, now) {
+  if (!st || !Array.isArray(st.members) || !st.members.length) return { v: 1, id: null, leader: null, members: [], at: now || Date.now() };
+  const lead = st.members.find((m) => m.key === st.leader);
+  const members = st.members.map((m) => m.nick).filter((n) => NICK_RE.test(String(n)));
+  return { v: 1, id: st.id || null, leader: lead && NICK_RE.test(lead.nick) ? lead.nick : members[0] || null, members, at: now || Date.now() };
+}
 
 // ---------------- ключи ----------------
 const b64u = (buf) => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -292,6 +309,7 @@ function cleanMap(m) {
 
 module.exports = {
   NS, T, keyOf, NICK_RE, STATUS_STALE, HB_STALE, DROP_AFTER, MSG_MAX_AGE, INVITE_TTL, ENTER_WAIT, LEVEL_TYPES,
+  PARTY_MAX, FULL_TEXT, PLAYERS, clampPlayers, partyFull, partyFileDoc,
   b64u, unb64u, genIdentity, validIdentity, seal, open, encryptFor, decryptFrom, newPartyKey, partyIdOf, partySeal, partyOpen,
   emptyBook, normBook, onRq, acceptIncoming, friendBy, statusOf, fresher,
   newParty, isMember, alive, successor, acceptState, leaderTick, goNow, allInWorld, waitingFor, shouldConnect, memberState, mayJoin,

@@ -174,7 +174,7 @@ function FriendRow({ f, t, act, open, menuOpen, setMenu }) {
       </div>
       <span className="pill sm gold" title={t('Уровень: 1 + мастерство во всех мини-играх')}>{t('ур.')} {f.level}</span>
       {f.inParty ? <span className="pill sm green">{t('в отряде')}</span>
-        : <button className="btn sm" disabled={!f.invitable} title={f.invitable ? t('Позвать в отряд — друг увидит приглашение в лаунчере и в игре') : t('Друг не в сети')} onClick={() => act('friends:invite', f.nick, 'Приглашение отправлено')}><Icon name="plus" size={12} /> {t('Позвать')}</button>}
+        : <button className="btn sm" disabled={!f.invitable} title={f.invitable ? t('Позвать в отряд — друг увидит приглашение в лаунчере и в игре') : f.status !== 'offline' ? t('Отряд полон (10/10)') : t('Друг не в сети')} onClick={() => act('friends:invite', f.nick, 'Приглашение отправлено')}><Icon name="plus" size={12} /> {t('Позвать')}</button>}
       <div className="fr-menu-wrap">
         <button className="btn sm icon-btn ghost" onClick={(e) => { e.stopPropagation(); setMenu(!menuOpen); }}>⋯</button>
         {menuOpen && (
@@ -199,6 +199,7 @@ function PartyCard({ fs, act, openProfile }) {
     <section className={'card party-card ph-' + p.phase}>
       <div className="card-head"><Icon name="sword" /><h3>{t('Отряд')}</h3>
         <span className="pill sm">{p.solo ? t('ты один') : t(PHASE[p.phase] || p.phase)}</span>
+        {!p.solo && <span className={'pill sm' + (p.full ? ' warn' : '')} title={t('В отряде не больше 10 игроков (лидер тоже). На сервер отряда могут зайти и другие — до «Максимума игроков».')}>{p.members.length}/{p.partyMax || 10}</span>}
         {p.joining && <span className="pill sm warn">{t('вступаю…')}</span>}
         <div className="grow" />
         {!p.solo && <button className="btn sm ghost" onClick={() => act('friends:leave')}>{t('Выйти из отряда')}</button>}

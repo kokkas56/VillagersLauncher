@@ -292,6 +292,29 @@ function client(port) {
     closed: () => new Promise((res) => { if (s.destroyed) res(); s.on('close', res); })
   };
 }
+// ---------------- размер отряда, «Максимум игроков», файл отряда для сервера ----------------
+t('отряд: не больше 10 (лидер считается), текст «Отряд полон (10/10)»', () => {
+  const mk = (n) => ({ members: Array.from({ length: n }, (_, i) => ({ key: 'p' + i, nick: 'P' + i })) });
+  assert.strictEqual(C.PARTY_MAX, 10);
+  assert.strictEqual(C.partyFull(mk(9)), false);
+  assert.strictEqual(C.partyFull(mk(10)), true);
+  assert.strictEqual(C.partyFull(null), false);
+  assert.strictEqual(C.FULL_TEXT, 'Отряд полон (10/10)');
+});
+t('«Максимум игроков»: по умолчанию 20, от 2 до 100', () => {
+  assert.strictEqual(C.clampPlayers(undefined), 20);
+  assert.strictEqual(C.clampPlayers(1), 2);
+  assert.strictEqual(C.clampPlayers(500), 100);
+  assert.strictEqual(C.clampPlayers('30'), 30);
+  assert.strictEqual(C.clampPlayers('много', null), null);
+  assert.strictEqual(C.clampPlayers(0, null), null);
+});
+t('party.json: лидер и участники по никам, без отряда — пустой список', () => {
+  const st = { id: 'abc', leader: 'bob', members: [{ key: 'alice', nick: 'Alice' }, { key: 'bob', nick: 'Bob' }] };
+  const d = C.partyFileDoc(st, 5);
+  assert.deepStrictEqual(d, { v: 1, id: 'abc', leader: 'Bob', members: ['Alice', 'Bob'], at: 5 });
+  assert.deepStrictEqual(C.partyFileDoc(null, 6), { v: 1, id: null, leader: null, members: [], at: 6 });
+});
 t('связь: файл party.link, неверный токен — отказ, верный — hello и сообщения', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vl-link-'));
   const got = [];

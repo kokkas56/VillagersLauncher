@@ -321,7 +321,7 @@ function ServerCard({ t, toast, settings, saveSettings, progress, account, openA
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const players = st.players || [];
   return (
-    <Section title={t('Мой сервер')} icon="crown" right={<span className={'pill sm ' + (st.state === 'running' ? 'green' : '')}><span className={'dot ' + (st.state === 'running' ? 'on' : 'off')} /> {t(label)}{st.state === 'running' ? ` · ${players.length}/${hp.maxPlayers}` : ''}</span>}>
+    <Section title={t('Мой сервер')} icon="crown" right={<span className={'pill sm ' + (st.state === 'running' ? 'green' : '')}><span className={'dot ' + (st.state === 'running' ? 'on' : 'off')} /> {t(label)}{st.state === 'running' ? ` · ${players.length}/${st.maxPlayers || hp.maxPlayers}` : ''}</span>}>
       <p className="muted small">{t('Настоящий сервер с модами сборки на твоём компьютере. Работает, пока ты его не остановишь или не выключишь компьютер: крестик сворачивает лаунчер в трей. Друзья заходят по ключу — Radmin не нужен.')}</p>
       {progress && progress.stage === 'server' && <Progress p={progress} />}
       {st.crash && st.state === 'stopped' && (
@@ -337,7 +337,7 @@ function ServerCard({ t, toast, settings, saveSettings, progress, account, openA
         <label>{t('Название')}<input className="input" value={form.name} maxLength={48} onChange={set('name')} /></label>
         <label>{t('Описание')} <small className="muted">({t('видно в каталоге и в игре')})</small><textarea className="input" rows={2} maxLength={400} value={form.desc} onChange={set('desc')} /></label>
         <div className="row wrap">
-          <label className="small">{t('Игроков')} <input className="input num" type="number" min="1" max="100" value={form.maxPlayers} onChange={set('maxPlayers')} /></label>
+          <label className="small" title={t('Сколько человек может быть на сервере одновременно (max-players). Для игры отрядом лидер выбирает своё число в лобби игры.')}>{t('Максимум игроков')} <input className="input num" type="number" min="1" max="100" value={form.maxPlayers} onChange={set('maxPlayers')} /></label>
           <label className="small grow">{t('Пароль')} <small className="muted">{hp.hasPassword ? t('(задан; чтобы сменить — впиши новый и «Сохранить»)') : t('(необязательно)')}</small><PasswordInput value={form.password} onChange={(v) => setForm({ ...form, password: v })} t={t} onCopy={copyPassword} placeholder={t('без пароля')} /></label>
           {hp.hasPassword && <button className="btn sm ghost" onClick={removePassword}>{t('Убрать пароль')}</button>}
         </div>

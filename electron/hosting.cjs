@@ -272,14 +272,14 @@ function writeAccess(dir) {
   }
 }
 
-// что прописать в server.properties
-function props() {
+// что прописать в server.properties. opts.maxPlayers — на этот запуск (игра отрядом: «Максимум игроков» из лобби)
+function props(opts) {
   const p = profile();
   const g = store.get().serverGame || {};
   const out = {
     'level-name': p.world ? 'worlds/' + p.world : 'world',
     motd: (g.motd || (p.name + (p.desc ? ' — ' + p.desc : ''))).replace(/\n/g, ' ').slice(0, 120),
-    'max-players': String(p.maxPlayers),
+    'max-players': String(opts && Number(opts.maxPlayers) > 0 ? Math.max(1, Math.min(100, Math.round(Number(opts.maxPlayers)))) : p.maxPlayers),
     'white-list': 'false'
   };
   // только то, что хозяин задал в лаунчере; остальное остаётся как в server.properties
