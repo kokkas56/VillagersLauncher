@@ -246,6 +246,8 @@ function buildLaunch({ vanilla, neo, javaPath, account, gameDir, quickPlay, quic
   jvm.push(`-Xms${s.memoryMinMb}M`, `-Xmx${s.memoryMaxMb}M`);
   jvm.push(...(s.jvmArgs || '').split(/\s+/).filter(Boolean));
   jvm.push('-Dfile.encoding=UTF-8', '-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8');
+  // режим полного экрана для KokkHUD: «без рамки» (по умолчанию, быстрый Alt+Tab) или настоящий полноэкранный; F11 в игре — так же
+  jvm.push('-Dkokkhud.windowMode=' + (s.windowMode === 'exclusive' ? 'fullscreen' : 'borderless'));
   if (vanilla.logging && vanilla.logging.client) {
     const lf = path.join(ASSET_DIR, 'log_configs', vanilla.logging.client.file.id);
     jvm.push(vanilla.logging.client.argument.replace('${path}', lf));

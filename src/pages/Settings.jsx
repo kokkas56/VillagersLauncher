@@ -122,7 +122,8 @@ export default function Settings() {
             <span>×</span>
             <input className="input num" type="number" value={s.height} onChange={(e) => set({ height: +e.target.value || 480 })} />
           </div>
-          <Toggle checked={s.fullscreen} onChange={(v) => set({ fullscreen: v })} label={t('Полноэкранный режим')} hint={t('Без рамки на весь экран (быстрый Alt+Tab)')} />
+          <Toggle checked={!!s.fullscreen && s.windowMode !== 'exclusive'} onChange={(v) => set({ fullscreen: v, windowMode: 'borderless' })} label={t('Окно без рамки на весь экран')} hint={t('Как полный экран, но это окно: мгновенный Alt+Tab, работает PrintScreen, экран не переключается. F11 в игре тоже включает этот режим.')} />
+          <Toggle checked={!!s.fullscreen && s.windowMode === 'exclusive'} onChange={(v) => set({ fullscreen: v, windowMode: v ? 'exclusive' : 'borderless' })} label={t('Полноэкранный режим (настоящий)')} hint={t('Обычный полный экран игры: иногда чуть больше FPS, но Alt+Tab медленный и экран переключается. F11 в игре тоже включает этот режим.')} />
         </div>
       </Section>
 
