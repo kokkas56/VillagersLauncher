@@ -202,7 +202,7 @@ export default function AnimTimeline({ anim, bones, time, setTime, playing, setP
   return (
     <div className="c4-tl an-tl" style={{ height }}>
       <div className="c4-transport">
-        <button className="c4-ib" data-learn="an-key" disabled={!selBone} onClick={() => act.keyBone(selBone, time)} {...hp('Ключ на выбранную кость в момент бегунка (K): поворот, а сдвиг и размер — если они уже анимированы.')}><I name="key" size={16} color="#e6c23c" /></button>
+        <button className="c4-ib" data-learn="an-key" disabled={!selBone} onClick={() => act.keyBone(selBone, time)} {...hp('Ключ на выбранную кость в момент бегунка (K): сразу поворот, сдвиг и размер по всем осям X, Y, Z (настройка «Все каналы» — у кости справа).')}><I name="key" size={16} color="#e6c23c" /></button>
         <div className="c4-sep" />
         <button className="c4-ib" onClick={() => setTime(0)} {...hp('В начало.')}><I name="first" size={15} /></button>
         <button className="c4-ib" onClick={prevKey} disabled={!kts.length} {...hp('К предыдущему ключу' + (selBone ? ' кости' : '') + '.')}><I name="prevkey" size={15} /></button>

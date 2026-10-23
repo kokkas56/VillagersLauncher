@@ -60,3 +60,4 @@
 .an-evrow:hover { background: #383838; }
 .an-evrow.on { background: var(--c-acc-bg, #3a4180); color: #fff; }
 .an-tl .c4-lhead .add { margin-left: auto; color: #9fb0ff; cursor: pointer; padding: 0 4px; }
+.an-chk { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #bbb; cursor: pointer; margin-left: 4px; }

@@ -296,7 +296,7 @@ export default function AnimTab() {
 
   // ---------- действия с ключами ----------
   const act = {
-    keyBone: (bone, t, chs) => { if (!bone) return; edit((a) => keyBone(a, bone, t, chs)); learnMark('an-key'); },
+    keyBone: (bone, t, chs) => { if (!bone) return; let all = true; try { all = localStorage.getItem('an-key-all') !== '0'; } catch (_) { /* как по умолчанию */ } edit((a) => keyBone(a, bone, t, chs, all)); learnMark('an-key'); },
     copy: (keys) => { const k = keys || selKeys; clip.current = anim ? copyKeys(anim, k) : null; if (clip.current) toast('Скопировано ключей: ' + clip.current.items.length, 'ok', 1500); },
     paste: () => { if (!clip.current || !anim) return; const r = pasteKeys(anim, clip.current, tInt, selBone); edit(() => r.anim); setSelKeys(r.keys); },
     del: (keys) => { const k = keys || selKeys; if (!k.length) return; edit((a) => deleteKeys(a, k)); setSelKeys([]); },
@@ -540,6 +540,15 @@ function BonePane({ anim, bones, sel, setSel, time, edit, act, hp, extra, solved
     </>
   );
 }
+function KeyAllToggle({ hp }) {
+  const read = () => { try { return localStorage.getItem('an-key-all') !== '0'; } catch (_) { return true; } };
+  const [on, setOn] = useState(read);
+  return (
+    <label className="an-chk" {...hp('Все каналы: ключ (кнопка ◇ на панели времени и K) ставится сразу на поворот, сдвиг и размер по X, Y, Z. Выключи — ключ только на поворот (сдвиг и размер — если уже анимированы).')}>
+      <input type="checkbox" checked={on} onChange={(e) => { setOn(e.target.checked); try { localStorage.setItem('an-key-all', e.target.checked ? '1' : '0'); } catch (_) { /* не запомнится */ } }} /> Все каналы
+    </label>
+  );
+}
 function BoneAttrs({ anim, bone, time, edit, act, hp, isExtra, extraDef }) {
   const modeOv = anim.modes && anim.modes[bone];
   const row = (ch) => {
@@ -567,7 +576,8 @@ function BoneAttrs({ anim, bone, time, edit, act, hp, isExtra, extraDef }) {
           <Select value={modeOv || ''} onChange={(v) => edit((a) => { const m = { ...(a.modes || {}) }; if (v) m[bone] = v; else delete m[bone]; return { ...a, modes: m }; })} options={[['', 'как у анимации (' + (anim.mode === 'replace' ? 'заменить' : 'добавить') + ')'], ...MODES.map(([k, l]) => [k, l])]} />
         </ARow>
         <div className="c4-btnrow">
-          <button className="c4-btn sm" onClick={() => act.keyBone(bone, time)} {...hp('Ключ на кость (K).')}><I name="key" size={11} /> Ключ</button>
+          <button className="c4-btn sm" onClick={() => act.keyBone(bone, time)} {...hp('Ключ на кость (K): поворот, сдвиг и размер по всем осям сразу (галочка «Все каналы»).')}><I name="key" size={11} /> Ключ</button>
+          <KeyAllToggle hp={hp} />
           <button className="c4-btn sm" onClick={() => edit((a) => setKey(a, bone, 'rot', time, [0, 0, 0]))} {...hp('Поворот этой кости в момент бегунка — в ноль (как стоит обычно).')}>Сбросить поворот</button>
           <button className="c4-btn sm" onClick={() => act.clearBone(bone)} {...hp('Удалить все ключи кости.')}><I name="trash" size={11} /></button>
         </div>

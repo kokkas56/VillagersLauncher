@@ -108,10 +108,11 @@ export function pasteKeys(anim, clip, t, toBone) {
   }
   return { anim: a, keys };
 }
-/** Ключ на все каналы кости (rot всегда; pos/scale — если они уже анимированы) по текущей позе. */
-export function keyBone(anim, bone, t, chs) {
+/** Ключ на кость по текущей позе. all (по умолчанию) — сразу поворот, сдвиг и размер по всем осям;
+ *  false — поворот всегда, сдвиг/размер — только если они уже анимированы. */
+export function keyBone(anim, bone, t, chs, all = true) {
   let a = anim;
-  const list = chs || CHANNELS.filter((ch) => ch === 'rot' || isAnimated(anim, bone, ch));
+  const list = chs || CHANNELS.filter((ch) => all || ch === 'rot' || isAnimated(anim, bone, ch));
   for (const ch of list) a = setKey(a, bone, ch, t, valueAt(a, bone, ch, t));
   return a;
 }

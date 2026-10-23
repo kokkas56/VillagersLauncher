@@ -274,8 +274,18 @@ export default function AnimView({ rig, solved, extra, texes, sel, onSelect, too
       return null;
     }
     if (g.arrows) {
-      for (const a of g.arrows) if (Math.hypot(x - a.x, y - a.y) < 8) return { arrow: a.i };
-      if (Math.abs(x - g.pc[0]) < 8 && Math.abs(y - g.pc[1]) < 8) return { move: true };
+      if (Math.abs(x - g.pc[0]) < 7 && Math.abs(y - g.pc[1]) < 7) return { move: true };
+      // вся стрелка, а не только точка на конце: ближайшая к мыши ось (от края центрального квадрата до точки)
+      let best = null, bd = 8;
+      for (const a of g.arrows) {
+        const vx = a.x - g.pc[0], vy = a.y - g.pc[1], l2 = vx * vx + vy * vy;
+        if (l2 < 1) continue;
+        const t = Math.max(0, Math.min(1, ((x - g.pc[0]) * vx + (y - g.pc[1]) * vy) / l2));
+        if (t * Math.sqrt(l2) < 5) continue;
+        const d = Math.hypot(g.pc[0] + vx * t - x, g.pc[1] + vy * t - y);
+        if (d < bd) { bd = d; best = { arrow: a.i }; }
+      }
+      if (best) return best;
     }
     return null;
   };
@@ -367,7 +377,7 @@ export default function AnimView({ rig, solved, extra, texes, sel, onSelect, too
     c.addEventListener('wheel', onWheel, { passive: false });
     return () => c.removeEventListener('wheel', onWheel);
   });
-  const tip = tool === 'rotate' ? 'Кольца: красное — X, зелёное — Y, синее — Z (оси кости). Тяни кольцо — поворот вокруг оси; внутри круга — свободно. Shift — точнее.' : tool === 'move' ? 'Сдвиг: тяни белый квадрат — в плоскости экрана, цветные точки — вдоль оси. Shift — точнее.' : 'Выбор: щёлкни часть тела.';
+  const tip = tool === 'rotate' ? 'Кольца: красное — X, зелёное — Y, синее — Z (оси кости). Тяни кольцо — поворот вокруг оси; внутри круга — свободно. Shift — точнее.' : tool === 'move' ? 'Сдвиг: тяни белый квадрат — в плоскости экрана, цветную стрелку (за любое место) — вдоль оси. Shift — точнее.' : 'Выбор: щёлкни часть тела.';
   return (
     <div className="an-view" ref={wrap} {...(hp ? hp('Предпросмотр. ЛКМ — выбрать кость. ' + tip + ' ПКМ или Alt+ЛКМ — вращать вид, СКМ или Shift+ПКМ — двигать, колесо — ближе/дальше.') : {})}>
       <canvas ref={cv} style={{ width: size.w, height: size.h, cursor: hover != null ? 'grab' : 'default' }} onMouseDown={onDown} onMouseMove={onMoveHover} onContextMenu={(e) => e.preventDefault()} />
