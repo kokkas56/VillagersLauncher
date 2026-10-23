@@ -153,6 +153,57 @@ async function gh(method, url, token, body, extraHeaders) {
   return data;
 }
 
+// загрузка файла в выпуск: с ограничением по времени и повторами (большие файлы иногда «зависают» на полпути);
+// 422 «уже есть» — если такой же размер, считаем загруженным, иначе удаляем и льём заново
+async function uploadAsset(R, rel, name, buf, token, contentType = 'application/octet-stream', tries = 3) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    const ac = new AbortController();
+    const ms = 90000 + Math.ceil(buf.length / (256 * 1024)) * 1000; // ~минута + секунда на каждые 256 КБ
+    const tm = setTimeout(() => ac.abort(), ms);
+    try {
+      const res = await netu.fetchRaw(`https://uploads.github.com/repos/${R}/releases/${rel.id}/assets?name=${encodeURIComponent(name)}`, {
+        method: 'POST', headers: { ...ghHeaders(token), 'Content-Type': contentType }, body: buf, signal: ac.signal
+      });
+      const text = await res.text();
+      if (res.ok) return JSON.parse(text);
+      if (res.status === 422) {
+        const cur = await gh('GET', `/repos/${R}/releases/${rel.id}/assets?per_page=100`, token).catch(() => []);
+        const a = (cur || []).find((x) => x.name === name);
+        if (a && a.size === buf.length && a.state === 'uploaded') return a;
+        if (a) await gh('DELETE', `/repos/${R}/releases/assets/${a.id}`, token).catch(() => {});
+      }
+      let msg = text; try { msg = JSON.parse(text).message || text; } catch (_) {}
+      last = new Error('GitHub: ' + name + ': ' + (msg || ('HTTP ' + res.status)));
+    } catch (e) {
+      last = new Error('Не залился ' + name + ': ' + (e.name === 'AbortError' ? 'слишком долго' : e.message));
+    } finally { clearTimeout(tm); }
+    await new Promise((r) => setTimeout(r, 2000 * (i + 1)));
+  }
+  throw last;
+}
+
+// скачать файл выпуска с повторами
+async function fetchAsset(url, tries = 3) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await netu.fetchRaw(url);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return Buffer.from(await res.arrayBuffer());
+    } catch (e) { last = e; await new Promise((r) => setTimeout(r, 1500 * (i + 1))); }
+  }
+  throw last;
+}
+
+// брошенные черновики с этой меткой (прошлые прерванные попытки) — убрать
+async function dropDrafts(R, tag, token) {
+  try {
+    const all = await gh('GET', `/repos/${R}/releases?per_page=100`, token);
+    for (const r of all) if (r.draft && r.tag_name === tag) await gh('DELETE', `/repos/${R}/releases/${r.id}`, token).catch(() => {});
+  } catch (_) {}
+}
+
 async function listReleases() {
   const token = store.getSecret('githubToken');
   const list = await gh('GET', `/repos/${repo()}/releases?per_page=50`, token);
@@ -576,6 +627,7 @@ async function closeToEarly(tag, progress = () => {}) {
   const version = m.version;
   const newTag = `early-${version}`;
   let er = null;
+  await dropDrafts(pub, newTag, token);
   try { er = await gh('GET', `/repos/${pub}/releases/tags/${newTag}`, token); } catch (_) {}
   if (er) throw new Error('Ранний выпуск ' + newTag + ' уже есть');
   const title = String(pr.name || '').replace(/^#\d+\s*/, '');
@@ -589,10 +641,11 @@ async function closeToEarly(tag, progress = () => {}) {
       const name = decodeURIComponent(f.url.split('/').pop());
       const a = assets.get(name);
       if (!a) throw new Error('В выпуске нет файла ' + name);
-      const res = await netu.fetchRaw(a.browser_download_url);
-      if (!res.ok) throw new Error('Не скачался ' + name + ': HTTP ' + res.status);
-      const enc = early.encrypt(prep.key, Buffer.from(await res.arrayBuffer()));
-      await gh('POST', `https://uploads.github.com/repos/${pub}/releases/${er.id}/assets?name=${encodeURIComponent(name)}`, token, enc, { 'Content-Type': 'application/octet-stream' }).catch((e) => { if (e.status !== 422) throw e; });
+      progress({ stage: 'publish', text: `Закрываю #${version}: ${name} (${n + 1}/${mine.length})`, bytes: n, total: mine.length || 1 });
+      let plain;
+      try { plain = await fetchAsset(a.browser_download_url); } catch (e) { throw new Error('Не скачался ' + name + ': ' + e.message); }
+      const enc = early.encrypt(prep.key, plain);
+      await uploadAsset(pub, er, name, enc, token);
       f.url = `https://github.com/${pub}/releases/download/${newTag}/${name}`;
       f.enc = newTag;
       progress({ stage: 'publish', text: `Закрываю #${version}: ${++n}/${mine.length}`, bytes: n, total: mine.length || 1 });
@@ -604,7 +657,8 @@ async function closeToEarly(tag, progress = () => {}) {
     await gh('PATCH', `/repos/${pub}/releases/${er.id}`, token, { draft: false, prerelease: true, make_latest: 'false' });
   } catch (e) {
     await gh('DELETE', `/repos/${pub}/releases/${er.id}`, token).catch(() => {});
-    throw e;
+    await dropDrafts(pub, newTag, token);
+    throw new Error('Закрыть #' + version + ' в ранний доступ не вышло: ' + e.message + '. Открытая версия не тронута — можно попробовать ещё раз.');
   }
   // открытый выпуск НЕ удаляем: более новые версии берут из него неизменённые файлы (иначе у игроков «Не удалось скачать»).
   // Убираем только его манифест — версия пропадает из списка и не скачивается, файлы остаются хранилищем.
