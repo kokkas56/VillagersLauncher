@@ -292,6 +292,16 @@ function cleanEquip(items) {
   return o;
 }
 const LEVEL_TYPES = { normal: 'minecraft:normal', flat: 'minecraft:flat', large_biomes: 'minecraft:large_biomes', amplified: 'minecraft:amplified' };
+// тип мира — id пресета мира (worldgen/world_preset) из игры: ванильные и любые модов сборки («kokkstory:journey», …).
+// Короткие старые имена (normal/flat/…) тоже понимаем. То, что пойдёт в server.properties как level-type.
+const PRESET_RE = /^[a-z0-9_.-]{1,64}:[a-z0-9_./-]{1,100}$/;
+function cleanType(t) {
+  const v = String(t == null ? '' : t).trim().toLowerCase();
+  if (LEVEL_TYPES[v]) return v;
+  if (PRESET_RE.test(v) && !v.includes('..')) return v;
+  return 'normal';
+}
+function levelTypeOf(t) { const v = cleanType(t); return LEVEL_TYPES[v] || v; }
 function cleanMap(m) {
   if (!m || typeof m !== 'object') return null;
   const nameOk = (s) => typeof s === 'string' && s.trim() && !/[\\/]|^\.\.?$/.test(s.trim()) && s.length <= 64;
@@ -300,7 +310,7 @@ function cleanMap(m) {
   if (m.newWorld) {
     const n = m.newWorld;
     const name = String(n.name || '').trim().replace(/[\\/:*?"<>|]/g, '').slice(0, 40) || 'Мир отряда';
-    const type = LEVEL_TYPES[n.type] ? n.type : 'normal';
+    const type = cleanType(n.type);
     return { kind: 'new', name, seed: String(n.seed == null ? '' : n.seed).trim().slice(0, 64), type };
   }
   if (m.kind && ['world', 'server', 'new'].includes(m.kind)) return m.kind === 'new' ? cleanMap({ newWorld: m }) : cleanMap({ [m.kind]: m.name });
@@ -313,5 +323,5 @@ module.exports = {
   b64u, unb64u, genIdentity, validIdentity, seal, open, encryptFor, decryptFrom, newPartyKey, partyIdOf, partySeal, partyOpen,
   emptyBook, normBook, onRq, acceptIncoming, friendBy, statusOf, fresher,
   newParty, isMember, alive, successor, acceptState, leaderTick, goNow, allInWorld, waitingFor, shouldConnect, memberState, mayJoin,
-  cleanEquip, cleanMap
+  cleanEquip, cleanMap, cleanType, levelTypeOf, PRESET_RE
 };

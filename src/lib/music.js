@@ -150,6 +150,88 @@ export function stop() {
 
 export function isPlaying() { return playing; }
 
+// ---------- запись трека в файл (музыка лобби в игре) ----------
+// Тот же синтез, но в OfflineAudioContext: целое число 8-тактовых кругов (~2 мин), моно 16 бит. Игра (KokkHUD) играет
+// этот WAV по кругу в главном меню — файл пишет главный процесс (friends:musicSave) в <папка игры>/.villagers/music.
+export async function renderTrackWav(id, opts = {}) {
+  const tr = TRACKS[id] || TRACKS.default;
+  const rate = opts.rate || 24000;
+  const step = 60 / tr.bpm / 4;
+  const loopBars = 8 * Math.max(1, Math.round((opts.seconds || 120) / (step * 16 * 8)));
+  const dur = loopBars * 16 * step;
+  const Off = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const c = new Off(1, Math.ceil(dur * rate), rate);
+  const out = c.createGain();
+  const comp = c.createDynamicsCompressor();
+  out.gain.value = 0.6;
+  out.connect(comp); comp.connect(c.destination);
+  let nb = null;
+  const noiseB = () => {
+    if (nb) return nb;
+    nb = c.createBuffer(1, rate, rate);
+    const dd = nb.getChannelData(0);
+    for (let i = 0; i < dd.length; i++) dd[i] = Math.random() * 2 - 1;
+    return nb;
+  };
+  const envO = (g, t, a, peak, d) => { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(0.0001, t + a + d); };
+  const toneO = (type, freq, t, d, peak, cutoff) => {
+    const o = c.createOscillator(); const f = c.createBiquadFilter(); const g = c.createGain();
+    o.type = type; o.frequency.value = freq; f.type = 'lowpass'; f.frequency.value = cutoff;
+    o.connect(f); f.connect(g); g.connect(out); envO(g, t, 0.02, peak, d); o.start(t); o.stop(Math.min(dur, t + d + 0.1));
+  };
+  const kickO = (t) => {
+    const o = c.createOscillator(); const g = c.createGain();
+    o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.18);
+    o.connect(g); g.connect(out); envO(g, t, 0.005, 0.5, 0.25); o.start(t); o.stop(Math.min(dur, t + 0.35));
+  };
+  const hissO = (t, d, peak, type, freq) => {
+    const sN = c.createBufferSource(); sN.buffer = noiseB(); const f = c.createBiquadFilter(); f.type = type; f.frequency.value = freq;
+    const g = c.createGain(); sN.connect(f); f.connect(g); g.connect(out); envO(g, t, 0.003, peak, d); sN.start(t, Math.random() * 0.5); sN.stop(Math.min(dur, t + d + 0.05));
+  };
+  const progs = tr.progs || PROGS;
+  let pr = progs[0];
+  let mel = [];
+  const newMel = () => { mel = []; for (let i = 0; i < 16; i++) mel.push(Math.random() < (i % 4 === 0 ? 0.45 : 0.18) ? tr.root + tr.scale[Math.floor(Math.random() * tr.scale.length)] - (Math.random() < 0.3 ? 12 : 0) : null); };
+  const total = loopBars * 16;
+  for (let st = 0; st < total; st++) {
+    const s16 = st % 16, bar = Math.floor(st / 16);
+    const t = st * step + (s16 % 2 === 1 ? step * 0.18 : 0);
+    const last = bar === loopBars - 1; // последний такт тише к концу: стык круга без щелчка
+    if (s16 === 0) {
+      if (bar % 8 === 0) pr = progs[Math.floor(Math.random() * progs.length)];
+      if (bar % 2 === 0) newMel();
+      const chord = pr[bar % 4];
+      for (const n of chord) toneO(tr.pad, hz(n), t, step * (last ? 13 : 15), tr.pad === 'sawtooth' ? 0.025 : 0.05, 900);
+      toneO('sine', hz(chord[0] - 12), t, step * 7, 0.12, 400);
+    }
+    if (s16 === 8) toneO('sine', hz(pr[bar % 4][0] - 12), t, step * 6, 0.09, 400);
+    if (s16 === 0 || s16 === 10) kickO(t);
+    if (s16 === 4 || s16 === 12) hissO(t, 0.12, 0.08, 'bandpass', 1800);
+    if (s16 % 2 === 0) hissO(t, 0.03, s16 % 4 === 2 ? 0.035 : 0.02, 'highpass', 7000);
+    const m = mel[s16];
+    if (m && !(last && s16 > 12)) toneO(tr.lead, hz(m), t, step * 3, tr.lead === 'sine' ? 0.05 : 0.025, 1500);
+    if (Math.random() < 0.06) hissO(t, 0.01, 0.015, 'highpass', 3000);
+  }
+  const buf = await c.startRendering();
+  const pcm = buf.getChannelData(0);
+  // мягкие края (10 мс), WAV PCM 16 бит моно
+  const edge = Math.floor(rate * 0.01);
+  const data = new DataView(new ArrayBuffer(44 + pcm.length * 2));
+  const str = (o, x) => { for (let i = 0; i < x.length; i++) data.setUint8(o + i, x.charCodeAt(i)); };
+  str(0, 'RIFF'); data.setUint32(4, 36 + pcm.length * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+  data.setUint32(16, 16, true); data.setUint16(20, 1, true); data.setUint16(22, 1, true); data.setUint32(24, rate, true);
+  data.setUint32(28, rate * 2, true); data.setUint16(32, 2, true); data.setUint16(34, 16, true); str(36, 'data'); data.setUint32(40, pcm.length * 2, true);
+  for (let i = 0; i < pcm.length; i++) {
+    let v = pcm[i];
+    if (i < edge) v *= i / edge; else if (i > pcm.length - edge) v *= (pcm.length - i) / edge;
+    v = Math.max(-1, Math.min(1, v));
+    data.setInt16(44 + i * 2, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+  }
+  return new Uint8Array(data.buffer);
+}
+
+export const TRACK_IDS = Object.keys(TRACKS);
+
 // ---------- звуки мини-игр (короткие и тихие) ----------
 let sfxVol = 0.35;
 export function setSfxVolume(v) { sfxVol = Math.max(0, Math.min(1, v)); }

@@ -132,6 +132,9 @@ function newWorld(name) {
 const GAMEMODES = ['survival', 'creative', 'adventure', 'spectator'];
 const DIFFS = ['peaceful', 'easy', 'normal', 'hard'];
 const LEVEL_TYPES = ['minecraft:normal', 'minecraft:flat', 'minecraft:large_biomes', 'minecraft:amplified'];
+// кроме ванильных — любой пресет мира модов сборки (его id выбирает лидер отряда в игре: «kokkstory:journey», …)
+const PRESET_RE = /^[a-z0-9_.-]{1,64}:[a-z0-9_./-]{1,100}$/;
+const levelTypeOk = (v) => typeof v === 'string' && (LEVEL_TYPES.includes(v) || (PRESET_RE.test(v) && !v.includes('..') && v !== 'minecraft:debug_all_block_states'));
 // ключ настройки → [ключ server.properties, как записать, как прочитать, применяется на ходу?]
 const PROPS = {
   gamemode: ['gamemode', (v) => v, (v) => v],
@@ -187,7 +190,7 @@ function normGame(g) {
   if (g.opLevel !== undefined) o.opLevel = clampInt(g.opLevel, 1, 4, 4);
   if (g.commandBlocks !== undefined) o.commandBlocks = !!g.commandBlocks;
   if (g.seed !== undefined) o.seed = String(g.seed || '').trim().slice(0, 64);
-  if (g.levelType !== undefined) o.levelType = LEVEL_TYPES.includes(g.levelType) ? g.levelType : 'minecraft:normal';
+  if (g.levelType !== undefined) o.levelType = levelTypeOk(g.levelType) ? g.levelType : 'minecraft:normal';
   if (g.motd !== undefined) o.motd = String(g.motd || '').replace(/\r?\n/g, ' ').slice(0, 120);
   if (g.opHost !== undefined) o.opHost = !!g.opHost;
   if (g.ops !== undefined) o.ops = nameList(g.ops);
@@ -200,7 +203,7 @@ function game() {
   const p = readProps();
   const out = {};
   for (const [k, [pk, , read]] of Object.entries(PROPS)) out[k] = g[k] !== undefined ? g[k] : p[pk] !== undefined && p[pk] !== '' ? read(p[pk]) : VANILLA[k];
-  if (!LEVEL_TYPES.includes(out.levelType)) out.levelType = 'minecraft:normal';
+  if (!levelTypeOk(out.levelType)) out.levelType = 'minecraft:normal';
   out.motd = g.motd || '';
   out.opHost = g.opHost !== false;
   out.ops = g.ops || [];

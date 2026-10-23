@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const C = require('./friends-core.cjs');
 const X = require('./cosmetics.cjs');
-const { createLink } = require('./partylink.cjs');
+const { createLink, musicMessage } = require('./partylink.cjs');
 
 module.exports = function setupFriends(d) {
   // d: { handle, ipcMain, send, store, auth, extras, scoresWorker, scoresContents, currentAcc, profile, setProfile, getGame, isBusy,
@@ -705,7 +705,7 @@ module.exports = function setupFriends(d) {
       for (let i = 2; ws.server.some((w) => w.name === name); i++) name = map.name + ' ' + i;
       map.name = name;
       d.hosting.newWorld(name);
-      d.hosting.updateGame({ seed: map.seed || '', levelType: C.LEVEL_TYPES[map.type] || 'minecraft:normal' });
+      d.hosting.updateGame({ seed: map.seed || '', levelType: C.levelTypeOf(map.type) }); // level-type в server.properties: id пресета мира из игры
     }
     // отряд не ограничивает вход: на сервер заходят и не из отряда — до «Максимума игроков» (не меньше размера отряда)
     const players = Math.max(partyPlayers(), st.members.length);
@@ -884,6 +884,49 @@ module.exports = function setupFriends(d) {
     };
   }
 
+  // ---------------- музыка лобби (игра играет треки лаунчера в главном меню) ----------------
+  // Треки лаунчера синтезируются в окне (src/lib/music.js) — файлов у них нет. Окно один раз записывает каждый
+  // открытый игроком трек в WAV (friends:musicNeed → friends:musicSave), файлы лежат в <папка игры>/.villagers/music
+  // (туда же tracks.json — список, чтобы музыка была и без связи), игре уходит {t:'music', tracks, selected}.
+  const MUSIC_V = 1; // поменять, если поменялся синтез: файлы перезапишутся
+  function musicDir() { const g = store.get().gameDir; return g ? path.join(g, '.villagers', 'music') : null; }
+  function musicFile(id) { const dir = musicDir(); return dir ? path.join(dir, id + '.v' + MUSIC_V + '.wav') : null; }
+  function musicTracks() {
+    const p = d.profile() || {};
+    const list = [{ id: 'default', name: 'Мелодия лаунчера' }];
+    for (const r of X.REWARDS) {
+      if (r.kind !== 'music' || !r.track || !(p.rewards && p.rewards[r.id]) || list.some((t) => t.id === r.track)) continue;
+      list.push({ id: r.track, name: (/«(.+)»/.exec(r.name) || [])[1] || r.name });
+    }
+    return list;
+  }
+  function musicSelected(list) {
+    const want = prefs().lobbyMusic || ((d.profile() || {}).equip || {}).music || 'default';
+    return list.some((t) => t.id === want) ? want : 'default';
+  }
+  function musicView() {
+    const all = musicTracks();
+    const ready = all.map((t) => ({ ...t, file: musicFile(t.id) })).filter((t) => t.file && fs.existsSync(t.file));
+    return musicMessage(ready, musicSelected(all));
+  }
+  let lastMusic = '';
+  function pushMusic(force) {
+    try {
+      const v = musicView();
+      const s2 = JSON.stringify(v);
+      if (!force && s2 === lastMusic) return;
+      lastMusic = s2;
+      const dir = musicDir();
+      if (dir && v.tracks.length) {
+        fs.mkdirSync(dir, { recursive: true });
+        const f = path.join(dir, 'tracks.json');
+        fs.writeFileSync(f + '.tmp', JSON.stringify({ v: 1, tracks: v.tracks, selected: v.selected, at: Date.now() }, null, 1));
+        fs.renameSync(f + '.tmp', f);
+      }
+      toGame(v);
+    } catch (e) { log('music ' + e.message); }
+  }
+
   // рассылка изменений: окну лаунчера и игре (не чаще ~6 раз в секунду)
   let chT = null;
   let lastGameParty = ''; let lastGameFriends = '';
@@ -901,6 +944,7 @@ module.exports = function setupFriends(d) {
           const fi = gameFriends();
           const fs2 = JSON.stringify(fi);
           if (fs2 !== lastGameFriends) { lastGameFriends = fs2; toGame({ t: 'friends', items: fi }); }
+          pushMusic();
         }
       } catch (e) { log('changed ' + e.message); }
     }, 160);
@@ -918,6 +962,7 @@ module.exports = function setupFriends(d) {
       lastGameParty = ''; lastGameFriends = '';
       link.send(c, { t: 'party', state: partyView() });
       link.send(c, { t: 'friends', items: gameFriends() });
+      link.send(c, musicView());
       for (const [id, i] of Object.entries(invites)) if (Date.now() - i.t < C.INVITE_TTL) link.send(c, { t: 'invite', from: i.from, partyId: id, size: i.size, leader: i.leader });
       if (party) { party.starting = false; if (party.crashed || prompt) { party.connectSent = false; prompt = null; } }
       sendHb(); pump(); changed();
@@ -988,6 +1033,18 @@ module.exports = function setupFriends(d) {
           break;
         }
         case 'enterNow': enterNow(); ok(); break;
+        case 'music': {
+          // {t:'music'} — прислать список; {t:'music', id} — игрок выбрал трек в лобби (только из открытых)
+          if (msg.id !== undefined) {
+            const id = String(msg.id || '');
+            if (!musicTracks().some((t) => t.id === id)) throw Object.assign(new Error('Этот трек ещё не открыт'), { code: 'bad' });
+            savePrefs({ lobbyMusic: id });
+          }
+          const v = musicView();
+          lastMusic = JSON.stringify(v);
+          link.send(c, { ...v, rid: msg.rid });
+          break;
+        }
         case 'activity': activity.game = String(msg.text || '').slice(0, 60); publishStatus(); ok(); break;
         case 'hello': break;
         default: link.send(c, { t: 'error', re: msg.t, rid: msg.rid, code: 'bad', text: 'Неизвестное сообщение ' + msg.t });
@@ -1046,10 +1103,28 @@ module.exports = function setupFriends(d) {
   h('friends:dismiss', () => { prompt = null; changed(); return true; });
   h('friends:readNotes', () => { const m = me(); if (m) setPer('friendNotes', m.key, notes().map((n) => ({ ...n, read: true }))); changed(); return true; });
   h('friends:clearNotes', () => { const m = me(); if (m) setPer('friendNotes', m.key, []); changed(); return true; });
+  // музыка лобби: каких файлов треков не хватает (окно их синтезирует) и запись готового файла
+  h('friends:musicNeed', () => {
+    if (!musicDir()) return { need: [], version: MUSIC_V };
+    return { need: musicTracks().filter((t) => !fs.existsSync(musicFile(t.id))).map((t) => t.id), version: MUSIC_V };
+  });
+  h('friends:musicSave', ({ id, data } = {}) => {
+    if (!musicTracks().some((t) => t.id === id)) throw new Error('Нет такого открытого трека');
+    const buf = Buffer.from(data instanceof Uint8Array ? data : new Uint8Array(data || []));
+    if (buf.length < 44 || buf.length > 64 * 1024 * 1024 || buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') throw new Error('Не WAV');
+    const f = musicFile(id);
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f + '.tmp', buf);
+    fs.renameSync(f + '.tmp', f);
+    // старые версии файла этого трека — прочь
+    try { for (const n of fs.readdirSync(path.dirname(f))) if (n.startsWith(id + '.v') && n.endsWith('.wav') && path.join(path.dirname(f), n) !== f) fs.rmSync(path.join(path.dirname(f), n), { force: true }); } catch (_) {}
+    pushMusic(true);
+    return true;
+  });
   h('friends:activity', (text) => { activity.launcher = String(text || '').slice(0, 60); publishStatus(); return true; });
 
   return {
-    onServerState, onGameStart, onGameExit, onProfileChanged: () => publishProfile(), onTunnelState: () => { if (party) pump(); },
+    onServerState, onGameStart, onGameExit, onProfileChanged: () => { publishProfile(); pushMusic(); }, onTunnelState: () => { if (party) pump(); },
     onSkinChanged: () => publishProfile(), beforeLaunch: (dir) => link.writeLinkFile(dir),
     shutdown() { const m = me(); if (m && !prefs().hide) pub(C.T.status(m.key), { typ: 'status', from: m.nick, status: 'offline', doing: '', t: Date.now() }, true); if (party) leave(); link.stop(); timers.forEach(clearInterval); },
     linkInfo: () => ({ port: link.port() })
