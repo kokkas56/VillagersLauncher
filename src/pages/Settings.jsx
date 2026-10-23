@@ -156,7 +156,7 @@ export default function Settings() {
       </Section>
 
       <Section title={t('Сборка')} icon="emerald">
-        <Toggle checked={s.customSplash !== false} onChange={(v) => set({ customSplash: v })} label={t('Свой экран загрузки')} hint={t('Тёмный экран загрузки с логотипом MineVillagers вместо красного экрана NeoForge.')} />
+        <Toggle checked={s.customSplash !== false && !s.splashCrashed} onChange={(v) => set({ customSplash: v, splashCrashed: false })} label={t('Свой экран загрузки')} hint={t('Тёмный экран загрузки с логотипом MineVillagers вместо красного экрана NeoForge. В полноэкранном режиме не используется. Выключается сам, если игра с ним упала при создании окна.')} />
         <Toggle checked={s.autoUpdatePack} onChange={(v) => set({ autoUpdatePack: v })} label={t('Обновлять сборку при запуске')} hint={t('Если выключить, новая сборка не скачается сама: на главной будет выбор «Обновить и играть» или «Играть на своей версии».')} />
         <Toggle checked={!!s.keepOwnMods} onChange={(v) => set({ keepOwnMods: v })} label={t('Не трогать мои моды')} hint={t('Моды, которые ты сам положил в mods, лаунчер не будет убирать. Если игра начнёт вылетать — выключи.')} />
         <div className="field">
