@@ -91,8 +91,8 @@ export default function Home({ go, openAccounts, openDonate, playGame, sceneId, 
           <div className="card-head"><Icon name="news" /><h3>{t('Что нового')}</h3><div className="grow" /><span className="link">{t('Все новости')} →</span></div>
           {news.length === 0 && <p className="muted">{t('Новостей пока нет. Они появятся, когда автор зальёт сборку.')}</p>}
           {news.slice(0, 2).map((n) => (
-            <div key={n.version} className="news-mini">
-              <div className="news-mini-head"><b>#{n.version} · {n.title}</b><span className="muted">{fmtDate(n.date, lang)}</span></div>
+            <div key={n.post || n.version} className="news-mini">
+              <div className="news-mini-head"><b>{n.post ? '' : `#${n.version} · `}{n.title}</b><span className="muted">{fmtDate(n.date, lang)}</span></div>
               {n.text && <p>{n.text.slice(0, 220)}{n.text.length > 220 ? '…' : ''}</p>}
             </div>
           ))}

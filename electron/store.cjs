@@ -96,15 +96,28 @@ const DEFAULTS = {
   serverMaxPlayers: 10,
   serverMotd: 'MineVillagers — сервер сборки',
   serverEulaAccepted: false,
-  serverExcludeMods: ['sodium', 'iris', 'oculus', 'embeddium', 'rubidium', 'sounds-', 'entityculling', 'immediatelyfast', 'betterfpsdist',
-    'notenoughanimations', 'fancymenu', 'drippyloadingscreen', 'konkrete', 'entity_model_features', 'entity_texture_features', 'continuity',
-    'dynamic-fps', 'dynamicfps', 'skinlayers3d', 'kokkhud', 'floatingdamagenumbers', 'emi_loot', 'emi_ores']
+  // какие моды сборки НЕ брать / ВСЕГДА брать на сервер (id мода, «emi*», или часть имени файла).
+  // Остальное лаунчер решает сам по neoforge.mods.toml каждого мода (electron/modsides.cjs).
+  serverModsAlways: [],
+  serverModsNever: [],
+  // настройки игры на «Моём сервере» (server.properties / ops.json / whitelist.json); пустое = как сейчас в server.properties
+  serverGame: {}
 };
 
 let settings = { ...DEFAULTS };
 try {
   if (fs.existsSync(SETTINGS_FILE)) {
-    settings = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
+    const saved = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+    settings = { ...DEFAULTS, ...saved };
+    // старый список «не брать на сервер» (по кусочку имени) → «никогда на сервер», без прежних значений по умолчанию:
+    // теперь клиентские моды определяются сами (и Floating Damage Numbers больше не выкидывается с сервера)
+    if (Array.isArray(saved.serverExcludeMods) && !Array.isArray(saved.serverModsNever)) {
+      const OLD = ['sodium', 'iris', 'oculus', 'embeddium', 'rubidium', 'sounds-', 'entityculling', 'immediatelyfast', 'betterfpsdist',
+        'notenoughanimations', 'fancymenu', 'drippyloadingscreen', 'konkrete', 'entity_model_features', 'entity_texture_features', 'continuity',
+        'dynamic-fps', 'dynamicfps', 'skinlayers3d', 'kokkhud', 'floatingdamagenumbers', 'emi_loot', 'emi_ores'];
+      settings.serverModsNever = saved.serverExcludeMods.map((x) => String(x).trim()).filter((x) => x && !OLD.includes(x.toLowerCase()));
+    }
+    delete settings.serverExcludeMods;
   } else if (fs.existsSync('C:\\Games\\MINEVILLAGERS\\Исходники')) {
     // Компьютер автора: игра и исходники модов уже лежат здесь
     settings.gameDir = 'C:\\Games\\MINEVILLAGERS';

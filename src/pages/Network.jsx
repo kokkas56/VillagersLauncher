@@ -17,12 +17,13 @@ const ROUTE = { direct: 'напрямую', lan: 'по локальной сет
 const fmt = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + ' МБ' : Math.round(n / 1024) + ' КБ');
 
 // поле пароля с «глазом»
-function PasswordInput({ value, onChange, t, autoFocus }) {
+function PasswordInput({ value, onChange, t, autoFocus, onCopy, placeholder }) {
   const [show, setShow] = useState(false);
   return (
     <div className="row pw-row">
-      <input className="input" type={show ? 'text' : 'password'} value={value} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} />
+      <input className="input" type={show ? 'text' : 'password'} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} />
       <button type="button" className="btn sm ghost icon-btn" title={show ? t('Скрыть пароль') : t('Показать пароль')} onClick={() => setShow(!show)}><Icon name={show ? 'eyeOff' : 'eye'} size={14} /></button>
+      {onCopy && <button type="button" className="btn sm ghost icon-btn" title={t('Скопировать пароль')} disabled={!value} onClick={onCopy}><Icon name="copy" size={14} /></button>}
     </div>
   );
 }
@@ -141,6 +142,119 @@ function RoomCard({ st, t, toast, account, openAccounts, roomId, room, reload })
   );
 }
 
+// какие моды сборки на сервере: результат последней сборки + ручные списки «всегда / никогда на сервер»
+function ServerMods({ t, st, settings, saveSettings, running, busy, onSync }) {
+  const m = st.mods;
+  const list = (v) => v.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+  const [always, setAlways] = useState((settings.serverModsAlways || []).join(', '));
+  const [never, setNever] = useState((settings.serverModsNever || []).join(', '));
+  return (
+    <details className="srv-mods">
+      <summary className="small"><b>{t('Моды сервера')}</b> <span className="muted">{m ? `— ${m.mods} ${t('из')} ${m.total} ${t('модов сборки')}${m.skipped.length ? ', ' + t('только для клиента') + ': ' + m.skipped.length : ''}` : '— ' + t('соберутся при первом запуске')}</span></summary>
+      <p className="muted small">{t('Лаунчер сам переносит моды сборки на сервер при каждом запуске: новые добавляет, старые убирает. Моды только для клиента (графика, интерфейс, звуки) определяются по их описанию (neoforge.mods.toml) и на сервер не идут. Мир сервера не трогается.')}</p>
+      {m && m.skipped.length > 0 && (
+        <div className="srv-skip">
+          <span className="small">{t('Не на сервер (только клиент)')}:</span>
+          {m.skipped.map((x) => <div key={x.file} className="small mono" title={x.reason}>− {x.file} <span className="muted">· {(x.ids || []).join(', ')} · {t(x.reason)}</span></div>)}
+        </div>
+      )}
+      {m && m.kept && m.kept.length > 0 && (
+        <div className="srv-skip">
+          <span className="small">{t('Похожи на клиентские, но нужны серверу')}:</span>
+          {m.kept.map((x) => <div key={x.file} className="small mono">+ {x.file} <span className="muted">· {t(x.reason)}</span></div>)}
+        </div>
+      )}
+      {m && m.removed && m.removed.length > 0 && <small className="muted">{t('Убрано с сервера в прошлый раз')}: {m.removed.join(', ')} {t('(положенные вручную — в папке server/mods-removed)')}</small>}
+      {m && m.own && m.own.length > 0 && <small className="muted">{t('Свои моды сервера (не из сборки, не трогаю)')}: {m.own.join(', ')}</small>}
+      <div className="row wrap">
+        <label className="small grow">{t('Всегда на сервер')} <small className="muted">{t('(id мода или часть имени файла, через запятую)')}</small>
+          <input className="input mono" value={always} placeholder="emi, wthit" onChange={(e) => setAlways(e.target.value)} onBlur={() => saveSettings({ serverModsAlways: list(always) })} />
+        </label>
+        <label className="small grow">{t('Никогда на сервер')}
+          <input className="input mono" value={never} placeholder="kokkhud, sodium" onChange={(e) => setNever(e.target.value)} onBlur={() => saveSettings({ serverModsNever: list(never) })} />
+        </label>
+      </div>
+      <div className="row wrap">
+        <button className="btn sm" disabled={running || busy} onClick={async () => { await saveSettings({ serverModsAlways: list(always), serverModsNever: list(never) }); onSync(); }}><Icon name="refresh" size={12} /> {t('Пересобрать моды сервера')}</button>
+        {running && <small className="muted">{t('Пока сервер работает, файлы модов заняты — изменения применятся при следующем запуске.')}</small>}
+      </div>
+    </details>
+  );
+}
+
+const GM = [['survival', 'Выживание'], ['creative', 'Творческий'], ['adventure', 'Приключение'], ['spectator', 'Наблюдатель']];
+const DIFF = [['peaceful', 'Мирная'], ['easy', 'Лёгкая'], ['normal', 'Нормальная'], ['hard', 'Сложная']];
+const LT = [['minecraft:normal', 'Обычный'], ['minecraft:large_biomes', 'Большие биомы'], ['minecraft:amplified', 'Расширенный (горы)'], ['minecraft:flat', 'Плоский']];
+const OPL = [[1, '1 — проходить сквозь защиту спавна'], [2, '2 — команды-читы: /gamemode, /give, /tp, /time'], [3, '3 — плюс управление игроками: /kick, /ban, /op'], [4, '4 — всё, включая /stop и /save-all']];
+
+// настройки игры на сервере: читы и операторы, режим, сложность, PvP, белый список… (server.properties / ops.json / whitelist.json)
+function ServerGame({ t, toast, hp, setHp, running }) {
+  const [g, setG] = useState(() => ({ ...hp.game, ops: (hp.game.ops || []).join(', '), whitelistNames: (hp.game.whitelistNames || []).join(', ') }));
+  const [saving, setSaving] = useState(false);
+  const set = (k, v) => setG((o) => ({ ...o, [k]: v }));
+  const chk = (k) => (e) => set(k, e.target.checked);
+  const val = (k) => (e) => set(k, e.target.value);
+  const live = <small className="muted"> · {t('сразу')}</small>;
+  const later = <small className="muted"> · {t('после перезапуска')}</small>;
+  const save = async () => {
+    setSaving(true);
+    try {
+      const r = await call('hosting:game', { ...g, viewDistance: Number(g.viewDistance), simulationDistance: Number(g.simulationDistance), spawnProtection: Number(g.spawnProtection), opLevel: Number(g.opLevel) });
+      setHp((o) => ({ ...o, game: r.game }));
+      if (!running) toast(t('Настройки сервера сохранены — применятся при запуске'), 'ok');
+      else {
+        const parts = [];
+        if (r.commands.length) parts.push(t('применено сразу') + ': ' + r.commands.length);
+        if (r.restart.length) parts.push(t('после перезапуска сервера') + ': ' + r.restart.join(', '));
+        toast(t('Сохранено') + (parts.length ? '. ' + parts.join('; ') : ''), r.restart.length ? 'warn' : 'ok', 10000);
+      }
+    } catch (e) { toast(e.message, 'error', 8000); } finally { setSaving(false); }
+  };
+  return (
+    <details className="srv-game">
+      <summary className="small"><b>{t('Настройки игры на сервере')}</b> <span className="muted">— {t('читы, режим, сложность, PvP, белый список')}</span></summary>
+      <div className="form srv-form">
+        <b className="small">{t('Читы и команды')}</b>
+        <label className="check-row"><input type="checkbox" checked={!!g.opHost} onChange={chk('opHost')} /><span>{t('Сделать меня оператором')}{g.host ? ` (${g.host})` : ''}{live}<br /><small className="muted">{t('Ник берётся из выбранного аккаунта лаунчера.')}</small></span></label>
+        <label className="small">{t('Операторы (ники через запятую)')}{live}<input className="input mono" value={g.ops} placeholder="Ник1, Ник2" onChange={val('ops')} /></label>
+        <label className="small">{t('Что можно операторам')}{later}
+          <select className="input" value={g.opLevel} onChange={val('opLevel')}>{OPL.map(([v, l]) => <option key={v} value={v}>{t(l)}</option>)}</select>
+        </label>
+        <label className="check-row"><input type="checkbox" checked={!!g.commandBlocks} onChange={chk('commandBlocks')} /><span>{t('Командные блоки')}{later}</span></label>
+
+        <b className="small">{t('Игра')}</b>
+        <div className="row wrap">
+          <label className="small">{t('Режим')}{live}<select className="input" value={g.gamemode} onChange={val('gamemode')}>{GM.map(([v, l]) => <option key={v} value={v}>{t(l)}</option>)}</select></label>
+          <label className="small">{t('Сложность')}{live}<select className="input" value={g.difficulty} onChange={val('difficulty')}>{DIFF.map(([v, l]) => <option key={v} value={v}>{t(l)}</option>)}</select></label>
+        </div>
+        <label className="check-row"><input type="checkbox" checked={!!g.forceGamemode} onChange={chk('forceGamemode')} /><span>{t('Принудительно')}{later}<br /><small className="muted">{t('При каждом входе игроку ставится режим сервера (иначе — только новичкам).')}</small></span></label>
+        <label className="check-row"><input type="checkbox" checked={!!g.pvp} onChange={chk('pvp')} /><span>{t('PvP — игроки могут бить друг друга')}{later}</span></label>
+        <label className="check-row"><input type="checkbox" checked={!!g.allowFlight} onChange={chk('allowFlight')} /><span>{t('Разрешить полёты')}{later}<br /><small className="muted">{t('Включи, если игроков выкидывает с «Flying is not enabled» (заклинания, джетпаки и т. п.).')}</small></span></label>
+        <div className="row wrap">
+          <label className="small">{t('Прорисовка, чанков')}{later}<input className="input num" type="number" min="3" max="32" value={g.viewDistance} onChange={val('viewDistance')} /></label>
+          <label className="small">{t('Симуляция, чанков')}{later}<input className="input num" type="number" min="3" max="32" value={g.simulationDistance} onChange={val('simulationDistance')} /></label>
+          <label className="small">{t('Защита спавна, блоков')}{later}<input className="input num" type="number" min="0" max="256" value={g.spawnProtection} onChange={val('spawnProtection')} /></label>
+        </div>
+        <small className="muted">{t('Прорисовка — как далеко видно мир; симуляция — где растут посевы и ходят мобы (меньше = легче компьютеру). Защита спавна: 0 — выключена; операторов она не касается.')}</small>
+
+        <b className="small">{t('Кто может зайти')}</b>
+        <label className="check-row"><input type="checkbox" checked={!!g.whitelist} onChange={chk('whitelist')} /><span>{t('Белый список — заходят только эти ники')}{live}</span></label>
+        {g.whitelist && <label className="small">{t('Ники через запятую (ты и операторы добавляются сами)')}{live}<input className="input mono" value={g.whitelistNames} placeholder="Друг1, Друг2" onChange={val('whitelistNames')} /></label>}
+        <label className="small">{t('Строка в списке серверов (MOTD)')}{later}<input className="input" maxLength={120} value={g.motd} placeholder={t('пусто — название и описание сервера')} onChange={val('motd')} /></label>
+
+        <b className="small">{t('Новый мир')}</b>
+        <div className="row wrap">
+          <label className="small grow">{t('Сид')}<input className="input mono" value={g.seed} placeholder={t('пусто — случайный')} onChange={val('seed')} disabled={g.worldExists} /></label>
+          <label className="small">{t('Тип мира')}<select className="input" value={g.levelType} onChange={val('levelType')} disabled={g.worldExists}>{LT.map(([v, l]) => <option key={v} value={v}>{t(l)}</option>)}</select></label>
+        </div>
+        <small className="muted">{g.worldExists ? t('Мир сервера уже создан — сид и тип мира действуют только для нового мира (создай его выше).') : t('Сид и тип применятся, когда сервер впервые создаст этот мир.')}</small>
+        <button className="btn sm primary" disabled={saving} onClick={save}>{saving ? t('Сохраняю…') : t('Сохранить настройки игры')}</button>
+        <small className="muted">{running ? t('«Сразу» — отправится командами в консоль работающего сервера; остальное — после перезапуска.') : t('Запишется в server.properties, ops.json и whitelist.json при запуске сервера.')}</small>
+      </div>
+    </details>
+  );
+}
+
 // «Мой сервер»: настоящий сервер сборки на этом компьютере. Мир, имя, пароль, игроки; вход — по ключу через туннель лаунчера.
 function ServerCard({ t, toast, settings, saveSettings, progress, account, openAccounts }) {
   const [st, setSt] = useState(null);
@@ -152,7 +266,7 @@ function ServerCard({ t, toast, settings, saveSettings, progress, account, openA
   const [showKey, setShowKey] = useState(false);
   const [newWorld, setNewWorld] = useState('');
   const logRef = useRef(null);
-  const loadHp = async () => { try { const h = await call('hosting:get'); setHp(h); setForm((f) => f || { name: h.name, desc: h.desc, maxPlayers: h.maxPlayers, radmin: h.radmin, password: '' }); } catch (_) {} };
+  const loadHp = async () => { try { const h = await call('hosting:get'); setHp(h); setForm((f) => f || { name: h.name, desc: h.desc, maxPlayers: h.maxPlayers, radmin: h.radmin, password: h.password || '' }); } catch (_) {} };
   const load = async () => { try { const s = await call('server:status'); setSt(s); setLines(s.tail || []); } catch (_) {} };
   useEffect(() => {
     load(); loadHp();
@@ -172,12 +286,18 @@ function ServerCard({ t, toast, settings, saveSettings, progress, account, openA
   };
   const saveForm = async (silent) => {
     const patch = { name: form.name, desc: form.desc, maxPlayers: Number(form.maxPlayers) || 10, radmin: form.radmin };
-    if (form.password) patch.password = form.password;
+    // пустое поле пароль не стирает (для этого — «Убрать пароль»)
+    if (form.password.trim() && form.password.trim() !== (hp.password || '')) patch.password = form.password.trim();
     const h = await call('hosting:update', patch);
-    setHp((o) => ({ ...o, ...h })); setForm((f) => ({ ...f, password: '' }));
+    setHp((o) => ({ ...o, ...h })); setForm((f) => ({ ...f, password: h.password || '' }));
     if (!silent) toast(running ? t('Сохранено. Имя, описание и игроки применятся после перезапуска сервера') : t('Сохранено'), 'ok');
   };
-  const removePassword = async () => { const h = await call('hosting:update', { password: '' }); setHp((o) => ({ ...o, ...h })); toast(t('Пароль убран — входят по одному ключу'), 'ok'); };
+  const removePassword = async () => { const h = await call('hosting:update', { password: null }); setHp((o) => ({ ...o, ...h })); setForm((f) => ({ ...f, password: '' })); toast(t('Пароль убран — входят по одному ключу'), 'ok'); };
+  const copyPassword = () => { if (!form.password) return; navigator.clipboard.writeText(form.password); toast(t('Пароль скопирован'), 'ok'); };
+  const syncMods = async () => {
+    setBusy(true);
+    try { const r = await call('server:syncMods'); setSt((o) => ({ ...o, mods: r })); toast(t('Моды сервера собраны заново') + `: ${r.mods} ${t('из')} ${r.total}`, 'ok', 7000); } catch (e) { toast(e.message, 'error', 8000); } finally { setBusy(false); }
+  };
   const copyKey = () => { navigator.clipboard.writeText(hp.key); toast(t('Ключ скопирован — отправь другу или автору сборки'), 'ok'); };
   const resetKey = async () => {
     if (!window.confirm(t('Сделать новый ключ? Старый перестанет работать у всех, кому ты его давал.'))) return;
@@ -207,6 +327,7 @@ function ServerCard({ t, toast, settings, saveSettings, progress, account, openA
       {st.crash && st.state === 'stopped' && (
         <div className="crash-box">
           <b>⚠ {t(st.crash.hint || 'Сервер упал при запуске')}</b>
+          {st.crash.reason && <div className="small"><span className="muted">{t('Причина из лога')}:</span> <code className="mono">{st.crash.reason}</code></div>}
           {st.crash.lines && st.crash.lines.length > 0 && <pre className="console-body">{st.crash.lines.join('\n')}</pre>}
           <button className="btn sm ghost" onClick={() => call('server:openDir')}><Icon name="folder" size={12} /> {t('Папка сервера (logs/latest.log)')}</button>
         </div>
@@ -217,7 +338,7 @@ function ServerCard({ t, toast, settings, saveSettings, progress, account, openA
         <label>{t('Описание')} <small className="muted">({t('видно в каталоге и в игре')})</small><textarea className="input" rows={2} maxLength={400} value={form.desc} onChange={set('desc')} /></label>
         <div className="row wrap">
           <label className="small">{t('Игроков')} <input className="input num" type="number" min="1" max="100" value={form.maxPlayers} onChange={set('maxPlayers')} /></label>
-          <label className="small grow">{t('Пароль')} <small className="muted">{hp.hasPassword ? t('(задан — пусто: оставить)') : t('(необязательно)')}</small><PasswordInput value={form.password} onChange={(v) => setForm({ ...form, password: v })} t={t} /></label>
+          <label className="small grow">{t('Пароль')} <small className="muted">{hp.hasPassword ? t('(задан; чтобы сменить — впиши новый и «Сохранить»)') : t('(необязательно)')}</small><PasswordInput value={form.password} onChange={(v) => setForm({ ...form, password: v })} t={t} onCopy={copyPassword} placeholder={t('без пароля')} /></label>
           {hp.hasPassword && <button className="btn sm ghost" onClick={removePassword}>{t('Убрать пароль')}</button>}
         </div>
         <details>
@@ -254,6 +375,9 @@ function ServerCard({ t, toast, settings, saveSettings, progress, account, openA
         <small className="muted">{hp.hasPassword ? t('По ключу заходит любой, кто знает ещё и пароль.') : t('По ключу заходит любой, у кого он есть. Нужен контроль — задай пароль.')} {t('Чтобы сервер появился у всех во вкладке «Сервера», отправь ключ автору сборки.')}</small>
       </div>
 
+      <ServerGame t={t} toast={toast} hp={hp} setHp={setHp} running={st.state === 'running'} />
+      <ServerMods t={t} st={st} settings={settings} saveSettings={saveSettings} running={running} busy={busy} onSync={syncMods} />
+
       <label className="check-row">
         <input type="checkbox" checked={!!settings.serverEulaAccepted} onChange={(e) => saveSettings({ serverEulaAccepted: e.target.checked })} />
         <span>{t('Я принимаю лицензию Minecraft (EULA)')} — <a href="#" onClick={(e) => { e.preventDefault(); call('shell:open', 'https://aka.ms/MinecraftEULA'); }}>aka.ms/MinecraftEULA</a></span>
@@ -276,9 +400,6 @@ function ServerCard({ t, toast, settings, saveSettings, progress, account, openA
           <label className="small">{t('Порт')} <input className="input num" type="number" value={settings.serverPort || 25565} onChange={(e) => saveSettings({ serverPort: Number(e.target.value) || 25565 })} /></label>
           <label className="small">{t('Память, МБ')} <input className="input num" type="number" step="512" value={settings.serverMemoryMb || 4096} onChange={(e) => saveSettings({ serverMemoryMb: Number(e.target.value) || 4096 })} /></label>
         </div>
-        <small className="muted">{t('Не брать на сервер (моды только для клиента) — часть имени файла, через запятую:')}</small>
-        <textarea className="input mono" rows={2} value={(settings.serverExcludeMods || []).join(', ')}
-          onChange={(e) => saveSettings({ serverExcludeMods: e.target.value.split(/[,\n]/).map((x) => x.trim()).filter(Boolean) })} />
       </details>
       {lines.length > 0 && (
         <details open={st.state !== 'stopped'}>
