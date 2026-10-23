@@ -76,6 +76,11 @@ public final class AnimApply {
         if (firstPerson && AnimConfig.get(AnimConfig.FIRST_PERSON, true)) return;
         AnimClient.Pose po = AnimClient.pose(e, partial());
         if (po == null) return;
+        humanoidPose(m, po);
+    }
+
+    /** Поза анимации на модели человека (и для лобби KokkHUD, без существа). Откат — {@link #head(Object)}. */
+    public static void humanoidPose(HumanoidModel<?> m, AnimClient.Pose po) {
         saving(m, m.head, m.hat, m.body, m.rightArm, m.leftArm, m.rightLeg, m.leftLeg);
         float[] restBody = {m.body.xRot, m.body.yRot, m.body.zRot};
         float[] posBody = {m.body.x, m.body.y, m.body.z};

@@ -73,5 +73,8 @@
   "config.skinkokk.anim.cooldown": "Пауза между эмоциями (тики)",
   "config.skinkokk.character.backpackHidesCloak": "С рюкзаком прятать плащ",
   "config.skinkokk.character.backpackHidesHair": "С рюкзаком прятать волосы сзади",
-  "config.skinkokk.character.backpackHidesTail": "С рюкзаком прятать хвост"
+  "config.skinkokk.character.backpackHidesTail": "С рюкзаком прятать хвост",
+  "config.skinkokk.anim.localFiles": "Свои анимации вне мира (лобби)",
+  "config.skinkokk.anim.watch": "Следить за папкой анимаций",
+  "config.skinkokk.anim.devProject": "Анимации проекта Студии (у автора)"
 }

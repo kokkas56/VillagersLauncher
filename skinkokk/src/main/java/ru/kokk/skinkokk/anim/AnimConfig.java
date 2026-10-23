@@ -21,6 +21,7 @@ public final class AnimConfig {
     public static final ModConfigSpec.BooleanValue BONES_SHOW;
     public static final ModConfigSpec.IntValue BONES_DISTANCE;
     public static final ModConfigSpec.IntValue WHEEL_PER_PAGE;
+    public static final ModConfigSpec.BooleanValue LOCAL_FILES;
     public static final ModConfigSpec.ConfigValue<List<? extends String>> FAVORITES;
 
     static {
@@ -42,6 +43,9 @@ public final class AnimConfig {
                 .translation("config.skinkokk.anim.customBones").define("customBones", true);
         BONES_DISTANCE = C.comment("До какого расстояния (в блоках) рисовать предметы и кубики анимаций.", "Max distance (blocks) to draw animation items and cubes.")
                 .translation("config.skinkokk.anim.customBonesDistance").defineInRange("customBonesDistance", 48, 4, 256);
+        LOCAL_FILES = C.comment("Вне мира (лобби, меню) играть анимации из своих файлов: config/skinkokk/anims и, у автора (есть studio/.dev), — из открытого проекта Студии. Правки подхватываются сами.",
+                        "Outside a world (lobby, menus) use local animation files: config/skinkokk/anims and, for the author, the open Studio project.")
+                .translation("config.skinkokk.anim.localFiles").define("localFiles", true);
         WHEEL_PER_PAGE = C.comment("Сколько эмоций на одной странице колеса.", "Emotes per wheel page.")
                 .translation("config.skinkokk.anim.wheelPerPage").defineInRange("wheelPerPage", 8, 4, 12);
         FAVORITES = C.comment("Эмоции на первой странице колеса (id по порядку). Пусто — все по группам.", "Emotes on the first wheel page (ids). Empty — all by group.")
@@ -58,6 +62,8 @@ public final class AnimConfig {
     public static final ModConfigSpec.ConfigValue<String> FOLDER;
     public static final ModConfigSpec.IntValue OP_LEVEL;
     public static final ModConfigSpec.IntValue EMOTE_COOLDOWN;
+    public static final ModConfigSpec.BooleanValue WATCH;
+    public static final ModConfigSpec.BooleanValue DEV_PROJECT;
 
     static {
         S.comment("Анимации SkinKokk на сервере / server animations").push("anim");
@@ -71,6 +77,12 @@ public final class AnimConfig {
                 .translation("config.skinkokk.anim.folder").define("folder", "config/skinkokk/anims");
         OP_LEVEL = S.comment("Уровень оператора для /skinkokk anim play на других.", "Op level for playing animations on others.")
                 .translation("config.skinkokk.anim.opLevel").defineInRange("opLevel", 2, 0, 4);
+        WATCH = S.comment("Следить за папкой анимаций: изменённые файлы подхватываются сами (раз в 2 секунды) и рассылаются игрокам.",
+                        "Watch the animation folder and reload changed files by itself.")
+                .translation("config.skinkokk.anim.watch").define("watchFiles", true);
+        DEV_PROJECT = S.comment("У автора (есть studio/.dev): ещё и анимации открытого проекта Студии — правки в Студии сразу в игре, без «Собрать».",
+                        "For the author (studio/.dev exists): also the open Studio project's animations, live.")
+                .translation("config.skinkokk.anim.devProject").define("studioProject", true);
         EMOTE_COOLDOWN = S.comment("Пауза между эмоциями одного игрока (тики).", "Cooldown between emotes (ticks).")
                 .translation("config.skinkokk.anim.cooldown").defineInRange("emoteCooldown", 10, 0, 1200);
         S.pop();
