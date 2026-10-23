@@ -19,7 +19,7 @@ import javax.annotation.Nullable;
  *
  * <pre>
  * { "v":1, "on":true, "gender":"female", "body":"normal", "height":1, "arms":"auto",
- *   "chest":{"size":0.5,"phys":0.6}, "phys":1,
+ *   "chest":{"size":0.5,"phys":0.6,"gap":0.4,"height":1.5,"tilt":0.5,"cleave":0.3}, "phys":1, "hatLayer":"face",
  *   "parts":[ {"k":"ears","id":"cat","c":{"b":"#3b3434","p":"none","pc":"#f2e3d5"},"phys":0.6}, … ] }
  * </pre>
  */
@@ -49,11 +49,17 @@ public final class CharacterData {
     public final String arms;
     public final float chestSize;
     public final float chestPhys;
+    /** Грудь: зазор между ними (пикс., −1…2), опускание (пикс., −0.5…2.5), наклон вниз 0..1, развод в стороны 0..1. */
+    public final float chestGap, chestHeight, chestTilt, chestCleave;
+    /** Второй слой головы скина при причёске: face — прятать, кроме лица; hide — прятать; show — оставлять. */
+    public final String hatLayer;
+    public static final List<String> HAT_LAYERS = List.of("face", "hide", "show");
     /** Общая сила физики персонажа 0..1. */
     public final float phys;
     public final List<Part> parts;
 
-    private CharacterData(boolean on, boolean female, String body, float height, String arms, float chestSize, float chestPhys, float phys, List<Part> parts) {
+    private CharacterData(boolean on, boolean female, String body, float height, String arms, float chestSize, float chestPhys, float[] chestShape, String hatLayer,
+                          float phys, List<Part> parts) {
         this.on = on;
         this.female = female;
         this.body = body;
@@ -61,6 +67,11 @@ public final class CharacterData {
         this.arms = arms;
         this.chestSize = chestSize;
         this.chestPhys = chestPhys;
+        this.chestGap = chestShape[0];
+        this.chestHeight = chestShape[1];
+        this.chestTilt = chestShape[2];
+        this.chestCleave = chestShape[3];
+        this.hatLayer = hatLayer;
         this.phys = phys;
         this.parts = Collections.unmodifiableList(parts);
     }
@@ -87,11 +98,16 @@ public final class CharacterData {
         String arms = str(o, "arms", "auto");
         if (!arms.equals("slim") && !arms.equals("wide")) arms = "auto";
         float size = 0, cphys = 0.6F;
+        float[] shape = {0.4F, 1.5F, 0.5F, 0.3F};
         if (o.has("chest") && o.get("chest").isJsonObject()) {
             JsonObject c = o.getAsJsonObject("chest");
             size = clamp(num(c, "size", 0F), 0F, 1F);
             cphys = clamp(num(c, "phys", 0.6F), 0F, 1F);
+            shape = new float[] {clamp(num(c, "gap", 0.4F), -1F, 2F), clamp(num(c, "height", 1.5F), -0.5F, 3F), clamp(num(c, "tilt", 0.5F), 0F, 1F),
+                    clamp(num(c, "cleave", 0.3F), 0F, 1F)};
         }
+        String hat = str(o, "hatLayer", "face");
+        if (!HAT_LAYERS.contains(hat)) hat = "face";
         if (!female) size = 0;
         float phys = clamp(num(o, "phys", 1F), 0F, 1F);
         List<Part> parts = new ArrayList<>();
@@ -116,13 +132,19 @@ public final class CharacterData {
                 parts.add(new Part(kind, id, c, clamp(num(p, "phys", 0.6F), 0F, 1F)));
             }
         }
-        return new CharacterData(on, female, body, height, arms, size, cphys, phys, parts);
+        return new CharacterData(on, female, body, height, arms, size, cphys, shape, hat, phys, parts);
     }
 
     /** Та же запись после правил сервера (запрещённое — выключено). */
     public CharacterData restricted(boolean allowChest, boolean allowBody, boolean allowParts) {
-        return new CharacterData(on, female, allowBody ? body : "normal", allowBody ? height : 1F, arms, allowChest ? chestSize : 0F, chestPhys, phys,
-                allowParts ? parts : List.of());
+        return new CharacterData(on, female, allowBody ? body : "normal", allowBody ? height : 1F, arms, allowChest ? chestSize : 0F, chestPhys,
+                new float[] {chestGap, chestHeight, chestTilt, chestCleave}, hatLayer, phys, allowParts ? parts : List.of());
+    }
+
+    /** Есть ли часть этого вида (ears/tail/hair/clothes). */
+    public boolean hasKind(String kind) {
+        for (Part p : parts) if (p.kind.equals(kind)) return true;
+        return false;
     }
 
     public boolean has(String kind, String id) {
@@ -141,7 +163,12 @@ public final class CharacterData {
         JsonObject c = new JsonObject();
         c.addProperty("size", round(chestSize));
         c.addProperty("phys", round(chestPhys));
+        c.addProperty("gap", round(chestGap));
+        c.addProperty("height", round(chestHeight));
+        c.addProperty("tilt", round(chestTilt));
+        c.addProperty("cleave", round(chestCleave));
         o.add("chest", c);
+        o.addProperty("hatLayer", hatLayer);
         o.addProperty("phys", round(phys));
         JsonArray arr = new JsonArray();
         for (Part p : parts) {

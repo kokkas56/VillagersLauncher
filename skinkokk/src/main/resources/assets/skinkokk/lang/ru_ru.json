@@ -68,5 +68,8 @@
   "config.skinkokk.anim.locked": "Закрытые эмоции",
   "config.skinkokk.anim.folder": "Папка анимаций",
   "config.skinkokk.anim.opLevel": "Уровень оператора для команд",
-  "config.skinkokk.anim.cooldown": "Пауза между эмоциями (тики)"
+  "config.skinkokk.anim.cooldown": "Пауза между эмоциями (тики)",
+  "config.skinkokk.character.backpackHidesCloak": "С рюкзаком прятать плащ",
+  "config.skinkokk.character.backpackHidesHair": "С рюкзаком прятать волосы сзади",
+  "config.skinkokk.character.backpackHidesTail": "С рюкзаком прятать хвост"
 }
