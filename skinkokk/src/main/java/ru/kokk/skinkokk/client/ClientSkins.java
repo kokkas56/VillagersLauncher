@@ -34,6 +34,14 @@ public final class ClientSkins {
 
     /** Подмена скина, которую использует миксин PlayerInfo. */
     public static PlayerSkin apply(UUID id, PlayerSkin original) {
+        PlayerSkin r = applySkin(id, original);
+        // персонаж из лаунчера может выбрать руки (тонкие 3 px / обычные 4 px) — и в руках от первого лица
+        Boolean slim = ru.kokk.skinkokk.character.client.CharacterClient.slimArms(id);
+        if (slim == null || (r.model() == PlayerSkin.Model.SLIM) == slim) return r;
+        return new PlayerSkin(r.texture(), r.textureUrl(), r.capeTexture(), r.elytraTexture(), slim ? PlayerSkin.Model.SLIM : PlayerSkin.Model.WIDE, r.secure());
+    }
+
+    private static PlayerSkin applySkin(UUID id, PlayerSkin original) {
         Entry e = get(id);
         if (e == null) return original;
         ResourceLocation cape = SkinKokkConfig.SHOW_CAPES.get() && e.cape() != null ? e.cape() : original.capeTexture();

@@ -18,6 +18,11 @@ public final class SkinKokk {
     public SkinKokk(IEventBus modBus, ModContainer container) {
         container.registerConfig(ModConfig.Type.CLIENT, SkinKokkConfig.CLIENT_SPEC);
         container.registerConfig(ModConfig.Type.SERVER, SkinKokkConfig.SERVER_SPEC);
+        // персонажи (уши, хвосты, причёски, одежда, телосложение) — свои файлы настроек
+        container.registerConfig(ModConfig.Type.CLIENT, ru.kokk.skinkokk.character.CharacterConfig.CLIENT_SPEC, "skinkokk-character-client.toml");
+        container.registerConfig(ModConfig.Type.SERVER, ru.kokk.skinkokk.character.CharacterConfig.SERVER_SPEC, "skinkokk-character-server.toml");
+        // анимации (жесты, эмоции, позы из сцен Студии) — свои файлы настроек
+        ru.kokk.skinkokk.anim.AnimConfig.init(container);
         LOGGER.info("SkinKokk initialized");
     }
 }

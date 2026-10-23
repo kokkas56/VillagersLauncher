@@ -1,0 +1,71 @@
+{
+ "v": 1,
+ "id": "shake_head",
+ "name": "Покачать головой",
+ "name_en": "Shake head",
+ "cat": "talk",
+ "target": "any_humanoid",
+ "length": 28,
+ "loop": false,
+ "speed": 1,
+ "blendIn": 2,
+ "blendOut": 3,
+ "mode": "add",
+ "tracks": {
+  "head": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "t": 5,
+     "v": [
+      4,
+      -28,
+      0
+     ]
+    },
+    {
+     "t": 11,
+     "v": [
+      4,
+      26,
+      0
+     ]
+    },
+    {
+     "t": 17,
+     "v": [
+      4,
+      -22,
+      0
+     ]
+    },
+    {
+     "t": 23,
+     "v": [
+      4,
+      14,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 28,
+     "v": [
+      0,
+      0,
+      0
+     ]
+    }
+   ]
+  }
+ },
+ "emote": true,
+ "icon": "🙅"
+}

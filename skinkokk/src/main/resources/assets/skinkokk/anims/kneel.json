@@ -1,0 +1,148 @@
+{
+ "v": 1,
+ "id": "kneel",
+ "name": "Встать на колено",
+ "name_en": "Kneel",
+ "cat": "rest",
+ "target": "any_humanoid",
+ "length": 14,
+ "loop": false,
+ "stay": true,
+ "speed": 1,
+ "blendIn": 2,
+ "blendOut": 8,
+ "mode": "add",
+ "modes": {
+  "right_leg": "replace",
+  "left_leg": "replace",
+  "right_arm": "replace"
+ },
+ "tracks": {
+  "root": {
+   "pos": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 12,
+     "v": [
+      0,
+      6,
+      0
+     ]
+    }
+   ]
+  },
+  "right_leg": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 12,
+     "v": [
+      -86,
+      0,
+      0
+     ]
+    }
+   ]
+  },
+  "left_leg": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 12,
+     "v": [
+      60,
+      0,
+      0
+     ]
+    }
+   ]
+  },
+  "body": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "t": 12,
+     "v": [
+      6,
+      0,
+      0
+     ]
+    }
+   ]
+  },
+  "right_arm": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "t": 12,
+     "v": [
+      -40,
+      0,
+      0
+     ]
+    }
+   ]
+  },
+  "head": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "t": 12,
+     "v": [
+      -4,
+      0,
+      0
+     ]
+    }
+   ]
+  }
+ },
+ "lockLegs": true,
+ "emote": true,
+ "icon": "🧎"
+}

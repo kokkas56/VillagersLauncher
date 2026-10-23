@@ -1,0 +1,176 @@
+{
+ "v": 1,
+ "id": "clap",
+ "name": "Хлопать",
+ "name_en": "Clap",
+ "cat": "emotion",
+ "target": "any_humanoid",
+ "length": 16,
+ "loop": true,
+ "speed": 1,
+ "blendIn": 4,
+ "blendOut": 6,
+ "mode": "add",
+ "modes": {
+  "right_arm": "replace",
+  "left_arm": "replace"
+ },
+ "tracks": {
+  "right_arm": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      -72,
+      -6,
+      0
+     ],
+     "ease": "in"
+    },
+    {
+     "t": 4,
+     "v": [
+      -72,
+      -28,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 8,
+     "v": [
+      -72,
+      -6,
+      0
+     ],
+     "ease": "in"
+    },
+    {
+     "t": 12,
+     "v": [
+      -72,
+      -28,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 16,
+     "v": [
+      -72,
+      -6,
+      0
+     ]
+    }
+   ]
+  },
+  "left_arm": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      -72,
+      6,
+      0
+     ],
+     "ease": "in"
+    },
+    {
+     "t": 4,
+     "v": [
+      -72,
+      28,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 8,
+     "v": [
+      -72,
+      6,
+      0
+     ],
+     "ease": "in"
+    },
+    {
+     "t": 12,
+     "v": [
+      -72,
+      28,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 16,
+     "v": [
+      -72,
+      6,
+      0
+     ]
+    }
+   ]
+  },
+  "head": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "t": 4,
+     "v": [
+      4,
+      0,
+      0
+     ]
+    },
+    {
+     "t": 8,
+     "v": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "t": 12,
+     "v": [
+      4,
+      0,
+      0
+     ]
+    },
+    {
+     "t": 16,
+     "v": [
+      0,
+      0,
+      0
+     ]
+    }
+   ]
+  }
+ },
+ "events": [
+  {
+   "t": 4,
+   "sound": "minecraft:block.wool.place",
+   "vol": 0.7,
+   "pitch": 1.6
+  },
+  {
+   "t": 12,
+   "sound": "minecraft:block.wool.place",
+   "vol": 0.7,
+   "pitch": 1.5
+  }
+ ],
+ "emote": true,
+ "icon": "👏"
+}

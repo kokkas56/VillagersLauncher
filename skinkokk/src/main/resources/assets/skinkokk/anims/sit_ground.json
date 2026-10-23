@@ -1,0 +1,171 @@
+{
+ "v": 1,
+ "id": "sit_ground",
+ "name": "Сидеть по-турецки",
+ "name_en": "Sit cross-legged",
+ "cat": "rest",
+ "target": "any_humanoid",
+ "length": 16,
+ "loop": false,
+ "stay": true,
+ "speed": 1,
+ "blendIn": 2,
+ "blendOut": 8,
+ "mode": "add",
+ "modes": {
+  "right_leg": "replace",
+  "left_leg": "replace",
+  "right_arm": "replace",
+  "left_arm": "replace"
+ },
+ "tracks": {
+  "root": {
+   "pos": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 14,
+     "v": [
+      0,
+      10,
+      0
+     ]
+    }
+   ]
+  },
+  "right_leg": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 14,
+     "v": [
+      -90,
+      -50,
+      0
+     ]
+    }
+   ]
+  },
+  "left_leg": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 14,
+     "v": [
+      -90,
+      50,
+      0
+     ]
+    }
+   ]
+  },
+  "right_arm": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 14,
+     "v": [
+      -40,
+      -10,
+      8
+     ]
+    }
+   ]
+  },
+  "left_arm": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 14,
+     "v": [
+      -40,
+      10,
+      -8
+     ]
+    }
+   ]
+  },
+  "body": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "t": 14,
+     "v": [
+      6,
+      0,
+      0
+     ]
+    }
+   ]
+  },
+  "head": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "t": 14,
+     "v": [
+      -4,
+      0,
+      0
+     ]
+    }
+   ]
+  }
+ },
+ "lockLegs": true,
+ "emote": true,
+ "icon": "🧘"
+}

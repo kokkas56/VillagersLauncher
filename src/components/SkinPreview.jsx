@@ -1,10 +1,16 @@
 import React, { useEffect, useRef } from 'react';
 import { SkinViewer, WalkingAnimation, IdleAnimation } from 'skinview3d';
+import * as THREE from 'three';
+import { attachCharacter } from '../lib/characterRig.js';
 
 // 3D-превью скина. skin/cape — dataURL или canvas.
-export default function SkinPreview({ skin, cape, slim, width = 260, height = 360, walk = true, rotate = true, zoom = 0.85, nameTag, onViewer, className, controls = true }) {
+// character — персонаж SkinKokk («Персонаж»): уши, хвост, причёска, одежда, телосложение, грудь — поверх скина;
+// onCharacter(handle) — доступ к частям ({ kick() — встряхнуть, setWalking(b) }).
+export default function SkinPreview({ skin, cape, slim, width = 260, height = 360, walk = true, rotate = true, zoom = 0.85, nameTag, onViewer, className, controls = true, character, physics = true, onCharacter }) {
   const canvasRef = useRef(null);
   const viewerRef = useRef(null);
+  const charRef = useRef(null);
+  const charKey = character ? JSON.stringify(character) : '';
 
   useEffect(() => {
     const viewer = new SkinViewer({ canvas: canvasRef.current, width, height });
@@ -19,7 +25,7 @@ export default function SkinPreview({ skin, cape, slim, width = 260, height = 36
     viewer.controls.enablePan = false;
     viewerRef.current = viewer;
     if (onViewer) onViewer(viewer);
-    return () => { viewer.dispose(); viewerRef.current = null; };
+    return () => { if (charRef.current) { charRef.current.dispose(); charRef.current = null; } viewer.dispose(); viewerRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -47,6 +53,18 @@ export default function SkinPreview({ skin, cape, slim, width = 260, height = 36
     const v = viewerRef.current;
     if (v) v.nameTag = nameTag || null;
   }, [nameTag]);
+  // части персонажа: пересобираются при любой правке персонажа или смене скина
+  useEffect(() => {
+    const v = viewerRef.current;
+    if (charRef.current) { charRef.current.dispose(); charRef.current = null; }
+    if (!v || !character || character.on === false) { if (onCharacter) onCharacter(null); return; }
+    try {
+      charRef.current = attachCharacter(THREE, v, character, { skin, physics, walking: walk });
+      if (onCharacter) onCharacter(charRef.current);
+    } catch (e) { console.warn('character preview', e); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [charKey, skin, slim, physics]);
+  useEffect(() => { if (charRef.current) charRef.current.setWalking(walk); }, [walk]);
 
   return <canvas ref={canvasRef} className={className} style={{ width, height }} />;
 }

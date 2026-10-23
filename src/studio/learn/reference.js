@@ -12,10 +12,11 @@ import { ACTION_LABEL, COND_LABEL } from '../validate.js';
 import { TUTORIALS } from './tutorials.js';
 import { aiArticles } from './articlesAi.js'; // фаза 6, трек B: «Жители»
 import { cineArticles } from './articlesCine.js'; // фаза 6, трек A: запекание, видео, переходы, эффекты
+import { animArticles } from './articlesAnim.js'; // «Анимации»: макет, библиотека SkinKokk, формат
 
 export const CATS = [
   ['tool', 'Инструменты и кнопки'], ['entity', 'Сущности мира'], ['io', 'Входы и выходы'], ['object', 'Объекты сцены'],
-  ['attr', 'Свойства и атрибуты'], ['track', 'Дорожки и события сцены'], ['scheme', 'Схемы: узлы и события'], ['logic', 'Условия и действия'], ['ui', 'Окно Студии'], ['ai', 'Жители и их ИИ'], ['cine', 'Запекание, видео и эффекты']
+  ['attr', 'Свойства и атрибуты'], ['track', 'Дорожки и события сцены'], ['scheme', 'Схемы: узлы и события'], ['logic', 'Условия и действия'], ['ui', 'Окно Студии'], ['ai', 'Жители и их ИИ'], ['cine', 'Запекание, видео и эффекты'], ['anim', 'Анимации']
 ];
 
 const T = (...ids) => ids;
@@ -99,6 +100,7 @@ export function buildArticles() {
   const seen = new Set();
   out.push(...aiArticles()); // фаза 6, трек B: «Жители»
   out.push(...cineArticles()); // фаза 6, трек A
+  out.push(...animArticles()); // «Анимации»
   return out.filter((a) => (seen.has(a.id) ? false : seen.add(a.id)));
 }
 

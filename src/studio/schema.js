@@ -1,6 +1,7 @@
 // Описание дорожек, событий и полей Студии для редактора: русские названия и подсказки «что это и зачем».
 import { VERB_LABEL } from './validate.js';
 import { FX_LIB, GESTURES } from './fxlib.js';
+import { BUILTIN_IDS as ANIM_IDS } from './anim/animLib.js'; // «Анимации»: встроенные анимации SkinKokk
 
 export const TRACKS = {
   camera: { label: 'Камера', color: '#e6b65c', hint: 'Ключи камеры: где висит камера и куда смотрит в каждый момент. Между ключами камера плавно пролетает сама. Быстрее всего ставить ключи из игры: встань, как должна смотреть камера, и нажми F8 — ключ появится там, где стоит бегунок.' },
@@ -178,7 +179,7 @@ for (const [verb, d] of Object.entries(FX_LIB)) {
   VERB_DEFS[d.track][verb] = def;
   if (d.track === 'world') VERB_DEFS.fx[verb] = def; // мировые эффекты можно класть и на «Эффекты»
 }
-SUGGEST.anims = [...new Set([...GESTURES.map((g) => g[0]), ...SUGGEST.anims])];
+SUGGEST.anims = [...new Set([...GESTURES.map((g) => g[0]), ...SUGGEST.anims, ...ANIM_IDS])]; // + анимации SkinKokk (и проекта — по id)
 
 export const ACTOR_FIELDS = [
   { k: 'name', label: 'Имя', type: 'text', hint: 'Как зовут актёра — для тебя и для субтитров.' },

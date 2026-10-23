@@ -206,12 +206,15 @@ module.exports = function setupFriends(d) {
     if (cape && cape.length > 40000) cape = null;
     const rw = Object.entries(p.rewards || {});
     const pr = prefs();
+    // персонаж SkinKokk (вкладка «Персонаж»): друзья видят его в профиле и в лобби
+    let character = null;
+    try { const ch = d.character ? d.character() : null; if (ch && ch.on !== false && JSON.stringify(ch).length <= 12000) character = ch; } catch (_) {}
     return {
       typ: 'profile', from: m.nick, t: Date.now(), ver: 1,
       level: X.accountLevel(p), mastery: X.masteryLevels(p), rewards: rw.map(([id]) => id).slice(0, 300),
       recent: rw.sort((a, b) => (Number(b[1]) || 0) - (Number(a[1]) || 0)).slice(0, 8).map(([id, t]) => ({ id, t: Number(t) || 0 })),
       equip: { badge: p.equip.badge || null, title: p.equip.title || null, frame: p.equip.frame || null, theme: p.equip.theme || null, cape: p.equip.cape || null, decor: p.equip.decor || null, lobby: p.equip.lobby || null },
-      skin, slim, cape, ely: !!m.ely && !skin,
+      skin, slim, cape, ely: !!m.ely && !skin, character,
       about: String(pr.about || '').slice(0, 300), showcase: (pr.showcase || []).slice(0, 6),
       records: { ...(s.gameBest || {}) }, playMs: s.playTimeMs || 0, party: (p.stats && p.stats.party) || 0,
       friends: Object.keys(book().friends).length, equipItems: pr.equip
@@ -892,6 +895,7 @@ module.exports = function setupFriends(d) {
     const eq = (doc && doc.equip) || {};
     return {
       nick, skin: skin || null, slim, cape: (doc && doc.cape) || null, level: doc ? Number(doc.level) || 1 : 1,
+      character: doc && doc.character && typeof doc.character === 'object' ? doc.character : null,
       badge: X.badgeInfo(eq.badge), frame: X.frameInfo(eq.frame), title: eq.title && X.rewardById(eq.title) ? X.rewardById(eq.title).name : null,
       decor: eq.decor || null, ...(extra || {})
     };
@@ -961,7 +965,7 @@ module.exports = function setupFriends(d) {
     return {
       key, nick, me: !!mine, friend: !!f, incoming: !!b.inc[key], outgoing: !!b.out[key], blocked: !!b.blocked[key], loaded: !!doc,
       verified: mine || !!(f && pr && pr.pk === f.pk), status: f || mine ? s.status : null, doing: f || mine ? s.doing : '',
-      skin: base.skin, slim: base.slim, cape: base.cape, level: base.level, badge: base.badge, frame: base.frame, title: base.title,
+      skin: base.skin, slim: base.slim, cape: base.cape, character: base.character, level: base.level, badge: base.badge, frame: base.frame, title: base.title,
       equip: (doc && doc.equip) || {}, mastery: (doc && doc.mastery) || {}, rewards: (doc && doc.rewards) || [], recent: (doc && doc.recent) || [],
       records: (doc && doc.records) || {}, playMs: (doc && doc.playMs) || 0, party: (doc && doc.party) || 0, friends: (doc && doc.friends) || 0,
       about: (doc && doc.about) || '', showcase: (doc && doc.showcase) || [], since: f ? f.since : null, t: doc ? doc.t : null

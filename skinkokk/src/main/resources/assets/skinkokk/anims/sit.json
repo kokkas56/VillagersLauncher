@@ -1,0 +1,172 @@
+{
+ "v": 1,
+ "id": "sit",
+ "name": "Сесть на землю",
+ "name_en": "Sit",
+ "cat": "rest",
+ "target": "any_humanoid",
+ "length": 16,
+ "loop": false,
+ "stay": true,
+ "speed": 1,
+ "blendIn": 2,
+ "blendOut": 8,
+ "mode": "add",
+ "modes": {
+  "right_leg": "replace",
+  "left_leg": "replace",
+  "right_arm": "replace",
+  "left_arm": "replace"
+ },
+ "tracks": {
+  "root": {
+   "pos": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 14,
+     "v": [
+      0,
+      10,
+      0
+     ]
+    }
+   ]
+  },
+  "right_leg": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 14,
+     "v": [
+      -88,
+      4,
+      3
+     ]
+    }
+   ]
+  },
+  "left_leg": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 14,
+     "v": [
+      -88,
+      -4,
+      -3
+     ]
+    }
+   ]
+  },
+  "body": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 14,
+     "v": [
+      -12,
+      0,
+      0
+     ]
+    }
+   ]
+  },
+  "right_arm": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 14,
+     "v": [
+      30,
+      0,
+      12
+     ]
+    }
+   ]
+  },
+  "left_arm": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ],
+     "ease": "out"
+    },
+    {
+     "t": 14,
+     "v": [
+      30,
+      0,
+      -12
+     ]
+    }
+   ]
+  },
+  "head": {
+   "rot": [
+    {
+     "t": 0,
+     "v": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "t": 14,
+     "v": [
+      8,
+      0,
+      0
+     ]
+    }
+   ]
+  }
+ },
+ "lockLegs": true,
+ "emote": true,
+ "icon": "🪑"
+}

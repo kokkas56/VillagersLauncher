@@ -760,3 +760,41 @@ input[type='range'] { accent-color: var(--emerald); width: 100%; }
 .avatar-frame.frame-rainbow { box-shadow: 0 0 0 2px #ff6a6a, 0 0 0 4px #ffd34a, 0 0 0 6px #6ad08a, 0 0 0 8px #6a8aff; }
 
 @media (max-width: 1180px) { .friends-layout { grid-template-columns: 1fr; } .fp-hero { flex-direction: column; } .fp-head { padding: 0 18px 18px; } }
+
+/* ---------- «Персонаж» (SkinKokk): вкладка на странице «Скины» ---------- */
+.ch-tabs { margin-left: 14px; }
+.ch-layout { grid-template-columns: 360px 1fr; }
+.ch-stage { position: sticky; top: 0; }
+.ch-stage-btns { display: flex; gap: 6px; }
+.ch-right { display: flex; flex-direction: column; gap: 14px; }
+.ch-card .card-head .muted.small { max-width: 60%; text-align: right; line-height: 1.3; }
+.ch-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ch-chips .chip { display: inline-flex; align-items: center; gap: 6px; }
+.ch-chip-sw { width: 12px; height: 12px; image-rendering: pixelated; border-radius: 2px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4); }
+.ch-sub { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: rgba(8, 6, 4, 0.35); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+.ch-sub-name { font-size: 13px; }
+.ch-tpl { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ch-lbl { font-weight: 700; font-size: 12px; color: var(--muted); }
+.ch-pats { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.ch-pat { padding: 2px; border-radius: 6px; border: 1px solid var(--line-2); background: rgba(255, 255, 255, 0.04); cursor: pointer; line-height: 0; }
+.ch-pat img { width: 24px; height: 24px; image-rendering: pixelated; border-radius: 3px; }
+.ch-pat.on { border-color: var(--emerald); box-shadow: 0 0 0 1px var(--emerald); }
+.ch-color { position: relative; display: inline-flex; }
+.ch-dot { width: 26px; height: 26px; border-radius: 7px; border: 2px solid rgba(255, 255, 255, 0.25); cursor: pointer; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); }
+.ch-pop { position: absolute; z-index: 30; top: 32px; left: 0; padding: 10px; border-radius: 10px; background: #1d1610; border: 1px solid var(--line-2); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; gap: 8px; width: 214px; }
+.ch-pal { display: grid; grid-template-columns: repeat(8, 22px); gap: 4px; }
+.ch-sw { width: 22px; height: 22px; border-radius: 5px; border: 1px solid rgba(0, 0, 0, 0.4); cursor: pointer; }
+.ch-sw.on { box-shadow: 0 0 0 2px var(--emerald-2); }
+.ch-custom { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--muted); }
+.ch-custom input { width: 44px; height: 24px; border: 0; background: none; padding: 0; cursor: pointer; }
+.ch-grid .seg { justify-self: start; }
+.ch-grid { display: grid; grid-template-columns: 110px 1fr; gap: 10px 12px; align-items: center; margin-bottom: 6px; }
+.ch-slider { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.ch-slider .ch-sl-top { display: flex; justify-content: space-between; font-weight: 700; font-size: 13px; }
+.ch-slider .ch-sl-top b { color: var(--gold-2); font-variant-numeric: tabular-nums; }
+.ch-slider small { color: var(--muted); font-size: 11px; }
+.ch-note { margin: 8px 0 0; line-height: 1.4; }
+.ch-presets { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.ch-preset { display: inline-flex; align-items: center; gap: 2px; }
+.ch-input { width: 140px; padding: 5px 8px; border-radius: 7px; border: 1px solid var(--line-2); background: rgba(8, 6, 4, 0.5); color: var(--text); font: inherit; font-size: 12px; }
+@media (max-width: 1100px) { .ch-layout { grid-template-columns: 1fr; } .ch-stage { position: static; } }

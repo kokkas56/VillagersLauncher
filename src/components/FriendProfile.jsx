@@ -54,7 +54,7 @@ export default function FriendProfile({ nick, fs, onBack }) {
 
       <section className={'card fp-hero' + (theme ? ' themed' : '')} style={heroStyle}>
         <div className="fp-skin">
-          <SkinPreview skin={p.skin || fallback} cape={p.cape} slim={p.slim} width={230} height={300} rotate walk zoom={0.85} />
+          <SkinPreview skin={p.skin || fallback} cape={p.cape} slim={p.character && p.character.arms && p.character.arms !== 'auto' ? p.character.arms === 'slim' : p.slim} width={230} height={300} rotate walk zoom={0.85} character={p.character || null} />
         </div>
         <div className="fp-head">
           <div className="fp-name">

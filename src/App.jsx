@@ -131,7 +131,7 @@ export default function App() {
       musicRendering.current = false;
     }, 4000);
     return () => { clearTimeout(tm); musicRendering.current = false; };
-  }, [rewardsKey, settings.gameDir]);
+  }, [rewardsKey, settings && settings.gameDir]);
   // друзья: счётчик у вкладки, приглашения поверх любой вкладки; мини-игра в лаунчере видна друзьям как статус
   const fs = useFriends();
   const friendsCount = fs ? fs.incoming.length + (fs.invites || []).length + fs.notes.filter((n) => !n.read).length : 0;
