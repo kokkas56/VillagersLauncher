@@ -128,6 +128,7 @@ const authorOnly = (name, fn) => handle(name, (...a) => {
 const studioApi = require('./studio.cjs')({ handle: authorOnly, send, store, getGame: () => game });
 require('./studio-cine.cjs').setup({ handle: authorOnly, store }); // запекание сцен и видео (фаза 6, трек A)
 require('./studio-ai.cjs')({ handle: authorOnly, store }); // «Жители»: файлы ИИ жителей в проекте и их сборка (фаза 6, трек B)
+require('./studio-anim.cjs')({ handle: authorOnly, store }); // «Анимации»: анимации проекта и их сборка в config/skinkokk/anims
 // отдельное окно «Студия Кокка» и встраивание окна игры в него
 studioWins = require('./studio-window.cjs')({
   handle: authorOnly, store, dev: DEV, getGame: () => game, linkInfo: () => studioApi.info(), mainWindow: () => win, holdLink: (on) => studioApi.hold('studio-window', on),
@@ -177,6 +178,8 @@ handle('skin:current', () => extras.currentSkin(store.get().gameDir));
 handle('skin:apply', (data) => { const r = extras.applySkin(store.get().gameDir, data); if (friendsApi) friendsApi.onSkinChanged(); return r; });
 handle('skin:clear', () => { const r = extras.clearSkin(store.get().gameDir); if (friendsApi) friendsApi.onSkinChanged(); return r; });
 handle('wardrobe:list', () => extras.listWardrobe(store.get().gameDir));
+// «Персонаж» (мод SkinKokk): уши, хвост, причёска, одежда, телосложение — по аккаунту, файл skinkokk/character.json
+const characters = require('./character.cjs')({ handle, store, nickKey, onChanged: () => { if (friendsApi) friendsApi.onSkinChanged(); } });
 handle('wardrobe:capes', () => extras.listCapes(store.get().gameDir));
 handle('wardrobe:saveCape', (data) => extras.saveCape(store.get().gameDir, data));
 handle('wardrobe:removeCape', (id) => extras.removeCape(store.get().gameDir, id));
@@ -736,7 +739,7 @@ handle('server:openDir', () => { fs.mkdirSync(server.dir(), { recursive: true })
 // ---------------- друзья и отряд (лобби в главном меню игры) ----------------
 friendsApi = require('./friends.cjs')({
   handle, ipcMain, send, store, auth, extras, scoresWorker, scoresContents: () => (scoresWin && !scoresWin.isDestroyed() ? scoresWin.webContents : null),
-  currentAcc, profile, setProfile, getGame: () => game, isBusy: () => busy, playGame, server, hosting,
+  currentAcc, profile, setProfile, getGame: () => game, isBusy: () => busy, playGame, server, hosting, character: () => characters.current(),
   tunnelCmd, tunnelOpts, tunnelState: () => tunnelState, version: app.getVersion(), win: () => win, Notification, whenReady: () => app.whenReady(),
   startServer: async (opts) => { try { return await server.start(await packVersions(), progress, opts); } finally { progress(null); } }
 });
@@ -927,6 +930,7 @@ async function playGame(opts = {}) {
       await mc.ensureAuthlibInjector();
     }
     fs.mkdirSync(path.join(gameDir, 'skinkokk'), { recursive: true });
+    try { characters.writeFile(gameDir); } catch (e) { console.error('character file', e); } // персонаж этого аккаунта
     // своя заставка загрузки (villagersearly) вместе с полноэкранным режимом роняет игру при создании окна — тогда без неё
     const splashJar = splash.prepare({ enabled: s.customSplash !== false && !s.fullscreen && !s.splashCrashed, gameDir, libDir: mc.LIB_DIR, log: (l) => send('game-log', [l]) });
     // quickPlayWorld — имя папки одиночного мира в saves (кнопка «Запустить игру в этом мире» в Студии)

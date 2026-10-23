@@ -8,6 +8,7 @@ import { Empty } from '../components/ui.jsx';
 import { defaultSkinDataUrl } from '../editor/templates.js';
 import { REWARDS } from '../games/rewards.js';
 import { capeDataUrl } from '../games/capes.js';
+import CharacterEditor from '../components/CharacterEditor.jsx';
 
 export default function Skins({ openEditor, skin, refreshSkin, openAccounts }) {
   const { t, account, toast } = useApp();
@@ -19,12 +20,16 @@ export default function Skins({ openEditor, skin, refreshSkin, openAccounts }) {
   const [capes, setCapes] = useState([]);
   const [profile, setProfile] = useState(null);
   const [previewCape, setPreviewCape] = useState(undefined);
+  const [character, setCharacter] = useState(null); // персонаж SkinKokk — для превью на вкладке «Скины»
+  const [tab, setTab] = useState(() => { try { return localStorage.getItem('skins.tab') || 'skins'; } catch (_) { return 'skins'; } });
+  const pickTab = (x) => { setTab(x); try { localStorage.setItem('skins.tab', x); } catch (_) {} if (x === 'skins') call('character:get').then((r) => setCharacter(r && r.char)).catch(() => {}); };
 
   const load = async () => {
     try { setWardrobe(await call('wardrobe:list')); } catch (_) {}
     try { setCurrent(await call('skin:current')); } catch (_) {}
     try { setCapes(await call('wardrobe:capes')); } catch (_) {}
     try { setProfile(await call('games:profile')); } catch (_) {}
+    try { const r = await call('character:get'); setCharacter(r && r.char); } catch (_) {}
     if (account && account.type === 'ely') {
       try { setEly(await call('skin:ely', account.name)); } catch (_) {}
       try { setElyCape(await call('skin:elyCape', account.name)); } catch (_) {}
@@ -91,13 +96,20 @@ export default function Skins({ openEditor, skin, refreshSkin, openAccounts }) {
     <div className="page">
       <div className="page-head">
         <h2><Icon name="shirt" size={22} /> {t('Скины')}</h2>
+        <div className="seg ch-tabs">
+          <button type="button" className={tab === 'skins' ? 'on' : ''} onClick={() => pickTab('skins')}><Icon name="shirt" size={12} /> {t('Скины')}</button>
+          <button type="button" className={tab === 'character' ? 'on' : ''} onClick={() => pickTab('character')} title={t('Уши, хвост, причёска, одежда, телосложение — видны всем в игре (мод SkinKokk)')}><Icon name="user" size={12} /> {t('Персонаж')}</button>
+        </div>
         <div className="grow" />
         <button className="btn primary" onClick={() => openEditor({ name: account ? account.name : '' })}><Icon name="brush" /> {t('Новый скин')}</button>
       </div>
 
+      {tab === 'character' ? (
+        <CharacterEditor skin={shown && shown.skin} slim={shown && shown.slim} fallback={fallback} account={account} />
+      ) : (
       <div className="skins-layout">
         <section className="card skin-stage">
-          <SkinPreview skin={(shown && shown.skin) || fallback} cape={shown && shown.cape} slim={shown && shown.slim} width={300} height={420} rotate walk zoom={0.8} nameTag={account ? account.name : null} />
+          <SkinPreview skin={(shown && shown.skin) || fallback} cape={shown && shown.cape} slim={character && character.on && character.arms !== 'auto' ? character.arms === 'slim' : shown && shown.slim} width={300} height={420} rotate walk zoom={0.8} nameTag={account ? account.name : null} character={character && character.on ? character : null} />
           <div className="skin-stage-info">
             <div className="pill-row">
               {current ? <span className="pill green"><Icon name="check" size={12} /> {t('Скин из лаунчера')}{current.name ? ': ' + current.name : ''}</span>
@@ -178,6 +190,7 @@ export default function Skins({ openEditor, skin, refreshSkin, openAccounts }) {
           </section>
         </div>
       </div>
+      )}
     </div>
   );
 }

@@ -5,7 +5,11 @@
   "compatibilityLevel": "JAVA_21",
   "mixins": [],
   "client": [
-    "PlayerInfoMixin"
+    "PlayerInfoMixin",
+    "CharacterPlayerModelMixin",
+    "anim.AnimHumanoidModelMixin",
+    "anim.AnimVillagerModelMixin",
+    "anim.AnimPlayerHandMixin"
   ],
   "injectors": {
     "defaultRequire": 1

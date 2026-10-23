@@ -2472,12 +2472,12 @@ const WHO_ZONE = ['player', 'any_player'];
 const SCHEME_COND_EXTRA = ['zone', 'players_online', 'weather', 'dim', 'random'];
 const SCHEME_COND_EXTRA_LABEL = { zone: 'Игрок в зоне', players_online: 'Игроков онлайн', weather: 'Погода', dim: 'Измерение', random: 'Случайно (доля)' };
 // действия схем: всё из диалогов + новые (порядок важен для распознавания вида)
-const SCHEME_ACTION_EXTRA = ['transition', 'spawn', 'despawn', 'move', 'say', 'block', 'structure', 'fx', 'message', 'tp', 'effect', 'weather', 'time', 'signal', 'scheme', 'gate', 'once'];
+const SCHEME_ACTION_EXTRA = ['transition', 'spawn', 'despawn', 'move', 'say', 'anim', 'block', 'structure', 'fx', 'message', 'tp', 'effect', 'weather', 'time', 'signal', 'scheme', 'gate', 'once'];
 const SCHEME_ACTION_EXTRA_LABEL = {
   spawn: 'Создать актёра/моба', despawn: 'Убрать актёра/моба', move: 'Отправить идти', say: 'Сказать над головой', block: 'Поставить блок',
   structure: 'Поставить постройку', fx: 'Эффект', message: 'Сообщение', tp: 'Перенести игрока', effect: 'Эффект зелья', weather: 'Погода',
   time: 'Время суток', signal: 'Подать сигнал', scheme: 'Вкл/выкл схему', gate: 'Открыть/закрыть ворота', once: 'Сбросить «Один раз»',
-  transition: 'Переход (перенос с видео/сценой)'
+  transition: 'Переход (перенос с видео/сценой)', anim: 'Анимация (жест SkinKokk)'
 };
 const FX_BASE_KINDS = ['fade_in', 'fade_out', 'flash', 'shake', 'particles', 'story_fx', 'title'];
 // фаза 6: и эффекты библиотеки (кроме существ и замедления — они только в сценах)
@@ -2611,6 +2611,7 @@ function checkSchemeAction(a, where, add, R, sel, info) {
       if (a.as) info.spawned.add(a.as);
       return;
     case 'despawn': { const e = targetErr(a.despawn, R, true); if (e) add(ERR, w + ': ' + e, sel); return; }
+    case 'anim': { const e = targetErr(a.anim, R, true); if (e) add(ERR, w + ': ' + e, sel); if (typeof a.name !== 'string' || !/^[a-z0-9_.-]{1,64}$/.test(a.name)) add(ERR, w + ': какая анимация — id латиницей (wave, bow, своя из «Анимаций»); stand — снять', sel); return; }
     case 'move':
       { const e = targetErr(a.move, R, true); if (e) add(ERR, w + ': ' + e, sel); }
       pe(a.to, true, 'куда — ');

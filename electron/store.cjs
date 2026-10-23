@@ -71,7 +71,7 @@ const DEFAULTS = {
     'config/betterfpsdist.json', 'config/DistantHorizons.toml', 'config/bobby.toml', 'config/iris.properties', 'config/oculus.properties',
     'config/fancymenu/user_variables.db', 'config/voicechat/username-cache.json', 'config/sounds/chat.json', 'config/fml.toml',
     'kubejs/fenix_dump/**', 'kubejs/exported/**', 'kubejs/fenix_night_spawn_status.json',
-    'config/skinkokk-client.toml', 'server/**',
+    'config/skinkokk-client.toml', 'config/skinkokk-character-client.toml', 'server/**',
     'kokkstory-videos/**' // записанные в Студии видео сцен: игрокам уезжают только отмеченные, через config/kokkstory/studio/<проект>/videos
   ],
   // Версии игры, которые ставятся, пока сборка не опубликована
@@ -134,6 +134,8 @@ try {
 
 // фаза 6: записи видео Студии никогда не публикуются как есть — маска и у тех, у кого список игнора уже сохранён
 if (Array.isArray(settings.ignore) && !settings.ignore.includes('kokkstory-videos/**')) settings.ignore = [...settings.ignore, 'kokkstory-videos/**'];
+// «Персонаж» SkinKokk: что игрок видит у других (грудь, физика) — его личные настройки, сборка их не перезаписывает
+if (Array.isArray(settings.ignore) && !settings.ignore.includes('config/skinkokk-character-client.toml')) settings.ignore = [...settings.ignore, 'config/skinkokk-character-client.toml'];
 
 function save() {
   const tmp = SETTINGS_FILE + '.tmp';

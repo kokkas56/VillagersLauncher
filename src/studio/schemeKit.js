@@ -91,6 +91,7 @@ export function sActionText(a, refs) {
   switch (k) {
     case 'spawn': return 'создать ' + whoTxt(a.spawn, refs) + ' ' + posTxt(a.pos) + (a.as ? ' как «' + a.as + '»' : '');
     case 'despawn': return 'убрать ' + whoTxt(a.despawn, refs);
+    case 'anim': return whoTxt(a.anim, refs) + (a.name === 'stand' ? ': снять анимацию' : ': анимация «' + (a.name || '?') + '»' + (a.loop ? ' по кругу' : ''));
     case 'move': return whoTxt(a.move, refs) + ' идёт ' + posTxt(a.to);
     case 'say': return whoTxt(a.say, refs) + ': «' + (a.text || '') + '»';
     case 'block': return 'блок ' + short(a.state) + ' ' + posTxt(a.block);

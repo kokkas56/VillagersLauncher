@@ -18,6 +18,7 @@ import QuestTab from '../QuestTab.jsx';
 import VarsTab from '../VarsTab.jsx';
 import SchemeTab from '../SchemeTab.jsx';
 import VillagersTab from '../villagers/VillagersTab.jsx'; // фаза 6, трек B: «Жители»
+import AnimTab from '../anim/AnimTab.jsx'; // «Анимации»: движения людей и жителей (SkinKokk)
 import { cinePrebuild, CineReport, VideosModal } from './Cine.jsx'; // фаза 6, трек A: запекание перед сборкой, «Видео проекта»
 import { BuildProvider, BlockPalette, BuildDock, useBuild } from './Build.jsx';
 import Voxelizer from './Voxelizer.jsx';
@@ -40,7 +41,8 @@ export const LAYOUTS = [
   ['quests', 'Задания', 'Задания по шагам и награды.'],
   ['vars', 'Переменные', 'Память сюжета: что игрок уже сделал.'],
   ['schemes', 'Схемы', 'Логика мира узлами: «событие → условие → действие» (как блюпринты). Живая трасса из игры.'],
-  ['villagers', 'Жители', 'ИИ жителей: кто что делает и почему, веса и пороги, новые дела и реакции, реплики ru/en.']
+  ['villagers', 'Жители', 'ИИ жителей: кто что делает и почему, веса и пороги, новые дела и реакции, реплики ru/en.'],
+  ['anims', 'Анимации', 'Движения людей и жителей: библиотека готовых (помахать, поклон, сесть, танец…), свои анимации ключами на модели, «▶ В игре», колесо эмоций игроков.']
 ];
 const TOOLS = [
   ['select', 'select', 'Выбор', 'Q', 'Выбор (Q): щёлкни объект в игре или на схеме — ничего не сдвинется. Пробел — прошлый инструмент.'],
@@ -122,7 +124,7 @@ function StudioMain() {
   };
   core.openProjectWorld = openProjectWorld;
   const build = async () => {
-    try { await core.flush(); await core.flushEnts(); let pre = null; try { pre = await cinePrebuild(core); } catch (e) { pre = null; } const r = await call('studio:build'); if (r) r.pre = pre; if (r && r.ok) { try { r.ai = await call('studio:aiBuild'); } catch (e) { r.aiError = e.message; } } setReport(r); setModal('report'); if (r && r.ok) learnMark('build'); } catch (e) { toast(e.message, 'error', 8000); }
+    try { await core.flush(); await core.flushEnts(); let pre = null; try { pre = await cinePrebuild(core); } catch (e) { pre = null; } const r = await call('studio:build'); if (r) r.pre = pre; if (r && r.ok) { try { r.ai = await call('studio:aiBuild'); } catch (e) { r.aiError = e.message; } try { r.anims = await call('studio:animBuild'); } catch (e) { r.animsError = e.message; } } setReport(r); setModal('report'); if (r && r.ok) learnMark('build'); } catch (e) { toast(e.message, 'error', 8000); }
   };
   const popOut = (tab) => call('studio:popout', tab).catch((e) => toast(e.message, 'error'));
   const run = {
@@ -383,6 +385,8 @@ function StudioMain() {
             <div className="c4-splitter-h" onMouseDown={splitH} title={layout === 'build' ? 'Тяни — высота нижней панели' : 'Тяни — высота таймлайна'} />
             {layout === 'build' ? <BuildDock height={Math.max(200, tlH)} timeline={<Timeline act={act} height={Math.max(200, tlH) - 27} />} /> : <Timeline act={act} height={tlH} />}
           </>
+        ) : layout === 'anims' ? (
+          <AnimTab />
         ) : layout === 'start' ? (
           <StartTab setLayout={setLayout} openDock={openDock} build={build} openLearn={() => setModal('learn')} newProject={() => setModal('newProject')} openProjectWorld={openProjectWorld} playtest={playtest} />
         ) : (
@@ -416,6 +420,9 @@ function StudioMain() {
           <CineReport report={report} />
           {report.ai && <p>ИИ жителей: параметров <b>{report.ai.params}</b>, поведений <b>{report.ai.scripts}</b>{report.ai.skipped && report.ai.skipped.length ? ' (с ошибками не собраны: ' + report.ai.skipped.join(', ') + ')' : ''}, реплик <b>{report.ai.lines}</b> → <span className="mono">config/villagerskokk/</span>.</p>}
           {report.aiError && <p className="dim">ИИ жителей не собран: {report.aiError}</p>}
+          {report.anims && <p>Анимации: <b>{report.anims.anims}</b>{report.anims.overrides && report.anims.overrides.length ? ' (перекрывают встроенные: ' + report.anims.overrides.join(', ') + ')' : ''}{report.anims.skipped && report.anims.skipped.length ? ', с ошибками не собраны: ' + report.anims.skipped.join(', ') : ''} → <span className="mono">config/skinkokk/anims/</span>.</p>}
+          {report.animsError && <p className="dim">Анимации не собраны: {report.animsError}</p>}
+          {report.anims && (report.anims.issues || []).slice(0, 20).map((x, i) => <div key={'an' + i} className="c4-issrow"><span className="sv" style={{ background: x.sev === 'error' ? '#e0504a' : '#e0a030' }} /><b className="mono" style={{ fontSize: 11 }}>{x.doc}</b> {x.msg}</div>)}
           {report.ai && (report.ai.issues || []).slice(0, 20).map((x, i) => <div key={'ai' + i} className="c4-issrow"><span className="sv" style={{ background: x.sev === 'error' ? '#e0504a' : '#e0a030' }} /><b className="mono" style={{ fontSize: 11 }}>{x.doc}</b> {x.msg}</div>)}
           {(report.issues || []).slice(0, 80).map((x, i) => <div key={i} className="c4-issrow"><span className="sv" style={{ background: x.sev === ERR ? '#e0504a' : '#e0a030' }} />{(x.doc || x.scene) ? <b className="mono" style={{ fontSize: 11 }}>{x.doc || x.scene}</b> : null} {x.msg}</div>)}
         </Modal>}

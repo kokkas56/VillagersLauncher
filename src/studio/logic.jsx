@@ -55,6 +55,7 @@ export const ACTION_HINT = {
   despawn: 'Убрать созданного раньше (по имени «как») или персонажа проекта.',
   move: 'Отправить актёра или созданного моба идти к точке.',
   say: 'Фраза облачком над головой персонажа (видят все рядом).',
+  anim: 'Сыграть анимацию SkinKokk (встроенную или свою из макета «Анимации») на персонаже, созданном мобе или игроке (имя player). stand — снять анимацию.',
   block: 'Поставить один блок (minecraft:air — убрать). Можно с состоянием: minecraft:oak_door[open=true].',
   structure: 'Поставить постройку из библиотеки «Строительство» в точку, с поворотом и отражением.',
   fx: 'Эффект на экране или в мире — как в катсценах: затемнение, вспышка, тряска, частицы, заголовок.',
@@ -115,6 +116,7 @@ export function actionDefault(k, refs) {
     case 'xp': return { xp: 10 };
     case 'spawn': return { spawn: a ? 'actor:' + a.id : 'entity:minecraft:zombie', pos: 'player', as: 'mob1' };
     case 'despawn': return { despawn: 'mob1' };
+    case 'anim': return { anim: a ? 'actor:' + a.id : 'player', name: 'wave' };
     case 'move': return { move: 'mob1', to: 'player', speed: 1 };
     case 'say': return { say: a ? 'actor:' + a.id : 'mob1', text: 'Привет!' };
     case 'block': return { block: [0, 64, 0], state: 'minecraft:air' };
@@ -454,6 +456,11 @@ function ActionFields({ a, set, refs, hp, scheme }) {
       <Row label="как" hint="Имя, по которому этого актёра найдут другие действия (Сказать, Идти, Убрать). Латиница." hp={hp}><input className="input sm mono" value={a.as || ''} placeholder="mob1" onChange={(e) => set({ ...a, as: e.target.value.replace(/[^a-zA-Z0-9_-]/g, '') || undefined })} /></Row>
     </>);
     case 'despawn': return <TargetPick value={a.despawn} refs={refs} allowTmp onChange={(v) => set({ despawn: v })} />;
+    case 'anim': return (<>
+      <TargetPick value={a.anim} refs={refs} allowTmp onChange={(v) => set({ ...a, anim: v })} />
+      <Row label="какая" hint="id анимации: wave, bow, sit, dance… или своя из макета «Анимации». stand — снять." hp={hp}><input className="input sm mono" list="sl-anims" value={a.name || ''} placeholder="wave" onChange={(e) => set({ ...a, name: e.target.value.trim() })} /></Row>
+      <Row label="по кругу" hint="Повторять, пока не снимут (stand) — танец, плач, работа." hp={hp}><input type="checkbox" checked={!!a.loop} onChange={(e) => set({ ...a, loop: e.target.checked || undefined })} /></Row>
+    </>);
     case 'move': return (<>
       <TargetPick value={a.move} refs={refs} allowTmp onChange={(v) => set({ ...a, move: v })} />
       <Row label="куда"><SchemePos value={a.to} refs={refs} onChange={(p) => set({ ...a, to: p })} /></Row>
