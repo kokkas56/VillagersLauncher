@@ -878,7 +878,8 @@ handle('game:play', async (opts = {}) => {
       await mc.ensureAuthlibInjector();
     }
     fs.mkdirSync(path.join(gameDir, 'skinkokk'), { recursive: true });
-    const splashJar = splash.prepare({ enabled: s.customSplash !== false, gameDir, libDir: mc.LIB_DIR, log: (l) => send('game-log', [l]) });
+    // своя заставка загрузки (villagersearly) вместе с полноэкранным режимом роняет игру при создании окна — тогда без неё
+    const splashJar = splash.prepare({ enabled: s.customSplash !== false && !s.fullscreen && !s.splashCrashed, gameDir, libDir: mc.LIB_DIR, log: (l) => send('game-log', [l]) });
     // quickPlayWorld — имя папки одиночного мира в saves (кнопка «Запустить игру в этом мире» в Студии)
     let quickPlayWorld = null;
     if (opts.quickPlayWorld) {
@@ -898,6 +899,8 @@ handle('game:play', async (opts = {}) => {
       const lines = d.toString('utf8').split(/\r?\n/).filter(Boolean);
       for (const l of lines) {
         if (/Mod ID: 'minecraft'.*Actual version: '\[MISSING\]'/.test(l)) broken.neo = true;
+        if (/Loading ImmediateWindowProvider villagersearly/.test(l)) broken.splash = true;
+        if (/Setting user:|Backend library: LWJGL/.test(l)) broken.started = true;
         const z = /from mod ([^\s,]+\.jar), cause java\.util\.zip\.ZipException/.exec(l) || /ZipException[^\n]*?([\w.+\-]+\.jar)/.exec(l);
         if (z) broken.jars.add(path.basename(z[1]));
       }
@@ -923,6 +926,11 @@ handle('game:play', async (opts = {}) => {
       const s2 = store.get();
       store.set({ playTimeMs: (s2.playTimeMs || 0) + played, lastPlayed: Date.now() });
       if (win && !win.isDestroyed()) { win.show(); win.restore(); }
+      // игра упала, не успев открыть окно, а грузилась с нашей заставкой — дальше запускаем без неё (на части видеокарт она ломает создание окна)
+      if (code !== 0 && code !== null && broken.splash && !broken.started && played < 5 * 60e3 && !s2.splashCrashed) {
+        store.set({ splashCrashed: true });
+        send('toast', { kind: 'warn', text: 'Игра упала при создании окна. Своя заставка загрузки отключена — нажми «Играть» ещё раз.' });
+      }
       // повреждённая установка: битые jar удаляем (скачаются заново с полной проверкой), NeoForge переустановим при следующем запуске
       if (broken.neo || broken.jars.size) {
         const fixed = [];
