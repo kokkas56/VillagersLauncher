@@ -1,5 +1,5 @@
 // VillagersLauncher — главный процесс.
-const { app, BrowserWindow, ipcMain, shell, dialog, protocol, net, Menu, Tray, nativeImage: NI, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, protocol, net, Menu, Tray, nativeImage: NI, powerMonitor, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -21,6 +21,7 @@ const extras = require('./extras.cjs');
 let win = null;
 let quitting = false;
 let game = null; // { proc, started }
+let friendsApi = null; // electron/friends.cjs: друзья, отряд, связь с игрой
 let busy = false;
 let busyWhat = null; // publish | play | verify
 function setBusy(what) { busy = !!what; busyWhat = what || null; send('busy-state', { busy, what: busyWhat }); }
@@ -173,13 +174,13 @@ handle('accounts:select', (id) => auth.select(id));
 handle('skin:ely', (name) => auth.elySkin(name));
 handle('skin:elyCape', (name) => auth.elyCape(name));
 handle('skin:current', () => extras.currentSkin(store.get().gameDir));
-handle('skin:apply', (data) => extras.applySkin(store.get().gameDir, data));
-handle('skin:clear', () => extras.clearSkin(store.get().gameDir));
+handle('skin:apply', (data) => { const r = extras.applySkin(store.get().gameDir, data); if (friendsApi) friendsApi.onSkinChanged(); return r; });
+handle('skin:clear', () => { const r = extras.clearSkin(store.get().gameDir); if (friendsApi) friendsApi.onSkinChanged(); return r; });
 handle('wardrobe:list', () => extras.listWardrobe(store.get().gameDir));
 handle('wardrobe:capes', () => extras.listCapes(store.get().gameDir));
 handle('wardrobe:saveCape', (data) => extras.saveCape(store.get().gameDir, data));
 handle('wardrobe:removeCape', (id) => extras.removeCape(store.get().gameDir, id));
-handle('wardrobe:wearCape', (cape) => extras.applyCape(store.get().gameDir, cape || null));
+handle('wardrobe:wearCape', (cape) => { const r = extras.applyCape(store.get().gameDir, cape || null); if (friendsApi) friendsApi.onSkinChanged(); return r; });
 handle('wardrobe:save', (data) => extras.saveToWardrobe(store.get().gameDir, data));
 handle('wardrobe:remove', (id) => extras.removeFromWardrobe(store.get().gameDir, id));
 handle('editor:list', (kind) => extras.editorList(kind));
@@ -385,14 +386,27 @@ function nickKey() { const a = currentAcc(); return a ? String(a.name).toLowerCa
 function profile() {
   const all = store.get().gameProfiles || {};
   const p = all[nickKey()] || {};
-  return { games: p.games || {}, rewards: p.rewards || {}, equip: p.equip || {}, equipT: p.equipT || 0, mastery: p.mastery || {} };
+  return { games: p.games || {}, rewards: p.rewards || {}, equip: p.equip || {}, equipT: p.equipT || 0, mastery: p.mastery || {}, stats: p.stats || {} };
+}
+// награды с условием (cosmetics.js: мастерство, события, игра с друзьями) выдаются сами, как только условие выполнено
+const cosmetics = require('./cosmetics.cjs');
+function grantEarned(p) {
+  const ids = cosmetics.newlyEarned(p);
+  for (const id of ids) {
+    p.rewards[id] = Date.now();
+    const r = cosmetics.rewardById(id);
+    if (r) send('toast', { text: 'Награда: ' + r.name + ' — надень во вкладке «Награды»', kind: 'ok' });
+  }
+  return ids.length > 0;
 }
 function setProfile(p) {
+  grantEarned(p);
   const all = { ...(store.get().gameProfiles || {}) };
   all[nickKey()] = p;
   store.set({ gameProfiles: all });
   send('profile', p);
   syncProfile();
+  if (friendsApi) friendsApi.onProfileChanged();
 }
 let syncTimer = null;
 function syncProfile() {
@@ -428,12 +442,19 @@ ipcMain.on('progress-remote', (e, { key, doc }) => {
   for (const id of Object.keys(p.rewards)) if (!doc.rewards || !doc.rewards[id]) localNewer = true;
   for (const [g, x] of Object.entries(doc.mastery || {})) { const v = Number(x) || 0; if (v > (p.mastery[g] || 0)) { p.mastery[g] = v; changed = true; } }
   for (const [g, x] of Object.entries(p.mastery)) if (x > ((doc.mastery || {})[g] || 0)) localNewer = true;
+  for (const [k, x] of Object.entries(doc.stats || {})) { const v = Number(x) || 0; if (v > (Number(p.stats[k]) || 0)) { p.stats[k] = v; changed = true; } }
+  for (const [k, x] of Object.entries(p.stats)) if ((Number(x) || 0) > (Number((doc.stats || {})[k]) || 0)) localNewer = true;
   if ((doc.equipT || 0) > p.equipT && doc.equip) { p.equip = doc.equip; p.equipT = doc.equipT; changed = true; }
   else if (p.equipT > (doc.equipT || 0)) localNewer = true;
   if (changed) { const all = { ...(store.get().gameProfiles || {}) }; all[nickKey()] = p; store.set({ gameProfiles: all }); send('profile', p); }
   if (localNewer) syncProfile();
 });
-handle('games:profile', async () => { watchProfile().catch(() => {}); return profile(); });
+handle('games:profile', async () => {
+  watchProfile().catch(() => {});
+  const p = profile();
+  if (cosmetics.newlyEarned(p).length) setProfile(p); // открылось по условию, пока лаунчер был закрыт
+  return profile();
+});
 handle('games:save', async ({ game, data }) => {
   const p = profile();
   p.games[game] = { t: Date.now(), d: data };
@@ -481,7 +502,7 @@ function tunnel() {
   tunnelWin.on('closed', () => { tunnelWin = null; tunnelState = { active: false }; send('tunnel-state', tunnelState); });
   return tunnelReady;
 }
-ipcMain.on('tunnel-state', (e, st) => { if (tunnelWin && e.sender === tunnelWin.webContents) { tunnelState = st; send('tunnel-state', st); } });
+ipcMain.on('tunnel-state', (e, st) => { if (tunnelWin && e.sender === tunnelWin.webContents) { tunnelState = st; send('tunnel-state', st); if (friendsApi) friendsApi.onTunnelState(st); } });
 function iceServers(s) {
   const stun = [...new Set([...(s.stunServers || []), ...store.DEFAULTS.stunServers])]; // новые серверы из обновлений лаунчера тоже
   return [{ urls: stun }, ...((s.turnServers || []).filter((t) => t && t.urls))];
@@ -576,7 +597,7 @@ handle('net:leave', () => { store.set({ activeRoom: null }); return tunnelWin ? 
 // ---------------- сервер сборки ----------------
 const server = require('./server.cjs');
 const hosting = require('./hosting.cjs');
-server.init((ch, data) => { send(ch, data); if (ch === 'server-state') onServerState(data); });
+server.init((ch, data) => { send(ch, data); if (ch === 'server-state') { onServerState(data); if (friendsApi) friendsApi.onServerState(data); } });
 
 // ---------- свой сервер: туннель + «в сети» для каталога + трей ----------
 let tray = null;
@@ -711,7 +732,16 @@ handle('server:syncMods', () => server.syncMods());
 handle('server:previewMods', () => server.previewMods());
 handle('server:command', (text) => server.command(text));
 handle('server:openDir', () => { fs.mkdirSync(server.dir(), { recursive: true }); shell.openPath(server.dir()); return true; });
+
+// ---------------- друзья и отряд (лобби в главном меню игры) ----------------
+friendsApi = require('./friends.cjs')({
+  handle, ipcMain, send, store, auth, extras, scoresWorker, scoresContents: () => (scoresWin && !scoresWin.isDestroyed() ? scoresWin.webContents : null),
+  currentAcc, profile, setProfile, getGame: () => game, isBusy: () => busy, playGame, server, hosting,
+  tunnelCmd, tunnelOpts, tunnelState: () => tunnelState, version: app.getVersion(), win: () => win, Notification, whenReady: () => app.whenReady(),
+  startServer: async () => { try { return await server.start(await packVersions(), progress); } finally { progress(null); } }
+});
 let studioReleased = false;
+let friendsQuit = false;
 app.on('before-quit', (e) => {
   // окно игры встроено в Студию — сначала вернуть его на место (иначе Windows закроет его вместе со Студией)
   if (studioWins && !studioReleased) {
@@ -719,6 +749,8 @@ app.on('before-quit', (e) => {
     if (studioWins.embedded()) { e.preventDefault(); studioWins.shutdown().finally(() => app.quit()); return; }
     studioWins.shutdown();
   }
+  // друзья: «не в сети» на брокер и выйти из отряда (успевает за полсекунды)
+  if (friendsApi && !friendsQuit) { friendsQuit = true; e.preventDefault(); try { friendsApi.shutdown(); } catch (_) {} setTimeout(() => app.quit(), 500); return; }
   if (quitting) return;
   if (server.running() || tunnelWin) {
     e.preventDefault();
@@ -881,7 +913,7 @@ handle('game:verify', async () => {
   } finally { setBusy(null); progress(null); }
 });
 
-handle('game:play', async (opts = {}) => {
+async function playGame(opts = {}) {
   if (game) throw new Error('Игра уже запущена');
   if (busy) throw new Error(busyWhat === 'publish' ? 'Идёт заливка сборки — играть можно будет, когда она закончится' : 'Лаунчер ещё занят');
   setBusy('play');
@@ -906,6 +938,7 @@ handle('game:play', async (opts = {}) => {
     }
     const launch = mc.buildLaunch({ ...installed, account, gameDir, quickPlay: opts.quickPlay, quickPlayWorld, extraClasspath: splashJar ? [splashJar] : [] });
     progress({ stage: 'launch', text: 'Запускаю Minecraft…', indeterminate: true });
+    if (friendsApi) friendsApi.beforeLaunch(gameDir);
     const proc = spawn(launch.javaPath, launch.args, { cwd: launch.cwd, windowsHide: false, detached: false });
     game = { proc, started: Date.now() };
     let tail = [];
@@ -960,9 +993,11 @@ handle('game:play', async (opts = {}) => {
         send('toast', { kind: 'warn', text: 'Игра не запустилась из-за повреждённых файлов' + (broken.neo ? ' (установка Minecraft/NeoForge)' : '') + (fixed.length ? ': ' + fixed.join(', ') : '') + '. Нажми «Играть» ещё раз — лаунчер всё перекачает и проверит сам.' });
       }
       send('game-state', { state: 'stopped', code, crashed: code !== 0 && code !== null && played < 24 * 3600e3 && code !== 130, tail: tail.slice(-80) });
+      if (friendsApi) friendsApi.onGameExit(code);
       if (!win || win.isDestroyed()) app.quit();
     });
     send('game-state', { state: 'starting' });
+    if (friendsApi) friendsApi.onGameStart();
     return true;
   } catch (e) {
     send('game-state', { state: 'idle' });
@@ -971,7 +1006,8 @@ handle('game:play', async (opts = {}) => {
     setBusy(null);
     progress(null);
   }
-});
+}
+handle('game:play', (opts) => playGame(opts || {}));
 
 handle('game:kill', () => { if (game) game.proc.kill(); return true; });
 

@@ -1,15 +1,18 @@
 // Награды мини-игр. У каждой игры свои; выдаются за долгую игру (игры зовут api.reward(id)).
 // kind: badge — значок у ника, title — титул у ника, scene — новый фон, music — lofi-трек, theme — цвет лаунчера,
-//       frame — рамка аватарки, cape — плащ для Minecraft (через систему скинов лаунчера).
+//       frame — рамка аватарки, cape — плащ для Minecraft (через систему скинов лаунчера),
+//       lobby — фон лобби отряда в игре, decor — декорация главного меню игры (cosmetics.js; открываются сами по условию cond).
+import { COSMETIC_REWARDS, EXTRA_THEMES, EXTRA_BADGE_PIX, FRAMES, LOBBY_BGS, DECOR } from './cosmetics.js';
 
 export const AUTHOR_NICK = 'kokkas'; // аккаунт автора на Ely.by (скин «Kokk 2.0», ely.by/skins/s4749321) — рисуется в финале «Побега»
 
 export const GAME_NAMES = {
   events: 'События месяца', weekly: 'Турнир недели',
-  prison: 'Побег', fishing: 'Рыбалка', defense: 'Защита деревни', runner: 'Побег от зомби', fair: 'Ярмарочный тир', mine: 'Вагонетка'
+  prison: 'Побег', fishing: 'Рыбалка', defense: 'Защита деревни', runner: 'Побег от зомби', fair: 'Ярмарочный тир', mine: 'Вагонетка',
+  style: 'Стиль профиля', lobby: 'Лобби и меню игры'
 };
 
-export const REWARDS = [
+const BASE_REWARDS = [
   // ---- Побег (10 тюрем) ----
   { id: 'prison_badge_digger', game: 'prison', kind: 'badge', name: 'Копатель', icon: 'shovel', color: '#b08850', how: 'Сбеги из 3-й тюрьмы' },
   { id: 'prison_scene_dungeon', game: 'prison', kind: 'scene', name: 'Фон «Пустынная яма»', variant: 4, how: 'Сбеги из 4-й тюрьмы' },
@@ -66,10 +69,11 @@ export const REWARDS = [
   { id: 'week_champion', game: 'weekly', kind: 'badge', name: 'Чемпион недели', icon: 'crown', color: '#ffd34a', how: 'Займи 1-е место в турнире недели' },
   { id: 'week_podium', game: 'weekly', kind: 'title', name: 'Призёр турнира', how: 'Займи место в тройке турнира недели' }
 ];
+export const REWARDS = [...BASE_REWARDS, ...COSMETIC_REWARDS];
 
 export const rewardById = (id) => REWARDS.find((r) => r.id === id) || null;
 
-export const KIND_NAMES = { badge: 'Значок', title: 'Титул', scene: 'Фон', music: 'Музыка', theme: 'Тема', frame: 'Рамка', cape: 'Плащ' };
+export const KIND_NAMES = { badge: 'Значок', title: 'Титул', scene: 'Фон', music: 'Музыка', theme: 'Тема', frame: 'Рамка', cape: 'Плащ', lobby: 'Фон лобби', decor: 'Декорация меню' };
 
 // Пиксельные значки 7×7 (рисуются у ника)
 const BADGE_PIX = {
@@ -89,8 +93,16 @@ const BADGE_PIX = {
   bolt: ['....##.', '...##..', '..##...', '.#####.', '...##..', '..##...', '.##....'],
   leaf: ['....###', '..#####', '.###O##', '.##O###', '.#O####', '.O#####', 'O......'],
   pumpkin: ['...#...', '.#####.', '#O#O#O#', '#######', '#O###O#', '#.OOO.#', '.#####.'],
-  crown: ['.......', '#..#..#', '##.#.##', '#######', '#O#O#O#', '#######', '.......']
+  crown: ['.......', '#..#..#', '##.#.##', '#######', '#O#O#O#', '#######', '.......'],
+  ...EXTRA_BADGE_PIX
 };
+// значок для игры (лобби): пиксели 7×7 строками, # — цвет, O — белый 55 %
+export function badgeInfo(id) {
+  const r = id ? rewardById(id) : null;
+  if (!r || r.kind !== 'badge') return null;
+  return { id: r.id, name: r.name, color: r.color, pix: BADGE_PIX[r.icon] || BADGE_PIX.target };
+}
+export function frameInfo(id) { const f = id && FRAMES[id]; return f ? { id, name: f.name, style: f.style, colors: f.colors } : null; }
 export function badgeSvg(r, size = 14) {
   const pix = BADGE_PIX[r.icon] || BADGE_PIX.target;
   let rects = '';
@@ -110,5 +122,14 @@ export const THEMES = {
   lake: { '--gold': '#7fd0e8', '--gold-2': '#c4f0ff', '--emerald': '#2ab0c0', '--emerald-2': '#6ee0e8', '--emerald-d': '#145a63' },
   ash: { '--gold': '#e07050', '--gold-2': '#ffb090', '--emerald': '#c0503a', '--emerald-2': '#e88a70', '--emerald-d': '#5a2018' },
   fair: { '--gold': '#ff7aa8', '--gold-2': '#ffc0d8', '--emerald': '#e8a43a', '--emerald-2': '#ffd080', '--emerald-d': '#6a4410' },
-  gems: { '--gold': '#b88cff', '--gold-2': '#dcc8ff', '--emerald': '#4ad0a0', '--emerald-2': '#90f0c8', '--emerald-d': '#155a44' }
+  gems: { '--gold': '#b88cff', '--gold-2': '#dcc8ff', '--emerald': '#4ad0a0', '--emerald-2': '#90f0c8', '--emerald-d': '#155a44' },
+  ...EXTRA_THEMES
 };
+export const THEME_NAMES = { steel: 'Сталь', lake: 'Озеро', ash: 'Пепел', fair: 'Ярмарка', gems: 'Самоцветы', forest: 'Лес', dusk: 'Сумерки', cherry: 'Вишня', honey: 'Мёд', frost: 'Мороз', royal: 'Королевская' };
+// тема для игры: { id, name, colors: { gold, gold2, emerald, emerald2, emeraldD } }
+export function themeInfo(id) {
+  const th = id && THEMES[id];
+  if (!th) return null;
+  return { id, name: THEME_NAMES[id] || id, colors: { gold: th['--gold'], gold2: th['--gold-2'], emerald: th['--emerald'], emerald2: th['--emerald-2'], emeraldD: th['--emerald-d'] } };
+}
+export { FRAMES, LOBBY_BGS, DECOR };
