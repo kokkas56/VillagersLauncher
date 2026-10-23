@@ -59,6 +59,7 @@ function launcher(nick) {
     tunnelCmd: async (cmd, o) => {
       inst.tunnelCmds.push({ cmd, o });
       if (cmd === 'join') setTimeout(() => { inst.tunnel = { active: true, role: 'guest', name: o.name, status: 'connected', port: 25570 }; inst.api.onTunnelState(inst.tunnel); }, 60);
+      if (cmd === 'host') inst.tunnel = { active: true, role: 'host', name: o.name, status: 'open', serverPort: o.serverPort };
       if (cmd === 'leave') inst.tunnel = { active: false };
       return true;
     },
@@ -258,6 +259,57 @@ const step = (s) => console.log('✓ ' + s);
   await A.handlers['friends:leave']();
   await until(() => { const x = A.readPartyFile(); return x && x.members.length === 0; }, 'party.json пуст');
   step('лидер вышел из отряда: party.json пуст (мод убирает команду отряда)');
+
+  // «Сетевая игра»: мир открывает игра лидера, участник заходит через туннель, как к «Моему серверу»
+  A.serverRunning = false;
+  A.api.onServerState({ state: 'stopped' });
+  const Q = P[9];
+  Q.game = { started: Date.now() };
+  Q.api.onGameStart();
+  const gq = await gameClient(Q);
+  gq.send({ t: 'loadState', stage: 'menu' });
+  ga.send({ t: 'invite', nick: 'Pal10', rid: 60 });
+  const iq = await until(() => gq.last('invite'), 'приглашение Pal10 в игре');
+  gq.send({ t: 'accept', partyId: iq.partyId });
+  await until(() => { const p = ga.last('party'); return p && p.state.members.length === 2 && p.state.members.some((m) => m.nick === 'Pal10'); }, 'Pal10 в отряде Алисы');
+  ga.send({ t: 'start', server: 'Долина', where: 'lan', rid: 61 });
+  await until(() => ga.msgs.some((m) => m.t === 'error' && m.rid === 61 && m.code === 'world'), 'мир сервера в сетевой игре — ошибка');
+  ga.send({ t: 'start', world: 'Нет такого', where: 'lan', rid: 62 });
+  await until(() => ga.msgs.some((m) => m.t === 'error' && m.rid === 62 && m.code === 'world'), 'нет мира — ошибка');
+  const startsBefore = A.serverStarts.length;
+  const connectsA = ga.msgs.filter((m) => m.t === 'connect').length;
+  ga.send({ t: 'start', world: 'Долина', where: 'lan', rid: 63 });
+  await until(() => ga.msgs.some((m) => m.t === 'ok' && m.rid === 63), 'ok на start (lan)');
+  const ow = await until(() => ga.last('openWorld'), 'openWorld игре лидера');
+  assert.strictEqual(ow.world, 'Долина');
+  assert.strictEqual(ow.maxPlayers, 12, 'максимум игроков из лобби');
+  await until(() => { const p = gq.last('party'); return p && p.state.phase === 'starting' && p.state.where === 'lan'; }, 'starting (lan) у Pal10');
+  ga.send({ t: 'loadState', stage: 'loading', progress: 0.5 });
+  ga.send({ t: 'lanReady', port: 51234, world: 'Долина', rid: 64 });
+  const host = await until(() => A.tunnelCmds.find((c) => c.cmd === 'host' && c.o.serverPort === 51234), 'туннель лидера на порт мира');
+  assert.ok(/^vkl-[0-9a-f]{12}$/.test(host.o.name) && host.o.password.length === 24, 'своя комната и пароль на запуск');
+  assert.strictEqual(host.o.mode, 'server');
+  await until(() => { const p = gq.last('party'); return p && p.state.phase === 'live'; }, 'live у Pal10');
+  const jq = await until(() => Q.tunnelCmds.find((c) => c.cmd === 'join' && c.o.name === host.o.name), 'туннель Pal10 к миру лидера');
+  assert.strictEqual(jq.o.password, host.o.password);
+  ga.send({ t: 'loadState', stage: 'world', progress: 1 });
+  const cq = await until(() => gq.last('connect'), 'connect Pal10');
+  assert.strictEqual(cq.address, '127.0.0.1:25570');
+  assert.strictEqual(cq.server, 'Долина');
+  assert.strictEqual(A.serverStarts.length, startsBefore, '«Мой сервер» не запускался');
+  const lanFile = path.join(A.gameDir, 'config', 'villagerskokk', 'party.json');
+  const lf = await until(() => { try { const x = JSON.parse(fs.readFileSync(lanFile, 'utf8')); return x.members.length === 2 && x; } catch (_) { return null; } }, 'party.json в папке игры лидера');
+  assert.deepStrictEqual(lf.members, ['Alice', 'Pal10']);
+  gq.send({ t: 'loadState', stage: 'world', progress: 1 });
+  await until(() => { const p = gq.last('party'); return p && p.state.phase === 'ingame'; }, 'ingame (lan)');
+  assert.strictEqual(ga.msgs.filter((m) => m.t === 'connect').length, connectsA, 'лидеру connect не шлётся — он уже в своём мире');
+  step('«Сетевая игра»: игра лидера открывает мир → lanReady → туннель на его порт (своя комната) → участник заходит; party.json в папке игры');
+  ga.send({ t: 'lanStopped' });
+  await until(() => { const p = gq.last('party'); return p && p.state.phase === 'lobby'; }, 'лобби после закрытия мира');
+  assert.ok(A.tunnelCmds.some((c) => c.cmd === 'leave'), 'туннель лидера закрыт');
+  await until(() => { try { return JSON.parse(fs.readFileSync(lanFile, 'utf8')).members.length === 0; } catch (_) { return false; } }, 'party.json в папке игры пуст');
+  step('лидер закрыл мир: туннель закрыт, отряд в лобби, party.json пуст');
+  gq.s.destroy();
 
   A.api.shutdown(); B.api.shutdown(); P.forEach((p) => p.api.shutdown());
   ga.s.destroy();

@@ -18,14 +18,15 @@ function createLink({ onMessage, onAuth, onClose, log = () => {}, version = '' }
   const token = crypto.randomBytes(16).toString('hex');
   const clients = new Set();
   let srv = null;
+  let srv6 = null; // тот же порт на ::1 (игра пробует 127.0.0.1, потом ::1)
   let port = 0;
   let linkFile = null;
 
-  function listenOn(p) {
+  function listenOn(p, host = '127.0.0.1') {
     return new Promise((resolve) => {
       const s = net.createServer(onSocket);
-      s.once('error', () => resolve(null));
-      s.listen(p, '127.0.0.1', () => resolve(s));
+      s.once('error', (e) => { if (p) log('порт ' + host + ':' + p + ' занят/недоступен: ' + e.code); resolve(null); });
+      s.listen(p, host, () => resolve(s));
     });
   }
   async function start() {
@@ -34,7 +35,10 @@ function createLink({ onMessage, onAuth, onClose, log = () => {}, version = '' }
     if (!srv) srv = await listenOn(0);
     if (!srv) throw new Error('Связь с игрой: не удалось открыть порт');
     port = srv.address().port;
-    srv.on('error', (e) => log('link error ' + e.message));
+    srv.on('error', (e) => log('ошибка сервера связи: ' + e.message));
+    srv6 = await listenOn(port, '::1');
+    if (srv6) srv6.on('error', (e) => log('ошибка сервера связи (::1): ' + e.message));
+    log('слушаю 127.0.0.1:' + port + (srv6 ? ' и [::1]:' + port : ' (на ::1 — нет)') + ', pid ' + process.pid);
     return port;
   }
   // файл связи — в папку игры (вызывать при старте и перед каждым запуском игры: папка могла смениться)
@@ -46,11 +50,12 @@ function createLink({ onMessage, onAuth, onClose, log = () => {}, version = '' }
       fs.writeFileSync(f, JSON.stringify({ v: 1, port, token, pid: process.pid, at: Date.now() }));
       if (linkFile && linkFile !== f) removeLinkFile();
       linkFile = f;
-    } catch (e) { log('party.link: ' + e.message); }
+      log('party.link записан: ' + f + ' (порт ' + port + ', pid ' + process.pid + ', токен ' + token.slice(0, 4) + '…)');
+    } catch (e) { log('party.link не записан (' + f + '): ' + e.message); }
   }
   function removeLinkFile() {
     if (!linkFile) return;
-    try { const j = JSON.parse(fs.readFileSync(linkFile, 'utf8')); if (j.token === token) fs.rmSync(linkFile, { force: true }); } catch (_) {}
+    try { const j = JSON.parse(fs.readFileSync(linkFile, 'utf8')); if (j.token === token) { fs.rmSync(linkFile, { force: true }); log('party.link удалён: ' + linkFile); } } catch (_) {}
     linkFile = null;
   }
 
@@ -62,12 +67,14 @@ function createLink({ onMessage, onAuth, onClose, log = () => {}, version = '' }
   const authed = () => [...clients].filter((c) => c.authed);
 
   function onSocket(sock) {
-    if (sock.remoteAddress && !/^(::ffff:)?127\.0\.0\.1$|^::1$/.test(sock.remoteAddress)) { sock.destroy(); return; }
+    const from = (sock.remoteAddress || '?') + ':' + (sock.remotePort || '?');
+    if (sock.remoteAddress && !/^(::ffff:)?127\.0\.0\.1$|^::1$/.test(sock.remoteAddress)) { log('чужой адрес ' + from + ' — закрыл'); sock.destroy(); return; }
+    log('игра подключилась с ' + from + ', жду hello');
     const c = { sock, authed: false, buf: '', last: Date.now(), nick: null, ver: null };
     clients.add(c);
     sock.setEncoding('utf8');
     sock.setNoDelay(true);
-    const helloT = setTimeout(() => { if (!c.authed) sock.destroy(); }, HELLO_WAIT);
+    const helloT = setTimeout(() => { if (!c.authed) { log('нет hello от ' + from + ' за ' + HELLO_WAIT / 1000 + ' с — закрыл'); sock.destroy(); } }, HELLO_WAIT);
     sock.on('data', (chunk) => {
       c.last = Date.now();
       c.buf += chunk;
@@ -83,6 +90,7 @@ function createLink({ onMessage, onAuth, onClose, log = () => {}, version = '' }
         if (!c.authed) {
           if (msg.t !== 'hello' || typeof msg.token !== 'string' || msg.token.length !== token.length
             || !crypto.timingSafeEqual(Buffer.from(msg.token), Buffer.from(token))) {
+            log('отказ ' + from + ': ' + (msg.t !== 'hello' ? 'первое сообщение не hello (' + msg.t + ')' : 'неверный токен ' + String(msg.token || '').slice(0, 4) + '… (ждал ' + token.slice(0, 4) + '…) — игра прочитала старый party.link?'));
             send(c, { t: 'hello', ok: false, code: 'auth', text: 'Неверный токен связи — перечитай .villagers/party.link' });
             sock.end();
             return;
@@ -91,6 +99,7 @@ function createLink({ onMessage, onAuth, onClose, log = () => {}, version = '' }
           clearTimeout(helloT);
           c.nick = typeof msg.nick === 'string' ? msg.nick.slice(0, 32) : null;
           c.ver = typeof msg.ver === 'string' ? msg.ver.slice(0, 32) : null;
+          log('игра на связи: ' + (c.nick || '?') + ', ' + (msg.mod || '?') + ' ' + (c.ver || '?') + ' (' + from + ')');
           try { onAuth && onAuth(c, msg); } catch (e) { log('onAuth ' + e.message); }
           continue;
         }
@@ -101,16 +110,16 @@ function createLink({ onMessage, onAuth, onClose, log = () => {}, version = '' }
         });
       }
     });
-    const bye = () => { clearTimeout(helloT); if (clients.delete(c) && c.authed) { try { onClose && onClose(c); } catch (_) {} } };
+    const bye = () => { clearTimeout(helloT); if (clients.delete(c)) { log('игра отключилась (' + from + (c.authed ? ', ' + (c.nick || '?') : ', без hello') + ')'); if (c.authed) { try { onClose && onClose(c); } catch (_) {} } } };
     sock.on('close', bye);
-    sock.on('error', () => {});
+    sock.on('error', (e) => log('ошибка сокета ' + from + ': ' + e.message));
   }
 
   // сторож: тишина 30 с — закрываем; раз в 10 с пингуем сами
   const watch = setInterval(() => {
     const now = Date.now();
     for (const c of clients) {
-      if (now - c.last > IDLE_CLOSE) { c.sock.destroy(); continue; }
+      if (now - c.last > IDLE_CLOSE) { log('тишина ' + IDLE_CLOSE / 1000 + ' с — закрыл связь с ' + (c.nick || 'игрой')); c.sock.destroy(); continue; }
       if (c.authed && now - c.last > 10000) send(c, { t: 'ping' });
     }
   }, 5000);
@@ -122,6 +131,7 @@ function createLink({ onMessage, onAuth, onClose, log = () => {}, version = '' }
     clients.clear();
     removeLinkFile();
     if (srv) { srv.close(); srv = null; }
+    if (srv6) { srv6.close(); srv6 = null; }
   }
 
   return { start, stop, send, broadcast, authed, writeLinkFile, removeLinkFile, port: () => port, token: () => token, PROTO, helloReply: (nick) => ({ t: 'hello', ok: true, proto: PROTO, nick, launcher: version }) };

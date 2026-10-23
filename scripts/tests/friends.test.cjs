@@ -230,7 +230,9 @@ t('вступление: только позванный (и с тем же кл
   assert.ok(!C.mayJoin(inv, 'bob', B.pk, now + C.INVITE_TTL * 4));
 });
 t('экипировка и карта из игры чистятся', () => {
-  assert.deepStrictEqual(C.cleanEquip({ main: 'minecraft:iron_sword', off: '<script>', head: 5 }), { main: 'minecraft:iron_sword', off: null, head: null });
+  assert.deepStrictEqual(C.cleanEquip({ main: 'minecraft:iron_sword', off: '<script>', head: 5 }), { main: 'minecraft:iron_sword', off: null, head: null, chest: null, legs: null, feet: null });
+  assert.deepStrictEqual(C.cleanEquip({ chest: 'minecraft:leather_chestplate', feet: 'minecraft:iron_boots', dye: { chest: '#A06540', legs: 'red', x: '#ffffff' } }),
+    { main: null, off: null, head: null, chest: 'minecraft:leather_chestplate', legs: null, feet: 'minecraft:iron_boots', dye: { chest: '#a06540' } });
   assert.deepStrictEqual(C.cleanMap({ world: 'Долина' }), { kind: 'world', name: 'Долина' });
   assert.strictEqual(C.cleanMap({ world: '../etc' }), null);
   assert.strictEqual(C.cleanMap({ world: 'a/b' }), null);

@@ -283,11 +283,23 @@ function mayJoin(invited, key, pk, now) {
 
 // ---------------- локальная связь с игрой: проверки ----------------
 const ITEM_RE = /^[a-z0-9_.:/-]{1,64}$/;
+// экипировка в лобби: руки, голова и (KokkHUD 0.32) вся броня; dye — цвет кожаных частей «#rrggbb» по слотам брони
+const EQUIP_SLOTS = ['main', 'off', 'head', 'chest', 'legs', 'feet'];
+const DYE_RE = /^#[0-9a-f]{6}$/;
 function cleanEquip(items) {
   const o = {};
-  for (const k of ['main', 'off', 'head']) {
+  for (const k of EQUIP_SLOTS) {
     const v = items && items[k];
     o[k] = typeof v === 'string' && ITEM_RE.test(v) ? v : null;
+  }
+  const d = items && items.dye;
+  if (d && typeof d === 'object') {
+    const dye = {};
+    for (const k of ['head', 'chest', 'legs', 'feet']) {
+      const v = typeof d[k] === 'string' ? d[k].toLowerCase() : null;
+      if (v && DYE_RE.test(v)) dye[k] = v;
+    }
+    if (Object.keys(dye).length) o.dye = dye;
   }
   return o;
 }
@@ -323,5 +335,5 @@ module.exports = {
   b64u, unb64u, genIdentity, validIdentity, seal, open, encryptFor, decryptFrom, newPartyKey, partyIdOf, partySeal, partyOpen,
   emptyBook, normBook, onRq, acceptIncoming, friendBy, statusOf, fresher,
   newParty, isMember, alive, successor, acceptState, leaderTick, goNow, allInWorld, waitingFor, shouldConnect, memberState, mayJoin,
-  cleanEquip, cleanMap, cleanType, levelTypeOf, PRESET_RE
+  cleanEquip, cleanMap, cleanType, levelTypeOf, PRESET_RE, EQUIP_SLOTS
 };

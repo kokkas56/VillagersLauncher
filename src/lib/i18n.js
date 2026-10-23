@@ -250,6 +250,7 @@ const EN = {
   'Показать всё': 'Show all',
   'Показывать консоль игры при запуске': 'Show game console on launch',
   'Полноэкранный режим': 'Fullscreen',
+  'Без рамки на весь экран (быстрый Alt+Tab)': 'Borderless over the whole screen (quick Alt+Tab)',
   'Понятно': 'OK',
   'После запуска игры': 'After the game starts',
   'Последние строки лога:': 'Last log lines:',
