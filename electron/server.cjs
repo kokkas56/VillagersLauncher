@@ -14,6 +14,7 @@ let state = 'stopped'; // stopped | installing | starting | running | stopping
 let tail = [];
 let players = new Set(); // кто сейчас на сервере (по строкам консоли)
 let lastCrash = null; // причина последнего падения — показываем, пока не запустят снова
+let runMax = null; // max-players этого запуска (для игры отрядом — из лобби)
 let emit = () => {};
 
 function dir() { return path.join(store.get().gameDir, 'server'); }
@@ -21,12 +22,12 @@ function markerFile() { return path.join(dir(), '.villagerslauncher.json'); }
 function readMarker() { try { return JSON.parse(fs.readFileSync(markerFile(), 'utf8')); } catch (_) { return {}; } }
 function writeMarker(m) { fs.writeFileSync(markerFile(), JSON.stringify(m, null, 2)); }
 
-function setState(s, extra) { state = s; emit('server-state', { state, port: store.get().serverPort || 25565, players: [...players], crash: lastCrash, ...(extra || {}) }); }
+function setState(s, extra) { state = s; emit('server-state', { state, port: store.get().serverPort || 25565, players: [...players], maxPlayers: proc ? runMax : null, crash: lastCrash, ...(extra || {}) }); }
 function line(l) { tail.push(l); if (tail.length > 600) tail = tail.slice(-500); emit('server-log', [l]); }
 
 function status() {
   const m = readMarker();
-  return { state, installed: !!m.neo, neo: m.neo || null, dir: dir(), port: store.get().serverPort || 25565, eula: !!store.get().serverEulaAccepted, tail: tail.slice(-200), players: [...players], crash: lastCrash, mods: m.lastSync || null };
+  return { state, maxPlayers: proc ? runMax : null, installed: !!m.neo, neo: m.neo || null, dir: dir(), port: store.get().serverPort || 25565, eula: !!store.get().serverEulaAccepted, tail: tail.slice(-200), players: [...players], crash: lastCrash, mods: m.lastSync || null };
 }
 
 async function install(versions, progress) {
@@ -136,7 +137,7 @@ function syncPack() {
   return result;
 }
 
-function writeProps() {
+function writeProps(opts) {
   const s = store.get();
   const f = path.join(dir(), 'server.properties');
   const want = {
@@ -144,8 +145,9 @@ function writeProps() {
     'online-mode': 'false', // заходят и Ely.by, и офлайн-ники (как в открытом мире NetKokk)
     'enforce-secure-profile': 'false',
     'enable-rcon': 'false',
-    ...hosting.props()
+    ...hosting.props(opts)
   };
+  runMax = Number(want['max-players']) || null;
   let lines = fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split(/\r?\n/) : ['#Minecraft server properties'];
   const seen = new Set();
   lines = lines.map((l) => {
@@ -158,7 +160,8 @@ function writeProps() {
   fs.writeFileSync(path.join(dir(), 'user_jvm_args.txt'), `-Xms1G\n-Xmx${s.serverMemoryMb || 4096}M\n-Dfile.encoding=UTF-8\n`);
 }
 
-async function start(versions, progress) {
+// opts: { maxPlayers } — только на этот запуск (игра отрядом); без него — из настроек «Моего сервера»
+async function start(versions, progress, opts) {
   if (proc) throw new Error('Сервер уже запущен');
   if (!store.get().serverEulaAccepted) throw new Error('Сначала прими лицензию Minecraft (EULA) — галочка в разделе сервера');
   tail = [];
@@ -171,7 +174,7 @@ async function start(versions, progress) {
   if (r.skipped.length) line(`[лаунчер] Только для клиента (не на сервер): ${r.skipped.map((x) => x.file).join(', ')}`);
   if (r.own.length) line(`[лаунчер] Свои моды сервера (не из сборки, оставлены): ${r.own.join(', ')}`);
   fs.writeFileSync(path.join(dir(), 'eula.txt'), 'eula=true\n');
-  writeProps();
+  writeProps(opts);
   hosting.writeAccess(dir());
   const argsFile = path.join('libraries', 'net', 'neoforged', 'neoforge', m.neo, process.platform === 'win32' ? 'win_args.txt' : 'unix_args.txt');
   if (!fs.existsSync(path.join(dir(), argsFile))) throw new Error('Сервер установлен не полностью — удали папку server и запусти снова');
@@ -266,5 +269,6 @@ function stop() {
 
 function running() { return !!proc; }
 function playerList() { return [...players]; }
+function maxPlayers() { return proc ? runMax : null; }
 
-module.exports = { init: (fn) => { emit = fn; }, status, install, start, stop, command, running, dir, playerList, syncMods, previewMods, state: () => state };
+module.exports = { init: (fn) => { emit = fn; }, status, install, start, stop, command, running, dir, playerList, maxPlayers, syncMods, previewMods, state: () => state };

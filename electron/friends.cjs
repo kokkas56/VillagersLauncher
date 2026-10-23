@@ -3,6 +3,7 @@
 // рекордов (окно electron/scores/worker.js), свой сервер не нужен. Подписи и шифрование — electron/friends-core.cjs.
 // Протокол для игры: party_protocol.md.
 'use strict';
+const fs = require('fs');
 const path = require('path');
 const C = require('./friends-core.cjs');
 const X = require('./cosmetics.cjs');
@@ -334,6 +335,22 @@ module.exports = function setupFriends(d) {
   let stage = { stage: null, progress: null }; // из игры (loadState)
   let soloMap = null; // мир, выбранный, пока ты один (переходит в отряд)
   const isLeader = () => !!(party && party.st && me() && party.st.leader === me().key);
+  // «Максимум игроков» для игры отрядом: что лидер выбрал в лобби (запоминается) → «Мой сервер», если хозяин задал там сам → 20
+  function playersDefault() {
+    const s = store.get();
+    if (s.partyMaxPlayers != null) return C.clampPlayers(s.partyMaxPlayers);
+    const host = (s.hostServer || {}).maxPlayers;
+    return host ? C.clampPlayers(host) : C.PLAYERS.def;
+  }
+  const partyPlayers = () => C.clampPlayers(party && party.st && party.st.maxPlayers != null ? party.st.maxPlayers : playersDefault(), playersDefault());
+  function setMaxPlayers(n) {
+    if (party && party.st && !party.joining && !isLeader()) throw Object.assign(new Error('Число игроков выбирает лидер отряда'), { code: 'leader_only' });
+    const v = C.clampPlayers(n, null);
+    if (v == null) throw Object.assign(new Error('Максимум игроков — число от ' + C.PLAYERS.min + ' до ' + C.PLAYERS.max), { code: 'bad' });
+    store.set({ partyMaxPlayers: v });
+    if (party && party.st && !party.joining && party.st.maxPlayers !== v) bumpState((x) => { x.maxPlayers = v; }); else changed();
+    return v;
+  }
   const myKey = () => (me() ? me().key : null);
 
   function partySend(body) {
@@ -356,6 +373,7 @@ module.exports = function setupFriends(d) {
     const p = d.profile();
     const unlocked = X.lobbyUnlocked(p);
     const st = C.newParty(m, { background: p.equip.lobby && unlocked.has(p.equip.lobby) ? p.equip.lobby : 'meadow', map: soloMap });
+    st.maxPlayers = playersDefault();
     party = { id: st.id, key: st.key, st, hbs: { [m.key]: { t: Date.now(), st: myState(), equip: prefs().equip } }, invited: {}, enterNow: false, connectSent: false, tunnelRoom: null, starting: false, crashed: false, counted: null };
     sub([C.T.party(party.id)]);
     publishState();
@@ -396,7 +414,7 @@ module.exports = function setupFriends(d) {
     if (s.status === 'offline') throw Object.assign(new Error(f.nick + ' сейчас не в сети'), { code: 'offline' });
     ensureParty();
     if (party.st && party.st.members.some((x) => x.key === key)) throw Object.assign(new Error(f.nick + ' уже в отряде'), { code: 'busy' });
-    if (party.st && party.st.members.length >= 10) throw Object.assign(new Error('В отряде максимум 10 игроков'), { code: 'busy' });
+    if (C.partyFull(party.st)) throw Object.assign(new Error(C.FULL_TEXT), { code: 'full' });
     const last = party.invited[key];
     if (last && Date.now() - last.t < 8000) return true;
     party.invited[key] = { t: Date.now(), pk: f.pk, xk: f.xk, nick: f.nick, by: m.key };
@@ -428,6 +446,7 @@ module.exports = function setupFriends(d) {
   function acceptInvite(id) {
     const inv = invites[id];
     if (!inv || Date.now() - inv.t > C.INVITE_TTL) { delete invites[id]; throw Object.assign(new Error('Приглашение устарело — попроси позвать ещё раз'), { code: 'no_party' }); }
+    if (inv.size >= C.PARTY_MAX) { delete invites[id]; throw Object.assign(new Error(C.FULL_TEXT), { code: 'full' }); }
     const m = me();
     if (party) leave();
     delete invites[id];
@@ -490,12 +509,17 @@ module.exports = function setupFriends(d) {
       changed();
       return;
     }
+    if (body.typ === 'full') {
+      // лидер не впустил: отряд уже полон
+      if (party.joining && body.key === m.key) { dropParty(); note('party', C.FULL_TEXT); toGame({ t: 'error', re: 'accept', code: 'full', text: C.FULL_TEXT }); }
+      return;
+    }
     if (!isLeader()) return;
     // дальше — то, что решает лидер
     if (body.typ === 'join') {
       if (body.key !== sKey || st.members.some((x) => x.key === sKey)) { if (st.members.some((x) => x.key === sKey)) publishState(); return; }
       if (!C.mayJoin(party.invited, sKey, msg.pk, now)) return;
-      if (st.members.length >= 10) return;
+      if (C.partyFull(st)) { partySend({ typ: 'full', key: sKey }); return; }
       wantProfile(sKey);
       party.hbs[sKey] = { t: now, st: 'lobby' };
       delete party.invited[sKey];
@@ -588,6 +612,36 @@ module.exports = function setupFriends(d) {
     }
     pump();
   }
+  // ---------------- файл отряда для сервера ----------------
+  // Лаунчер, на котором работает «Мой сервер» отряда (лидер, или тот, чей сервер сейчас у отряда), пишет
+  // <папка сервера>/config/villagerskokk/party.json — VillagersKokk на сервере сам собирает отряд в одну команду.
+  // Без отряда (или не мой сервер) — members: [] (мод убирает из команды тех, кого туда поставил отряд).
+  let partyFileSig = null;
+  function partyFilePath() { try { return path.join(d.server.dir(), 'config', 'villagerskokk', 'party.json'); } catch (_) { return null; } }
+  function hostedParty() {
+    const st = party && !party.joining && party.st;
+    if (!st) return null;
+    let room = null;
+    try { room = d.hosting.profile().room; } catch (_) {}
+    return isLeader() || (st.live && room && st.live.room === room) ? st : null;
+  }
+  function syncPartyFile(force) {
+    if (!d.server || typeof d.server.dir !== 'function') return;
+    const sst = typeof d.server.state === 'function' ? d.server.state() : 'stopped';
+    if (!force && (sst === 'stopped' || sst === 'stopping')) return; // запишется при следующем запуске сервера
+    const doc = C.partyFileDoc(hostedParty());
+    const sig = JSON.stringify([doc.id, doc.leader, doc.members]);
+    if (!force && sig === partyFileSig) return;
+    const f = partyFilePath();
+    if (!f) return;
+    try {
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f + '.tmp', JSON.stringify(doc, null, 2));
+      fs.renameSync(f + '.tmp', f);
+      partyFileSig = sig;
+    } catch (e) { log('party.json ' + e.message); }
+  }
+
   // каждую секунду (и по событиям): готов ли я, слать ли connect
   function pump() {
     if (!party || !party.st) return;
@@ -653,11 +707,14 @@ module.exports = function setupFriends(d) {
       d.hosting.newWorld(name);
       d.hosting.updateGame({ seed: map.seed || '', levelType: C.LEVEL_TYPES[map.type] || 'minecraft:normal' });
     }
-    bumpState((s) => { s.phase = 'starting'; s.map = map; s.notice = { t: Date.now(), text: 'Лидер запускает сервер «' + hp.name + '»…', kind: 'info' }; });
-    toGame({ t: 'toast', text: 'Запускаю сервер «' + hp.name + '»…' });
-    log('party start by ' + m.nick + ' map ' + JSON.stringify(map));
+    // отряд не ограничивает вход: на сервер заходят и не из отряда — до «Максимума игроков» (не меньше размера отряда)
+    const players = Math.max(partyPlayers(), st.members.length);
+    bumpState((s) => { s.phase = 'starting'; s.map = map; s.maxPlayers = players; s.notice = { t: Date.now(), text: 'Лидер запускает сервер «' + hp.name + '»…', kind: 'info' }; });
+    toGame({ t: 'toast', text: 'Запускаю сервер «' + hp.name + '» (до ' + players + ' игроков)…' });
+    log('party start by ' + m.nick + ' map ' + JSON.stringify(map) + ' max ' + players);
+    syncPartyFile(true);
     (async () => {
-      try { await d.startServer(); } catch (e) {
+      try { await d.startServer({ maxPlayers: players }); } catch (e) {
         if (party && party.st && party.st.phase === 'starting') bumpState((s) => { s.phase = 'lobby'; s.notice = { t: Date.now(), text: 'Сервер не запустился: ' + e.message, kind: 'error' }; });
         toGame({ t: 'error', re: 'start', code: 'server', text: 'Сервер не запустился: ' + e.message });
       }
@@ -676,6 +733,7 @@ module.exports = function setupFriends(d) {
     onPhase('starting');
   }
   function onServerState(s) {
+    if (s && (s.state === 'installing' || s.state === 'starting')) syncPartyFile(true);
     if (!party || !party.st || !isLeader()) return;
     const st = party.st;
     if (s.state === 'running' && st.phase === 'starting') goLive();
@@ -747,10 +805,11 @@ module.exports = function setupFriends(d) {
     const unlocked = X.lobbyUnlocked(p);
     const backgrounds = X.LOBBY_BGS.map((b) => ({ id: b.id, name: b.name, unlocked: unlocked.has(b.id), how: b.free ? 'Открыт сразу' : ((X.REWARDS.find((r) => r.kind === 'lobby' && r.lobby === b.id) || {}).how || '') }));
     const menu = { theme: X.themeInfo(p.equip.theme), decor: p.equip.decor || null };
-    if (!m) return { id: null, solo: true, leader: null, me: null, phase: 'lobby', members: [], background: 'meadow', backgrounds, map: null, invited: [], server: null, deadline: null, go: false, menu };
+    const limits = { partyMax: C.PARTY_MAX, maxPlayers: partyPlayers(), playersMin: C.PLAYERS.min, playersMax: C.PLAYERS.max };
+    if (!m) return { id: null, solo: true, leader: null, me: null, phase: 'lobby', members: [], background: 'meadow', backgrounds, map: null, invited: [], server: null, deadline: null, go: false, menu, ...limits };
     const now = Date.now();
     if (!party || !party.st || party.joining) {
-      const solo = { id: null, solo: true, leader: m.nick, me: m.nick, phase: 'lobby', background: p.equip.lobby && unlocked.has(p.equip.lobby) ? p.equip.lobby : 'meadow', backgrounds, map: soloMap, invited: [], server: null, deadline: null, go: false, menu, joining: !!(party && party.joining) };
+      const solo = { id: null, solo: true, leader: m.nick, me: m.nick, phase: 'lobby', background: p.equip.lobby && unlocked.has(p.equip.lobby) ? p.equip.lobby : 'meadow', backgrounds, map: soloMap, invited: [], server: null, deadline: null, go: false, menu, joining: !!(party && party.joining), ...limits };
       solo.members = [memberView(m.key, m.nick, { leader: true, me: true, online: true, state: myState(), stage: stage.stage, progress: stage.progress, equip: prefs().equip })];
       return solo;
     }
@@ -771,18 +830,19 @@ module.exports = function setupFriends(d) {
       background: st.background || 'meadow', backgrounds, map: st.map || null,
       invited: Object.values(party.invited).filter((i) => now - i.t < C.INVITE_TTL).map((i) => i.nick),
       server: st.live ? { name: st.live.name, address: tunnelReadyFor(st.live) } : null,
-      deadline: st.live ? st.live.deadline : null, go: !!(st.live && st.live.go), menu
+      deadline: st.live ? st.live.deadline : null, go: !!(st.live && st.live.go), menu, ...limits, full: C.partyFull(st)
     };
   }
   function friendItems() {
     const b = book();
     const now = Date.now();
     const inParty = new Set(party && party.st ? party.st.members.map((x) => x.key) : []);
+    const full = C.partyFull(party && party.st);
     const ord = { ingame: 0, online: 1, offline: 2 };
     return Object.entries(b.friends).map(([key, f]) => {
       const s = statuses[key] ? C.statusOf(statuses[key].doc, now) : { status: 'offline', doing: '' };
       const pr = profiles[key];
-      const v = memberView(key, f.nick, { status: s.status, doing: s.doing, inParty: inParty.has(key), invitable: s.status !== 'offline' && !inParty.has(key) });
+      const v = memberView(key, f.nick, { status: s.status, doing: s.doing, inParty: inParty.has(key), invitable: s.status !== 'offline' && !inParty.has(key) && !full });
       v.equip = (pr && pr.doc && pr.doc.equipItems) ? C.cleanEquip(pr.doc.equipItems) : null;
       v.key = key; v.newKey = !!f.newKey; v.since = f.since; v.verified = !!(pr && pr.pk === f.pk);
       return v;
@@ -832,6 +892,7 @@ module.exports = function setupFriends(d) {
     chT = setTimeout(() => {
       chT = null;
       try {
+        syncPartyFile();
         d.send('friends', uiState());
         if (link.authed().length) {
           const pv = partyView();
@@ -910,7 +971,8 @@ module.exports = function setupFriends(d) {
           ok(); break;
         }
         case 'worlds': { const w = d.hosting.worlds(); link.send(c, { t: 'worlds', rid: msg.rid, single: w.single, server: w.server, current: d.hosting.profile().world || null }); break; }
-        case 'start': { await start(msg.newWorld ? { newWorld: msg.newWorld } : msg.world !== undefined ? { world: msg.world } : msg.server !== undefined ? { server: msg.server } : null); ok(); break; }
+        case 'maxPlayers': { const v = setMaxPlayers(msg.n !== undefined ? msg.n : msg.value); link.send(c, { t: 'ok', re: msg.t, rid: msg.rid, maxPlayers: v }); break; }
+        case 'start': { if (msg.maxPlayers !== undefined) setMaxPlayers(msg.maxPlayers); await start(msg.newWorld ? { newWorld: msg.newWorld } : msg.world !== undefined ? { world: msg.world } : msg.server !== undefined ? { server: msg.server } : null); ok(); break; }
         case 'cancel': {
           leaderOnly();
           if (party.st.phase !== 'starting') throw Object.assign(new Error('Нечего отменять'), { code: 'bad' });
@@ -980,6 +1042,7 @@ module.exports = function setupFriends(d) {
   h('friends:kick', (nick) => { if (!isLeader()) throw new Error('Только лидер'); const k = C.keyOf(nick); bumpState((s) => { s.members = s.members.filter((x) => x.key !== k); }); return true; });
   h('friends:lead', (nick) => { if (!isLeader()) throw new Error('Только лидер'); const k = C.keyOf(nick); if (!party.st.members.some((x) => x.key === k)) throw new Error('Нет в отряде'); bumpState((s) => { s.leader = k; }); return true; });
   h('friends:launch', () => launch());
+  h('friends:maxPlayers', (n) => setMaxPlayers(n));
   h('friends:dismiss', () => { prompt = null; changed(); return true; });
   h('friends:readNotes', () => { const m = me(); if (m) setPer('friendNotes', m.key, notes().map((n) => ({ ...n, read: true }))); changed(); return true; });
   h('friends:clearNotes', () => { const m = me(); if (m) setPer('friendNotes', m.key, []); changed(); return true; });

@@ -627,7 +627,7 @@ function ensureTray() {
 }
 function presenceInfo(online) {
   const p = hosting.profile();
-  return online ? { online: true, name: p.name, players: server.playerList().length, max: p.maxPlayers, at: Date.now() } : { online: false, at: Date.now() };
+  return online ? { online: true, name: p.name, players: server.playerList().length, max: server.maxPlayers() || p.maxPlayers, at: Date.now() } : { online: false, at: Date.now() };
 }
 async function publishPresence(online) {
   try { const w = await scoresWorker(); w.webContents.send('scores-cmd', { cmd: 'srvPresence', opts: { id: hosting.profile().id, info: presenceInfo(online) } }); } catch (_) {}
@@ -738,7 +738,7 @@ friendsApi = require('./friends.cjs')({
   handle, ipcMain, send, store, auth, extras, scoresWorker, scoresContents: () => (scoresWin && !scoresWin.isDestroyed() ? scoresWin.webContents : null),
   currentAcc, profile, setProfile, getGame: () => game, isBusy: () => busy, playGame, server, hosting,
   tunnelCmd, tunnelOpts, tunnelState: () => tunnelState, version: app.getVersion(), win: () => win, Notification, whenReady: () => app.whenReady(),
-  startServer: async () => { try { return await server.start(await packVersions(), progress); } finally { progress(null); } }
+  startServer: async (opts) => { try { return await server.start(await packVersions(), progress, opts); } finally { progress(null); } }
 });
 let studioReleased = false;
 let friendsQuit = false;
