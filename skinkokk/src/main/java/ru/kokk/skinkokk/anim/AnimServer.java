@@ -101,9 +101,24 @@ public final class AnimServer {
         return FMLPaths.GAMEDIR.get().resolve(f).normalize();
     }
 
+    /** Папки сервера: config/skinkokk/anims, у автора — ещё проект Студии (поверх). */
+    static List<Path> folders() {
+        List<Path> l = new ArrayList<>();
+        l.add(folder());
+        if (AnimConfig.get(AnimConfig.DEV_PROJECT, true)) {
+            Path p = AnimLibrary.studioProjectDir(FMLPaths.GAMEDIR.get());
+            if (p != null) l.add(p);
+        }
+        return l;
+    }
+
+    private static long watchSig;
+
     /** Перечитать папку и разослать клиентам. Возвращает проблемы. */
     public static List<String> reload(CommandSourceStack src) {
-        List<String> probs = AnimLibrary.loadDir(folder());
+        List<Path> dirs = folders();
+        watchSig = AnimLibrary.signature(dirs);
+        List<String> probs = AnimLibrary.loadDirs(dirs);
         for (String p : probs) SkinKokk.LOGGER.warn("[SkinKokk] animation: {}", p);
         if (server != null) for (ServerPlayer p : server.getPlayerList().getPlayers()) sendAll(p);
         return probs;
@@ -242,6 +257,16 @@ public final class AnimServer {
     @SubscribeEvent
     public static void tick(ServerTickEvent.Post e) {
         ticks++;
+        if (ticks % 40 == 0 && AnimConfig.get(AnimConfig.WATCH, true)) {
+            try {
+                if (AnimLibrary.signature(folders()) != watchSig) {
+                    List<String> probs = reload(null);
+                    SkinKokk.LOGGER.info("[SkinKokk] animations changed on disk: reloaded ({} problems)", probs.size());
+                }
+            } catch (RuntimeException ex) {
+                SkinKokk.LOGGER.debug("[SkinKokk] anim watch: {}", ex.toString());
+            }
+        }
         if (PLAYING.isEmpty()) return;
         boolean stopOnMove = AnimConfig.get(AnimConfig.STOP_EMOTE_ON_MOVE, true);
         List<Entity> stopNow = new ArrayList<>();

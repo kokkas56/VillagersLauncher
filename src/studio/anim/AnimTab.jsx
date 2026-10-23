@@ -118,10 +118,19 @@ export default function AnimTab() {
     if (!c || !c.dirty || c.source !== 'project') return;
     try {
       await call('studio:animSave', cleanAnim(c.anim));
+      shipSoon();
       setCur((x) => (x && x.anim.id === c.anim.id ? { ...x, dirty: false } : x));
       setProj((p) => { const l = (p || []).filter((a) => a.id !== c.anim.id); l.push(normalizeAnim(c.anim)); return l.sort((a, b) => a.id.localeCompare(b.id)); });
     } catch (e) { toast('Не сохранилось: ' + e.message, 'error', 6000); }
   }, []); // eslint-disable-line
+  // анимации отдаются игрокам сами (config/skinkokk/anims) — без «Собрать» всего проекта; игра у автора подхватывает
+  // файлы проекта сразу, а эта копия уйдёт друзьям со следующей публикацией сборки
+  const shipT = useRef(0);
+  const shipSoon = () => {
+    if (!autoShipOn()) return;
+    clearTimeout(shipT.current);
+    shipT.current = setTimeout(() => { call('studio:animBuild').catch(() => {}); }, 1500);
+  };
   const scheduleSave = () => { clearTimeout(saveT.current); saveT.current = setTimeout(saveNow, 700); };
   useEffect(() => () => { saveNow(); }, []); // eslint-disable-line
   const toProject = (c) => {
@@ -193,7 +202,7 @@ export default function AnimTab() {
     const isOverride = BUILTIN_IDS.includes(c.anim.id);
     try {
       clearTimeout(saveT.current);
-      await call('studio:animDelete', c.anim.id);
+      await call('studio:animDelete', c.anim.id); shipSoon();
       setProj((p) => (p || []).filter((a) => a.id !== c.anim.id));
       if (isOverride) { const nc = { anim: normalizeAnim(builtinAnim(c.anim.id)), source: 'builtin', dirty: false }; curRef.current = nc; setCur(nc); toast('Вернулась встроенная «' + nc.anim.name + '»', 'ok'); }
       else { curRef.current = null; setCur(null); toast('Анимация удалена', 'ok'); }
@@ -209,7 +218,7 @@ export default function AnimTab() {
     if (c.source !== 'project') { await createNew(c.anim.name, { ...c.anim, id }); return; }
     await saveNow();
     try {
-      await call('studio:animRename', { from: c.anim.id, to: id });
+      await call('studio:animRename', { from: c.anim.id, to: id }); shipSoon();
       setProj((p) => (p || []).map((a) => (a.id === c.anim.id ? { ...a, id } : a)));
       const nc = { ...c, anim: { ...c.anim, id } }; curRef.current = nc; setCur(nc);
       if (BUILTIN_IDS.includes(id)) toast('Теперь это перекрытие встроенной «' + id + '»', 'ok');
@@ -537,7 +546,7 @@ function LibraryPane({ proj, cur, open, q, setQ, hp, onNew, onCopy, onRemove, pr
   return (
     <div className="an-lib c4-pane" data-learn="an-library">
       <div className="an-lib-h">
-        <b>Библиотека</b><span className="grow" />
+        <b>Библиотека</b><span className="grow" /><AutoShipToggle hp={hp} />
         <button className="c4-btn sm prim" data-learn="an-new" onClick={onNew} {...hp('Новая анимация в проекте (anims/<id>.json): с нуля или на основе встроенной.')}><I name="plus" size={11} /> Новая</button>
       </div>
       <div className="an-lib-tools">
@@ -546,7 +555,7 @@ function LibraryPane({ proj, cur, open, q, setQ, hp, onNew, onCopy, onRemove, pr
         <button className="c4-ib" disabled={!cur || curSrc !== 'project'} onClick={onRemove} {...hp(cur && BUILTIN_IDS.includes(cur.anim.id) && curSrc === 'project' ? 'Вернуть встроенную: удалить перекрытие из проекта.' : 'Удалить анимацию проекта.')}><I name="trash" size={14} /></button>
       </div>
       <div className="an-lib-list">
-        <div className="an-lgrp" onClick={() => toggle('proj')} {...hp('Анимации этого проекта: свои и перекрытые встроенные. «Собрать» отдаст их игрокам.')}>{closed.proj ? '▸' : '▾'} Проекта <span className="dim">{(proj || []).length}</span></div>
+        <div className="an-lgrp" onClick={() => toggle('proj')} {...hp('Анимации этого проекта: свои и перекрытые встроенные. Сохраняются сами; в твоей игре видны сразу, игрокам уходят сами (галочка «Сразу игрокам») или через «Собрать».')}>{closed.proj ? '▸' : '▾'} Проекта <span className="dim">{(proj || []).length}</span></div>
         {!closed.proj && (mine.length ? mine.map((a) => row(a, 'project')) : <div className="c4-tree-empty" style={{ padding: '4px 14px' }}>{proj && proj.length ? 'Ничего не нашлось' : 'Пока нет — «+ Новая» или правь встроенную.'}</div>)}
         {CATS.map(([cat, label]) => {
           const list = ANIM_LIBRARY.filter((a) => a.cat === cat && match(a));
@@ -684,6 +693,15 @@ function CustomAttrs({ anim, cb, edit, act, hp }) {
         <button className="c4-btn sm danger" onClick={() => act.removeCustom(cb.id)} {...hp('Удалить кость вместе с её ключами. Свои кости, что висели на ней, перейдут к её родителю; кости тела из группы вернутся на место.')}><I name="trash" size={11} /> Удалить кость</button>
       </div>
     </Sec>
+  );
+}
+function autoShipOn() { try { return localStorage.getItem('an-autoship') !== '0'; } catch (_) { return true; } }
+function AutoShipToggle({ hp }) {
+  const [on, setOn] = useState(autoShipOn);
+  return (
+    <label className="an-chk" {...hp('Сразу для игроков: каждая сохранённая анимация сама кладётся в config/skinkokk/anims и уйдёт друзьям со следующей публикацией сборки — «Собрать» для анимаций не нужен. У тебя в игре правки видны сразу (лобби и мир подхватывают файлы проекта сами за пару секунд). Выключи — тогда только через «Собрать».')}>
+      <input type="checkbox" checked={on} onChange={(e) => { setOn(e.target.checked); try { localStorage.setItem('an-autoship', e.target.checked ? '1' : '0'); } catch (_) { /* не запомнится */ } if (e.target.checked) call('studio:animBuild').catch(() => {}); }} /> Сразу игрокам
+    </label>
   );
 }
 function KeyAllToggle({ hp }) {

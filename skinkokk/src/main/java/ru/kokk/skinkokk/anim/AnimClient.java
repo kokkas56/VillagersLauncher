@@ -136,6 +136,51 @@ public final class AnimClient {
         return d.emote && e instanceof Player && e != mc.player && !AnimConfig.get(AnimConfig.SHOW_OTHERS_EMOTES, true);
     }
 
+    // ---------- вне мира: свои файлы (лобби KokkHUD, меню) ----------
+    private static int localTicks;
+    private static long localSig = Long.MIN_VALUE;
+
+    private static void localTick() {
+        boolean on = AnimConfig.get(AnimConfig.LOCAL_FILES, true);
+        AnimLibrary.useLocal = on;
+        if (!on || localTicks++ % 40 != 0) return;
+        try {
+            java.nio.file.Path game = net.neoforged.fml.loading.FMLPaths.GAMEDIR.get();
+            java.util.List<java.nio.file.Path> dirs = new java.util.ArrayList<>();
+            dirs.add(game.resolve("config/skinkokk/anims"));
+            java.nio.file.Path dev = AnimLibrary.studioProjectDir(game);
+            if (dev != null) dirs.add(dev);
+            long sig = AnimLibrary.signature(dirs);
+            if (sig == localSig) return;
+            localSig = sig;
+            java.util.List<String> probs = AnimLibrary.loadLocal(dirs);
+            for (String p : probs) SkinKokk.LOGGER.warn("[SkinKokk] local animation: {}", p);
+        } catch (RuntimeException ex) {
+            SkinKokk.LOGGER.debug("[SkinKokk] local animations: {}", ex.toString());
+        }
+    }
+
+    /** Поза по анимации в момент t (тики анимации) с весом w — без существа (лобби). null — нет такой анимации. */
+    public static Pose poseAt(String id, float t, float w) {
+        AnimDef d = AnimLibrary.client(id);
+        if (d == null) return null;
+        Pose p = new Pose();
+        p.def = d;
+        p.t = d.loop ? t % Math.max(1, d.length) : Math.max(0, Math.min(t, d.length));
+        p.w = Math.max(0, Math.min(1, w));
+        for (Map.Entry<String, AnimDef.Track> en : d.tracks.entrySet()) {
+            float[][] v = new float[3][];
+            for (int c = 0; c < 3; c++) {
+                AnimDef.Chan ch = en.getValue().ch[c];
+                if (ch == null) continue;
+                v[c] = new float[3];
+                ch.sample(p.t, v[c]);
+            }
+            p.bones.put(en.getKey(), v);
+        }
+        return p;
+    }
+
     /** Поза существа в этот кадр (null — ничего не играет). */
     public static Pose pose(Entity e, float partial) {
         if (e == null || INST.isEmpty()) return null;
@@ -201,8 +246,10 @@ public final class AnimClient {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null) {
             if (!INST.isEmpty()) INST.clear();
+            localTick();
             return;
         }
+        AnimLibrary.useLocal = false;
         if (!mc.isPaused()) ticks++;
         if (INST.isEmpty()) return;
         float[] tw = new float[2];
