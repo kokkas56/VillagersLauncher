@@ -122,7 +122,7 @@ export default function Settings() {
             <span>×</span>
             <input className="input num" type="number" value={s.height} onChange={(e) => set({ height: +e.target.value || 480 })} />
           </div>
-          <Toggle checked={s.fullscreen} onChange={(v) => set({ fullscreen: v })} label={t('Полноэкранный режим')} />
+          <Toggle checked={s.fullscreen} onChange={(v) => set({ fullscreen: v })} label={t('Полноэкранный режим')} hint={t('Без рамки на весь экран (быстрый Alt+Tab)')} />
         </div>
       </Section>
 

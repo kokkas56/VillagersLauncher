@@ -14,6 +14,19 @@ module.exports = function setupFriends(d) {
   //      playGame, server, hosting, tunnelCmd, tunnelOpts, tunnelState, packVersions, progress, win, Notification, version }
   const { store } = d;
   const log = (l) => console.log('[friends] ' + l);
+  // связь с игрой: каждая попытка и её итог — в консоль, в «Консоль игры» окна лаунчера и в <папка игры>/.villagers/partylink.log
+  function linkLog(l) {
+    log('связь с игрой: ' + l);
+    try { d.send('game-log', ['[связь с игрой] ' + l]); } catch (_) {}
+    try {
+      const g = store.get().gameDir;
+      if (!g) return;
+      const f = path.join(g, '.villagers', 'partylink.log');
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      try { if (fs.statSync(f).size > 512 * 1024) fs.renameSync(f, f + '.old'); } catch (_) {}
+      fs.appendFileSync(f, new Date().toISOString() + ' ' + l + '\n');
+    } catch (_) {}
+  }
 
   // ---------------- ключи установки ----------------
   let ident = null;
@@ -35,7 +48,7 @@ module.exports = function setupFriends(d) {
   const setPer = (field, k, v) => { const all = { ...(store.get()[field] || {}) }; all[k] = v; store.set({ [field]: all }); };
   const book = () => { const m = me(); return C.normBook(m ? per('friendBooks', m.key, null) : null); };
   const saveBook = (b) => { const m = me(); if (m) setPer('friendBooks', m.key, b); changed(); };
-  const DEF_PREFS = { hide: false, about: '', showcase: [], equip: { main: null, off: null, head: null }, notify: true };
+  const DEF_PREFS = { hide: false, about: '', showcase: [], equip: { main: null, off: null, head: null, chest: null, legs: null, feet: null }, notify: true };
   const prefs = () => { const m = me(); return { ...DEF_PREFS, ...(m ? per('friendPrefs', m.key, {}) : {}) }; };
   const savePrefs = (p) => { const m = me(); if (m) setPer('friendPrefs', m.key, { ...prefs(), ...p }); changed(); };
   const notes = () => { const m = me(); return m ? per('friendNotes', m.key, []) : []; };
@@ -567,6 +580,7 @@ module.exports = function setupFriends(d) {
   // ---------------- совместный запуск ----------------
   function tunnelReadyFor(live) {
     if (!live) return null;
+    if (isLeader() && live.mode === 'lan') return null; // «Сетевая игра»: лидер уже в своём мире
     if (isLeader()) return d.server.running() && d.server.state() === 'running' ? '127.0.0.1:' + (live.port || store.get().serverPort || 25565) : null;
     const ts = d.tunnelState();
     if (ts && ts.active && ts.role === 'guest' && ts.name === live.room && ts.status === 'connected' && ts.port) return '127.0.0.1:' + ts.port;
@@ -672,7 +686,7 @@ module.exports = function setupFriends(d) {
       d.setProfile(p);
     }
   }
-  async function start(arg) {
+  async function start(arg, where) {
     const m = me();
     ensureParty();
     if (!isLeader()) throw Object.assign(new Error('Запускает только лидер отряда'), { code: 'leader_only' });
@@ -680,6 +694,7 @@ module.exports = function setupFriends(d) {
     if (st.phase !== 'lobby') throw Object.assign(new Error('Отряд уже запускается'), { code: 'busy' });
     let map = C.cleanMap(arg) || st.map;
     const hp = d.hosting.profile();
+    if (where === 'lan') return startLan(map);
     if (!map && hp.world) map = { kind: 'server', name: hp.world };
     if (!map) throw Object.assign(new Error('Выбери мир: свой одиночный, мир сервера или новый'), { code: 'world' });
     const ws = d.hosting.worlds();
@@ -709,7 +724,7 @@ module.exports = function setupFriends(d) {
     }
     // отряд не ограничивает вход: на сервер заходят и не из отряда — до «Максимума игроков» (не меньше размера отряда)
     const players = Math.max(partyPlayers(), st.members.length);
-    bumpState((s) => { s.phase = 'starting'; s.map = map; s.maxPlayers = players; s.notice = { t: Date.now(), text: 'Лидер запускает сервер «' + hp.name + '»…', kind: 'info' }; });
+    bumpState((s) => { s.phase = 'starting'; s.where = 'server'; s.map = map; s.maxPlayers = players; s.notice = { t: Date.now(), text: 'Лидер запускает сервер «' + hp.name + '»…', kind: 'info' }; });
     toGame({ t: 'toast', text: 'Запускаю сервер «' + hp.name + '» (до ' + players + ' игроков)…' });
     log('party start by ' + m.nick + ' map ' + JSON.stringify(map) + ' max ' + players);
     syncPartyFile(true);
@@ -721,21 +736,100 @@ module.exports = function setupFriends(d) {
     })();
     return true;
   }
-  function goLive() {
+  function goLive(lan) {
     if (!party || !isLeader()) return;
     const hp = d.hosting.profile();
     const now = Date.now();
     bumpState((s) => {
       s.phase = 'live';
-      s.live = { room: hp.room, pass: d.hosting.hostTunnelPassword(), name: hp.name, port: store.get().serverPort || 25565, at: now, deadline: now + C.ENTER_WAIT, go: false };
-      s.notice = { t: now, text: 'Сервер готов — заходим! Ждём остальных не дольше минуты.', kind: 'ok' };
+      s.live = lan
+        ? { room: lan.room, pass: lan.pass, name: lan.name, port: lan.port, mode: 'lan', at: now, deadline: now + C.ENTER_WAIT, go: false }
+        : { room: hp.room, pass: d.hosting.hostTunnelPassword(), name: hp.name, port: store.get().serverPort || 25565, at: now, deadline: now + C.ENTER_WAIT, go: false };
+      s.notice = { t: now, text: (lan ? 'Мир «' + lan.name + '» открыт' : 'Сервер готов') + ' — заходим! Ждём остальных не дольше минуты.', kind: 'ok' };
     });
     onPhase('starting');
+  }
+
+  // ---------------- «Сетевая игра»: мир открывает игра лидера ----------------
+  // Лидер (игра) → start {where:'lan'} → лаунчер лидера: фаза starting, игре {t:'openWorld', world|newWorld, maxPlayers}
+  // → игра открывает одиночный мир и сама открывает его для сети → {t:'lanReady', port, world} → лаунчер лидера открывает
+  // комнату туннеля (своя на каждый запуск, пароль случайный) на этот порт → фаза live; участники — как с «Моим сервером».
+  // Мир закрыт ({t:'lanStopped'}) или игра лидера закрылась → туннель закрыт, фаза lobby. Протокол: party_protocol.md, 3.4.
+  let lan = null; // { room, pass, timer }
+  function startLan(map) {
+    const st = party.st;
+    if (!map) throw Object.assign(new Error('Выбери мир: свой одиночный или новый'), { code: 'world' });
+    if (map.kind === 'server') throw Object.assign(new Error('Мир «Моего сервера» играется только на нём — выбери «Где играть: Мой сервер» или одиночный мир'), { code: 'world' });
+    if (map.kind === 'world' && !d.hosting.worlds().single.some((w) => w.name === map.name)) throw Object.assign(new Error('Мир «' + map.name + '» не найден в saves'), { code: 'world' });
+    if (!link.authed().length) throw Object.assign(new Error('Сетевую игру открывает сама игра — запусти игру и нажми «Играть» в лобби'), { code: 'offline' });
+    if (d.server.running()) throw Object.assign(new Error('Работает твой «Мой сервер» — останови его или выбери «Где играть: Мой сервер»'), { code: 'server' });
+    const players = Math.max(partyPlayers(), st.members.length);
+    if (lan && lan.timer) clearTimeout(lan.timer);
+    const crypto = require('crypto');
+    lan = { room: 'vkl-' + crypto.randomBytes(6).toString('hex'), pass: crypto.randomBytes(12).toString('hex'), timer: null };
+    lan.timer = setTimeout(() => { if (party && party.st && party.st.phase === 'starting' && party.st.where === 'lan') endLan('Мир лидера так и не открылся', 'error'); }, 330000);
+    if (lan.timer.unref) lan.timer.unref();
+    bumpState((s) => { s.phase = 'starting'; s.where = 'lan'; s.map = map; s.maxPlayers = players; s.notice = { t: Date.now(), text: 'Лидер открывает мир «' + map.name + '» по сети…', kind: 'info' }; });
+    toGame(map.kind === 'new'
+      ? { t: 'openWorld', newWorld: { name: map.name, seed: map.seed || '', type: map.type || 'minecraft:normal' }, maxPlayers: players }
+      : { t: 'openWorld', world: map.name, maxPlayers: players });
+    log('party start (lan) by ' + me().nick + ' map ' + JSON.stringify(map) + ' max ' + players);
+    changed();
+    return true;
+  }
+  function lanReady(msg) {
+    if (!party || !party.st || !isLeader() || party.st.where !== 'lan' || party.st.phase !== 'starting' || !lan) throw Object.assign(new Error('Отряд не ждёт сетевой мир'), { code: 'bad' });
+    const port = Number(msg.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw Object.assign(new Error('Не понял порт мира'), { code: 'bad' });
+    const st = party.st;
+    const world = typeof msg.world === 'string' && msg.world.trim() && !/[\\/]/.test(msg.world) ? msg.world.trim().slice(0, 64) : null;
+    if (lan.timer) { clearTimeout(lan.timer); lan.timer = null; }
+    if (world && st.map && st.map.kind === 'new') st.map = { kind: 'world', name: world }; // новый мир создан — дальше это одиночный мир
+    const name = world || (st.map && st.map.name) || 'Мир отряда';
+    d.tunnelCmd('host', { ...d.tunnelOpts({ name: lan.room, password: lan.pass, mode: 'server' }), serverPort: port }).catch((e) => log('tunnel ' + e.message));
+    log('party lan ready: world ' + name + ' port ' + port + ' room ' + lan.room);
+    goLive({ room: lan.room, pass: lan.pass, name, port });
+  }
+  function endLan(text, kind) {
+    const room = lan && lan.room;
+    if (lan && lan.timer) clearTimeout(lan.timer);
+    lan = null;
+    const ts = d.tunnelState();
+    if (room && ts && ts.active && ts.role === 'host' && ts.name === room) d.tunnelCmd('leave').catch(() => {});
+    if (party && party.st && isLeader() && party.st.where === 'lan' && ['starting', 'live', 'ingame'].includes(party.st.phase)) {
+      const prev = party.st.phase;
+      bumpState((x) => { x.phase = 'lobby'; x.live = null; x.notice = { t: Date.now(), text, kind: kind || 'info' }; });
+      onPhase(prev);
+    }
+    changed();
+  }
+
+  // файл отряда для VillagersKokk в мире «Сетевой игры»: <папка игры>/config/villagerskokk/party.json (папка сервера
+  // встроенного сервера = папка игры); вне сетевой игры — пустой (только если мы его писали или он остался от прошлого раза)
+  let lanFileSig = null;
+  function lanFilePath() { const g = store.get().gameDir; return g ? path.join(g, 'config', 'villagerskokk', 'party.json') : null; }
+  try { const j = JSON.parse(fs.readFileSync(lanFilePath(), 'utf8')); if (j && Array.isArray(j.members) && j.members.length) lanFileSig = 'stale'; } catch (_) {}
+  function syncLanFile() {
+    const st = party && !party.joining && party.st;
+    const on = !!(st && isLeader() && st.where === 'lan' && ['starting', 'live', 'ingame'].includes(st.phase));
+    if (!on && lanFileSig === null) return;
+    const doc = C.partyFileDoc(on ? st : null);
+    const sig = JSON.stringify([doc.id, doc.leader, doc.members]);
+    if (sig === lanFileSig) return;
+    const f = lanFilePath();
+    if (!f) return;
+    try {
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f + '.tmp', JSON.stringify(doc, null, 2));
+      fs.renameSync(f + '.tmp', f);
+      lanFileSig = on ? sig : null;
+    } catch (e) { log('party.json (lan) ' + e.message); }
   }
   function onServerState(s) {
     if (s && (s.state === 'installing' || s.state === 'starting')) syncPartyFile(true);
     if (!party || !party.st || !isLeader()) return;
     const st = party.st;
+    if (st.where === 'lan') return; // «Сетевая игра»: «Мой сервер» тут ни при чём
     if (s.state === 'running' && st.phase === 'starting') goLive();
     if (s.state === 'stopped' && ['starting', 'live', 'ingame'].includes(st.phase)) {
       const prev = st.phase;
@@ -772,6 +866,9 @@ module.exports = function setupFriends(d) {
   function onGameExit(code) {
     stage = { stage: null, progress: null };
     activity.game = '';
+    if (party && party.st && isLeader() && party.st.where === 'lan' && ['starting', 'live', 'ingame'].includes(party.st.phase)) {
+      endLan(code !== 0 && code !== null ? 'Игра лидера вылетела — мир закрыт, отряд снова в лобби' : 'Лидер закрыл игру — отряд снова в лобби', code !== 0 && code !== null ? 'error' : 'info');
+    }
     if (party && party.st && ['live', 'ingame'].includes(party.st.phase)) {
       const crashed = code !== 0 && code !== null;
       party.crashed = crashed;
@@ -824,12 +921,12 @@ module.exports = function setupFriends(d) {
         return memberView(x.key, x.nick, {
           leader: x.key === st.leader, me: mine, online: on, state: mine ? myState() : on ? h.st || 'lobby' : 'offline',
           stage: mine ? stage.stage : h.stage || null, progress: mine ? stage.progress : typeof h.progress === 'number' ? h.progress : null,
-          equip: mine ? prefs().equip : h.equip || { main: null, off: null, head: null }
+          equip: mine ? prefs().equip : h.equip || { main: null, off: null, head: null, chest: null, legs: null, feet: null }
         });
       }),
       background: st.background || 'meadow', backgrounds, map: st.map || null,
       invited: Object.values(party.invited).filter((i) => now - i.t < C.INVITE_TTL).map((i) => i.nick),
-      server: st.live ? { name: st.live.name, address: tunnelReadyFor(st.live) } : null,
+      server: st.live ? { name: st.live.name, address: tunnelReadyFor(st.live) } : null, where: st.where || 'server',
       deadline: st.live ? st.live.deadline : null, go: !!(st.live && st.live.go), menu, ...limits, full: C.partyFull(st)
     };
   }
@@ -936,6 +1033,7 @@ module.exports = function setupFriends(d) {
       chT = null;
       try {
         syncPartyFile();
+        syncLanFile();
         d.send('friends', uiState());
         if (link.authed().length) {
           const pv = partyView();
@@ -955,7 +1053,7 @@ module.exports = function setupFriends(d) {
   // ---------------- связь с игрой ----------------
   const link = createLink({
     version: d.version,
-    log,
+    log: linkLog,
     onAuth: (c) => {
       const m = me();
       link.send(c, link.helloReply(m ? m.nick : null));
@@ -1017,13 +1115,17 @@ module.exports = function setupFriends(d) {
         }
         case 'worlds': { const w = d.hosting.worlds(); link.send(c, { t: 'worlds', rid: msg.rid, single: w.single, server: w.server, current: d.hosting.profile().world || null }); break; }
         case 'maxPlayers': { const v = setMaxPlayers(msg.n !== undefined ? msg.n : msg.value); link.send(c, { t: 'ok', re: msg.t, rid: msg.rid, maxPlayers: v }); break; }
-        case 'start': { if (msg.maxPlayers !== undefined) setMaxPlayers(msg.maxPlayers); await start(msg.newWorld ? { newWorld: msg.newWorld } : msg.world !== undefined ? { world: msg.world } : msg.server !== undefined ? { server: msg.server } : null); ok(); break; }
+        case 'start': { if (msg.maxPlayers !== undefined) setMaxPlayers(msg.maxPlayers); await start(msg.newWorld ? { newWorld: msg.newWorld } : msg.world !== undefined ? { world: msg.world } : msg.server !== undefined ? { server: msg.server } : null, msg.where === 'lan' ? 'lan' : 'server'); ok(); break; }
         case 'cancel': {
           leaderOnly();
           if (party.st.phase !== 'starting') throw Object.assign(new Error('Нечего отменять'), { code: 'bad' });
-          d.server.stop().catch(() => {});
+          if (party.st.where === 'lan') { toGame({ t: 'lanCancel' }); endLan('Лидер отменил запуск', 'info'); } else d.server.stop().catch(() => {});
           ok(); break;
         }
+        // «Сетевая игра» (игра лидера): мир открыт для сети / не открылся / закрыт
+        case 'lanReady': lanReady(msg); ok(); break;
+        case 'lanFailed': if (party && party.st && isLeader() && party.st.where === 'lan') endLan('Сетевая игра не открылась: ' + String(msg.text || '').slice(0, 200), 'error'); ok(); break;
+        case 'lanStopped': if (party && party.st && isLeader() && party.st.where === 'lan') endLan('Лидер закрыл мир — отряд снова в лобби', 'info'); ok(); break;
         case 'loadState': {
           const sg = ['menu', 'connecting', 'joining', 'loading', 'world', 'failed'].includes(msg.stage) ? msg.stage : null;
           stage = { stage: sg, progress: typeof msg.progress === 'number' ? Math.max(0, Math.min(1, msg.progress)) : null };
@@ -1051,7 +1153,7 @@ module.exports = function setupFriends(d) {
       }
     }
   });
-  link.start().then((p) => { link.writeLinkFile(store.get().gameDir); log('связь с игрой: 127.0.0.1:' + p); }).catch((e) => log(e.message));
+  link.start().then((p) => { link.writeLinkFile(store.get().gameDir); linkLog('готова: 127.0.0.1:' + p + ', лаунчер ' + (d.version || '?')); }).catch((e) => linkLog('не запустилась: ' + e.message));
 
   // ---------------- таймеры ----------------
   let ready = false;
