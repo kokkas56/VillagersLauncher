@@ -162,7 +162,7 @@ export default function AnimTimeline({ anim, bones, time, setTime, playing, setP
     const target = many ? selKeys : here;
     if (!many) setSelKeys(here);
     openMenu(e, [
-      { head: many ? 'Выбрано ключей: ' + selKeys.length : boneRu(bone) + ' · ключ ' + t + ' т' },
+      { head: many ? 'Выбрано ключей: ' + selKeys.length : boneRu(bone, anim) + ' · ключ ' + t + ' т' },
       { label: 'Плавность к следующему', icon: 'curves', sub: easeItems(target) },
       { sep: true },
       { label: 'Копировать', icon: 'copy', kb: 'Ctrl+C', run: () => { setSelKeys(target); setTimeout(() => act.copy(target), 0); } },
@@ -178,7 +178,7 @@ export default function AnimTimeline({ anim, bones, time, setTime, playing, setP
       openMenu(e, [{ head: 'Событие в ' + t + ' т' }, ...EVENT_KINDS.map(([k, l, h]) => ({ label: l, hint: h, run: () => act.addEvent(k, t) }))]);
       return;
     }
-    if (row.bone) openMenu(e, [{ head: boneRu(row.bone) + ' · ' + t + ' т' }, { label: 'Ключ здесь (поза как сейчас)', icon: 'key', run: () => { setTime(t); act.keyBone(row.bone, t, row.ch ? [row.ch] : null); } }, { label: 'Очистить дорожку кости', icon: 'trash', hint: 'Удалить все ключи этой кости' + (row.ch ? ' в канале «' + CHANNEL_RU[row.ch] + '»' : '') + '.', run: () => act.clearBone(row.bone, row.ch) }]);
+    if (row.bone) openMenu(e, [{ head: boneRu(row.bone, anim) + ' · ' + t + ' т' }, { label: 'Ключ здесь (поза как сейчас)', icon: 'key', run: () => { setTime(t); act.keyBone(row.bone, t, row.ch ? [row.ch] : null); } }, { label: 'Очистить дорожку кости', icon: 'trash', hint: 'Удалить все ключи этой кости' + (row.ch ? ' в канале «' + CHANNEL_RU[row.ch] + '»' : '') + '.', run: () => act.clearBone(row.bone, row.ch) }]);
   };
   const evDrag = (e, i, ev) => {
     setSelEv(i);
@@ -227,18 +227,18 @@ export default function AnimTimeline({ anim, bones, time, setTime, playing, setP
       </div>
       <div className="c4-tl-body">
         <div className="c4-tl-heads">
-          <div className="c4-ruler-h">{mode === 'curves' ? 'Кривые: ' + (selBone ? boneRu(selBone) : '—') : 'Кости'}<span className="grow" /><span title="Длина">{fmtT(len)}</span></div>
+          <div className="c4-ruler-h">{mode === 'curves' ? 'Кривые: ' + (selBone ? boneRu(selBone, anim) : '—') : 'Кости'}<span className="grow" /><span title="Длина">{fmtT(len)}</span></div>
           {mode === 'keys' ? (
             <div className="c4-tl-heads-scroll" ref={headsRef}>
               {rows.map((row, i) => {
                 if (row.kind === 'grp') return <div key={i} className="c4-lhead grp" {...hp(row.hint)}>{row.label}</div>;
                 if (row.kind === 'ev') return <div key={i} className="c4-lhead" {...hp('События: правый клик по дорожке — добавить; тяни — сдвинуть; щёлкни — свойства справа.')}><span className="sw" style={{ background: '#7cc4f5' }} /><span className="nm">События</span><span className="add" title="Добавить событие в момент бегунка" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); openMenu({ clientX: r.left, clientY: r.bottom, preventDefault() {}, stopPropagation() {} }, EVENT_KINDS.map(([k, l, h]) => ({ label: l, hint: h, run: () => act.addEvent(k, time) }))); }}>+</span></div>;
-                if (row.kind === 'ch') return <div key={i} className="c4-lhead ch" {...hp(CHANNEL_RU[row.ch] + ' кости «' + boneRu(row.bone) + '».')}><span className="sw" style={{ background: CH_COLOR[row.ch] }} /><span className="nm">{CHANNEL_RU[row.ch]}</span></div>;
+                if (row.kind === 'ch') return <div key={i} className="c4-lhead ch" {...hp(CHANNEL_RU[row.ch] + ' кости «' + boneRu(row.bone, anim) + '».')}><span className="sw" style={{ background: CH_COLOR[row.ch] }} /><span className="nm">{CHANNEL_RU[row.ch]}</span></div>;
                 const has = !!anim.tracks[row.bone];
                 return (
-                  <div key={i} className={'c4-lhead obj' + (selBone === row.bone ? ' sel' : '')} onClick={() => setSelBone(row.bone)} {...hp(boneRu(row.bone) + (has ? ' — есть ключи.' : ' — ключей нет.') + ' ▸ — каналы.')}>
+                  <div key={i} className={'c4-lhead obj' + (selBone === row.bone ? ' sel' : '')} onClick={() => setSelBone(row.bone)} {...hp(boneRu(row.bone, anim) + (has ? ' — есть ключи.' : ' — ключей нет.') + ' ▸ — каналы.')}>
                     <span className="tw" onClick={(e) => { e.stopPropagation(); setOpen((c) => ({ ...c, [row.bone]: !c[row.bone] })); }}>{open[row.bone] ? '▾' : '▸'}</span>
-                    <span className={'an-bdot' + (has ? ' on' : '')} /><span className="nm">{boneRu(row.bone)}</span>
+                    <span className={'an-bdot' + (has ? ' on' : '')} /><span className="nm">{boneRu(row.bone, anim)}</span>
                   </div>
                 );
               })}
@@ -296,7 +296,7 @@ export default function AnimTimeline({ anim, bones, time, setTime, playing, setP
                         {times.map((t) => {
                           const ks = expandBoneKeys(anim, row.bone, t);
                           const on = ks.every((k) => isSel(k.bone, k.ch, k.t));
-                          return <g key={t} style={{ cursor: 'ew-resize' }} onMouseDown={(e) => { if (e.button !== 0) return; setSelBone(row.bone); dragKeys(e, ks, t); }} onContextMenu={(e) => keyMenu(e, row.bone, null, t)}>{diamond(X(t), cy, on, null, t)}<title>{boneRu(row.bone)}: ключ {t} т</title></g>;
+                          return <g key={t} style={{ cursor: 'ew-resize' }} onMouseDown={(e) => { if (e.button !== 0) return; setSelBone(row.bone); dragKeys(e, ks, t); }} onContextMenu={(e) => keyMenu(e, row.bone, null, t)}>{diamond(X(t), cy, on, null, t)}<title>{boneRu(row.bone, anim)}: ключ {t} т</title></g>;
                         })}
                         {border}
                       </g>

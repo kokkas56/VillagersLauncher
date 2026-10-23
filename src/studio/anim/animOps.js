@@ -1,5 +1,5 @@
 // «Анимации»: правки файла анимации — чистые функции (старый объект не меняется).
-import { CHANNELS, CHANNEL_DEF, sampleKeys, r3, mirrorTracks } from './animCore.js';
+import { CHANNELS, CHANNEL_DEF, sampleKeys, r3, mirrorTracks, mirrorBones, customBones, CUSTOM_MAX } from './animCore.js';
 
 const clone = (a) => JSON.parse(JSON.stringify(a));
 const sortK = (keys) => keys.sort((x, y) => x.t - y.t);
@@ -117,7 +117,7 @@ export function keyBone(anim, bone, t, chs, all = true) {
   return a;
 }
 /** Отразить: всю анимацию (лево ↔ право) или только позу в момент t. */
-export function mirrorAll(anim) { const a = clone(anim); a.tracks = mirrorTracks(a.tracks); return a; }
+export function mirrorAll(anim) { const a = clone(anim); a.tracks = mirrorTracks(a.tracks); if (Array.isArray(a.bones) && a.bones.length) a.bones = mirrorBones(a.bones); return a; }
 export function mirrorPoseAt(anim, t, bones) {
   let a = anim;
   const pairs = [['right_arm', 'left_arm'], ['right_leg', 'left_leg'], ['ear_r', 'ear_l'], ['chest_r', 'chest_l']];
@@ -158,4 +158,55 @@ export function clearBone(anim, bone, ch) {
   if (ch) delete a.tracks[bone][ch]; else delete a.tracks[bone];
   return prune(a);
 }
+
+// ---------- свои кости (группа, предмет, кубик) ----------
+/** Свободный id x_<основа><n>. */
+export function customId(anim, base) {
+  const taken = new Set([...customBones(anim).map((b) => b.id), ...Object.keys(anim.tracks || {})]);
+  for (let i = 1; i < 1000; i++) { const id = 'x_' + base + i; if (!taken.has(id)) return id; }
+  return 'x_' + base + Date.now();
+}
+/** Добавить свою кость (null — больше нельзя). */
+export function addCustomBone(anim, bone) {
+  if (customBones(anim).length >= CUSTOM_MAX) return null;
+  const a = clone(anim);
+  a.bones = [...(a.bones || []), clone(bone)];
+  return a;
+}
+export function updateCustomBone(anim, id, patch) {
+  const a = clone(anim);
+  a.bones = (a.bones || []).map((b) => (b.id === id ? { ...b, ...clone(patch) } : b));
+  return a;
+}
+/** Потомки своей кости (свои кости, что висят на ней прямо или через других). */
+export function customDescendants(anim, id) {
+  const out = new Set([id]);
+  let grow = true;
+  while (grow) { grow = false; for (const b of customBones(anim)) if (!out.has(b.id) && out.has(b.parent)) { out.add(b.id); grow = true; } }
+  out.delete(id);
+  return out;
+}
+/** Удалить свою кость вместе с её ключами; её дети переходят к её родителю, кости тела из группы — на место. */
+export function removeCustomBone(anim, id) {
+  const a = clone(anim);
+  const me = (a.bones || []).find((b) => b.id === id);
+  if (!me) return anim;
+  a.bones = a.bones.filter((b) => b.id !== id).map((b) => (b.parent === id ? { ...b, parent: me.parent } : b));
+  delete a.tracks[id];
+  if (a.modes) delete a.modes[id];
+  if (a.springs) delete a.springs[id];
+  return a;
+}
+/** Положить кость тела в группу или вынуть (из других групп она уходит сама). */
+export function setGroupChild(anim, gid, bone, on) {
+  const a = clone(anim);
+  a.bones = (a.bones || []).map((b) => {
+    if (b.kind !== 'group') return b;
+    const ch = (b.children || []).filter((c) => c !== bone);
+    if (b.id === gid && on) ch.push(bone);
+    return { ...b, children: ch };
+  });
+  return a;
+}
+
 export { kid as keyId };

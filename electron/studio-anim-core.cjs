@@ -17,7 +17,9 @@ const BONE_RU = {
   right_leg: 'Правая нога', left_leg: 'Левая нога', arms: 'Руки скрещены', nose: 'Нос',
   chest_l: 'Грудь (лев.)', chest_r: 'Грудь (прав.)', ear_l: 'Ухо (лев.)', ear_r: 'Ухо (прав.)', cape: 'Плащ'
 };
-function boneRu(b) {
+/** Русское имя кости. anim — если у анимации есть свои кости (bones), их имя берётся оттуда. */
+function boneRu(b, anim) {
+  if (anim && Array.isArray(anim.bones)) { const c = anim.bones.find((x) => x && x.id === b); if (c) return c.name || c.id; }
   if (BONE_RU[b]) return BONE_RU[b];
   let m = /^tail_(\d+)$/.exec(b); if (m) return 'Хвост ' + m[1];
   m = /^hair_(?:([a-z]+)_)?(\d+)$/.exec(b); if (m) return 'Волосы ' + (m[1] ? m[1] + ' ' : '') + m[2];
@@ -77,6 +79,82 @@ const EVENT_KINDS = [
   ['face', 'Лицо', 'Лицо жителя долины (Kokk Story): smile, sad, surprise… Срабатывает на сервере.'],
   ['signal', 'Сигнал', 'Сигнал схемам Kokk Story (событие «Сигнал», в нём — кто играл анимацию). Срабатывает на сервере.']
 ];
+
+// ---------- свои кости анимации (bones): группа-пустышка, предмет, кубик ----------
+// { id: 'x_…', name, kind: 'group'|'item'|'cube', parent: 'root'|кость тела|своя кость, pivot:[px], rot:[°],
+//   group: children:[кости тела]; item: item:'minecraft:…', display:'hand'|'fixed'; cube: from, size, color:'#rrggbb' }
+const CUSTOM_MAX = 16;
+const CUSTOM_ID = /^x_[a-z0-9_]{1,40}$/;
+const ITEM_ID = /^[a-z0-9_.-]+:[a-z0-9_./-]+$/;
+const CUSTOM_KINDS = [
+  ['group', 'Группа (пустышка)', 'Кость без вида. Положи в неё кости тела (голову, руки…) или свои кости — поворот, сдвиг и размер группы двигают их вокруг её опоры.'],
+  ['item', 'Предмет', 'Предмет Minecraft (меч, факел, цветок…) на кости тела или своей кости. Виден в игре, только пока играет анимация.'],
+  ['cube', 'Кубик', 'Цветной кубик на кости: коробка, палка, мяч-кубик. Виден в игре, только пока играет анимация.']
+];
+const CUSTOM_KIND_RU = { group: 'Группа', item: 'Предмет', cube: 'Кубик' };
+/** Кости тела, которые можно положить в группу (шапка и нос всегда идут за головой). */
+const GROUPABLE = ['body', 'head', 'right_arm', 'left_arm', 'right_leg', 'left_leg', 'arms'];
+/** Кости тела, к которым можно крепить свои кости. */
+const PARENTABLE = ['root', 'body', 'head', 'hat', 'right_arm', 'left_arm', 'right_leg', 'left_leg', 'arms', 'nose'];
+/** Их несёт туловище: если туловище в группе, а они ни в какой, — они идут за группой туловища. */
+const BODY_CARRIED = ['head', 'arms', 'right_arm', 'left_arm'];
+const ITEM_DISPLAYS = [['hand', 'В руке', 'Как предмет в руке (меч держится рукоятью у опоры и смотрит вперёд).'], ['fixed', 'Плоско', 'Как в рамке: плоская картинка предмета по центру опоры.']];
+const ITEM_PICKS = [
+  ['minecraft:iron_sword', 'меч', '#c9ced8'], ['minecraft:torch', 'факел', '#f0b040'], ['minecraft:poppy', 'цветок', '#d63434'],
+  ['minecraft:iron_pickaxe', 'кирка', '#a7abb3'], ['minecraft:bow', 'лук', '#8a5a2a'], ['minecraft:shield', 'щит', '#9a7a4a'],
+  ['minecraft:book', 'книга', '#7a3a2a'], ['minecraft:apple', 'яблоко', '#d83a2a'], ['minecraft:fishing_rod', 'удочка', '#8a6a3a']
+];
+function customBones(anim) { return anim && Array.isArray(anim.bones) ? anim.bones : []; }
+function customBone(anim, id) { return customBones(anim).find((b) => b && b.id === id) || null; }
+const v3n = (a, d, lo, hi) => [0, 1, 2].map((c) => r3(Math.max(lo, Math.min(hi, num(Array.isArray(a) ? a[c] : undefined, d[c])))));
+/** Привести список своих костей в порядок (типы, пределы). Плохие id/родители остаются — их покажет проверка. */
+function normalizeBones(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const b of list) {
+    if (!b || typeof b !== 'object' || typeof b.id !== 'string' || !b.id) continue;
+    const kind = typeof b.kind === 'string' && b.kind ? b.kind : 'group';
+    const o = { id: b.id, name: typeof b.name === 'string' && b.name ? b.name : b.id, kind, parent: typeof b.parent === 'string' && b.parent ? b.parent : 'root', pivot: v3n(b.pivot, [0, 0, 0], -64, 64), rot: v3n(b.rot, [0, 0, 0], -360, 360) };
+    if (kind === 'group') o.children = Array.isArray(b.children) ? [...new Set(b.children.filter((c) => typeof c === 'string' && c))] : [];
+    if (kind === 'item') { o.item = typeof b.item === 'string' ? b.item.trim() : ''; o.display = b.display === 'fixed' ? 'fixed' : 'hand'; }
+    if (kind === 'cube') { o.from = v3n(b.from, [-2, -2, -2], -32, 32); o.size = v3n(b.size, [4, 4, 4], 0.1, 32); o.color = typeof b.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(b.color) ? b.color.toLowerCase() : (typeof b.color === 'string' ? b.color : '#c08040'); }
+    out.push(o);
+  }
+  return out;
+}
+/**
+ * Разбор своих костей: порядок «родитель раньше детей», без замкнутых в круг и без неизвестных родителей.
+ * { order:[кость], anchor:{id: кость тела или root, к которой кость крепится в итоге}, rootChain:{id: true — вся цепь из групп до root},
+ *   groupOf:{кость тела: id группы} (с учётом «туловище несёт голову и руки»), cycles:[id], orphans:[id] }
+ */
+function customInfo(bones) {
+  const list = Array.isArray(bones) ? bones.filter((b) => b && typeof b.id === 'string') : [];
+  const byId = new Map(list.map((b) => [b.id, b]));
+  const depth = {}, anchor = {}, rootChain = {}, cycles = [], orphans = [];
+  for (const b of list) {
+    const seen = new Set();
+    let cur = b, ok = true, chain = true;
+    for (;;) {
+      if (seen.has(cur.id)) { ok = false; break; }
+      seen.add(cur.id);
+      if (cur.kind !== 'group') chain = false;
+      const p = byId.get(cur.parent);
+      if (!p) break;
+      cur = p;
+    }
+    if (!ok) { cycles.push(b.id); continue; }
+    const an = cur.parent;
+    if (!PARENTABLE.includes(an)) { orphans.push(b.id); continue; }
+    depth[b.id] = seen.size; anchor[b.id] = an; rootChain[b.id] = chain && an === 'root';
+  }
+  const order = list.filter((b) => depth[b.id] != null && CUSTOM_ID.test(b.id)).sort((a, b) => depth[a.id] - depth[b.id]);
+  const explicit = {};
+  for (const g of order) if (g.kind === 'group' && rootChain[g.id]) for (const c of g.children || []) if (GROUPABLE.includes(c) && !explicit[c]) explicit[c] = g.id;
+  const groupOf = { ...explicit };
+  if (explicit.body) for (const c of BODY_CARRIED) if (!groupOf[c]) groupOf[c] = explicit.body;
+  if (groupOf.head) groupOf.hat = groupOf.head;
+  return { order, anchor, rootChain, groupOf, cycles, orphans, byId };
+}
 
 // ---------- математика ----------
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -298,6 +376,32 @@ function solvePose(rig, anim, t, opts) {
   const rootApply = (pt) => add3(add3(FEET, app3(rootM, sub3(pt, FEET))), rootP);
   const out = { bones: {}, freeArms, root: { M: rootM, R: rootR, P: rootP, S: rootS }, D };
   const byName = Object.fromEntries(rig.bones.map((b) => [b.name, b]));
+  // свои кости: местная поза (опора + сдвиг, поворот по умолчанию + ключи, размер) — как у деталей персонажа
+  const cust = customInfo(customBones(anim));
+  const diag = (s) => [s[0], 0, 0, 0, s[1], 0, 0, 0, s[2]];
+  const localOf = (cb) => {
+    const v = vals[cb.id] || {};
+    const r0 = cb.rot.map((d) => d * DEG);
+    const mode = anim ? boneMode(anim, cb.id) : 'add';
+    const rot = r0.map((r, c) => (v.rot ? (mode === 'replace' ? r + (v.rot[c] * DEG - r) * w : r + v.rot[c] * DEG * w) : r));
+    const pos = cb.pivot.map((q, c) => q + (v.pos ? v.pos[c] * w : 0));
+    const sc = v.scale ? v.scale.map((s) => 1 + (s - 1) * w) : [1, 1, 1];
+    return { r0, rot, pos, sc };
+  };
+  // группы (цепь групп до «Всего тела») — в пространстве модели, до корня: сейчас (P, R, M, S) и в покое (P0, R0)
+  const gw = {};
+  for (const g of cust.order) {
+    if (g.kind !== 'group' || !cust.rootChain[g.id]) continue;
+    const L = localOf(g);
+    const Rl = rotZYX(L.rot[0], L.rot[1], L.rot[2]), R0l = rotZYX(L.r0[0], L.r0[1], L.r0[2]);
+    const par = g.parent === 'root' ? null : gw[g.parent];
+    if (g.parent !== 'root' && !par) continue;
+    const x = par
+      ? { P: add3(par.P, app3(par.M, L.pos)), R: mul3(par.R, Rl), M: mul3(mul3(par.M, Rl), diag(L.sc)), S: par.S.map((s, c) => s * L.sc[c]), P0: add3(par.P0, app3(par.R0, g.pivot)), R0: mul3(par.R0, R0l) }
+      : { P: L.pos.slice(), R: Rl, M: mul3(Rl, diag(L.sc)), S: L.sc.slice(), P0: g.pivot.slice(), R0: R0l };
+    x.DR = mul3(x.R, tr3(x.R0)); x.DM = mul3(x.M, tr3(x.R0));
+    gw[g.id] = x;
+  }
   const solveOne = (b) => {
     if (out.bones[b.name]) return out.bones[b.name];
     const p = pose[b.name];
@@ -315,11 +419,15 @@ function solvePose(rig, anim, t, opts) {
     }
     const Dc = b.carried || b.name === 'body' ? (b.name === 'body' ? I3 : D) : I3;
     if (b.carried && b.name !== 'body') carry(p);
-    parentM = mul3(rootR, Dc);
-    const R = mul3(parentM, local);
-    P = rootApply(p.pos);
-    M = mul3(mul3(rootM, mul3(Dc, local)), S);
-    out.bones[b.name] = { M, P, R, local, parentM, rot: p.rot, pos: p.pos, scale: p.scale, restRot: p.restRot };
+    // кость тела в своей группе: группа двигает её вокруг своей опоры
+    let pms = p.pos, Rms = mul3(Dc, local), pre = Dc, Sv = p.scale;
+    const g = cust.groupOf[b.name] && gw[cust.groupOf[b.name]];
+    if (g) { pms = add3(g.P, app3(g.DM, sub3(p.pos, g.P0))); Rms = mul3(g.DR, Rms); pre = mul3(g.DR, Dc); Sv = Sv.map((s, c) => s * g.S[c]); }
+    parentM = mul3(rootR, pre);
+    const R = mul3(rootR, Rms);
+    P = rootApply(pms);
+    M = mul3(mul3(rootM, Rms), diag(Sv));
+    out.bones[b.name] = { M, P, R, local, parentM, rot: p.rot, pos: p.pos, scale: p.scale, restRot: p.restRot, group: g ? cust.groupOf[b.name] : undefined };
     return out.bones[b.name];
   };
   for (const b of rig.bones) solveOne(b);
@@ -342,6 +450,20 @@ function solvePose(rig, anim, t, opts) {
     const P = add3(par.P, app3(par.M, pos));
     const R = mul3(par.R, local);
     out.bones[e.name] = { M: mul3(mul3(mul3(par.M, local), [sc[0], 0, 0, 0, sc[1], 0, 0, 0, sc[2]]), I3), P, R, local, parentM: par.R, rot, pos, scale: sc, restRot: r0, extra: true, visible: true };
+  }
+  // свои кости: висят на родителе (кость тела, своя кость или «Всё тело»)
+  const rootFrame = { P: rootApply([0, 0, 0]), M: rootM, R: rootR };
+  for (const cb of cust.order) {
+    let par = cb.parent === 'root' ? rootFrame : out.bones[cb.parent];
+    if (!par || (par.extra && !par.custom)) continue;
+    // житель без свободных рук: предмет на руке держат скрещённые руки
+    if (par.visible === false && rig.kind === 'villager' && (cb.parent === 'right_arm' || cb.parent === 'left_arm') && out.bones.arms) par = out.bones.arms;
+    const L = localOf(cb);
+    const Rl = rotZYX(L.rot[0], L.rot[1], L.rot[2]);
+    out.bones[cb.id] = {
+      M: mul3(mul3(par.M, Rl), diag(L.sc)), P: add3(par.P, app3(par.M, L.pos)), R: mul3(par.R, Rl), local: Rl, parentM: par.R,
+      rot: L.rot, pos: L.pos, scale: L.sc, restRot: L.r0, custom: cb, visible: par.visible !== false
+    };
   }
   return out;
 }
@@ -421,6 +543,7 @@ function normalizeAnim(raw, idHint) {
   o.events = (Array.isArray(a.events) ? a.events : []).filter((e) => e && typeof e === 'object').map((e) => ({ ...e, t: Math.max(0, Math.round(num(e.t, 0))) })).sort((x, y) => x.t - y.t);
   o.lockLegs = !!a.lockLegs; o.emote = a.emote !== false;
   o.icon = typeof a.icon === 'string' ? a.icon : '';
+  o.bones = normalizeBones(a.bones);
   if (a.builtin) o.builtin = true;
   return o;
 }
@@ -435,6 +558,7 @@ function cleanAnim(a) {
   if (!o.icon) delete o.icon;
   if (!o.stay) delete o.stay;
   if (!o.lockLegs) delete o.lockLegs;
+  if (!o.bones.length) delete o.bones;
   return o;
 }
 const ANIM_ERR = 'error', ANIM_WARN = 'warn';
@@ -466,13 +590,61 @@ function validateAnim(a, known) {
     if (e.sound != null && !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(String(e.sound))) err('Звук «' + e.sound + '»: нужен id вида minecraft:entity.villager.yes');
     if (e.particle != null && !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(String(e.particle))) err('Частицы «' + e.particle + '»: нужен id вида minecraft:heart');
   }
+  validateBones(a, err, warn);
   if (known && a.id && known.has(a.id) && !a.builtin) out.push({ sev: 'info', msg: 'Перекрывает встроенную анимацию «' + a.id + '»' });
   return out;
 }
 
+/** Проверка своих костей (bones) — по-русски. */
+function validateBones(a, err, warn) {
+  if (a.bones == null) return;
+  if (!Array.isArray(a.bones)) { err('Свои кости (bones) должны быть списком'); return; }
+  const list = a.bones.filter((b) => b && typeof b === 'object');
+  if (list.length > CUSTOM_MAX) err('Своих костей ' + list.length + ' — можно не больше ' + CUSTOM_MAX + ' (лишние игра пропустит)');
+  const nm = (b) => '«' + (b.name || b.id || '?') + '»';
+  const KIND = { group: 'Группа', item: 'Предмет', cube: 'Кубик' };
+  const what = (b) => (KIND[b.kind] || 'Своя кость') + ' ' + nm(b);
+  const ids = new Set();
+  const rigNames = new Set([...RIG_BONES.player, ...RIG_BONES.villager]);
+  for (const b of list) {
+    if (!CUSTOM_ID.test(String(b.id || ''))) err(what(b) + ': id «' + b.id + '» должен начинаться с x_ и дальше — маленькие латинские буквы, цифры, _ (например x_sword)');
+    else if (ids.has(b.id)) err(what(b) + ': id «' + b.id + '» повторяется — у каждой кости свой');
+    else if (rigNames.has(b.id)) err(what(b) + ': id совпадает с костью тела');
+    ids.add(b.id);
+    if (!KIND[b.kind]) err('Своя кость ' + nm(b) + ': вид «' + b.kind + '» неизвестен (group — группа, item — предмет, cube — кубик)');
+  }
+  const info = customInfo(list);
+  for (const b of list) {
+    const p = b.parent;
+    if (info.cycles.includes(b.id)) { err(what(b) + ': кости замкнуты в круг — родитель висит на своей же кости. Выбери другого родителя'); continue; }
+    if (!(PARENTABLE.includes(p) || info.byId.has(p))) {
+      if (/^(chest_[lr]|ear_[lr]|tail_\d+|hair_([a-z]+_)?\d+|cape|x_[a-z0-9_]+)$/.test(String(p))) err(what(b) + ': родитель «' + p + '» — деталь персонажа, к ней крепить нельзя. Выбери кость тела или свою кость');
+      else err(what(b) + ': родитель «' + p + '» не найден');
+    }
+    if (b.kind === 'item' && !ITEM_ID.test(String(b.item || ''))) err(what(b) + ': нужен id предмета вида minecraft:iron_sword');
+    if (b.kind === 'cube' && !/^#[0-9a-fA-F]{6}$/.test(String(b.color || ''))) err(what(b) + ': цвет нужен вида #c08040');
+  }
+  const owner = {};
+  for (const g of list) {
+    if (g.kind !== 'group') continue;
+    const kids = Array.isArray(g.children) ? g.children : [];
+    const own = list.some((x) => x.parent === g.id);
+    if (!kids.length && !own) warn('Группа ' + nm(g) + ' пустая — положи в неё кости тела или свои кости');
+    if (kids.length && info.anchor[g.id] && !info.rootChain[g.id]) err('Группа ' + nm(g) + ' висит на кости тела — кости тела в неё класть нельзя (только свои кости). Поставь ей родителя «Всё тело» или другую такую группу');
+    for (const c of kids) {
+      if (c === 'hat' || c === 'nose') { warn('Группа ' + nm(g) + ': ' + (c === 'hat' ? 'шапка' : 'нос') + ' всегда идёт за головой — класть отдельно не нужно (игра пропустит)'); continue; }
+      if (info.byId.has(c)) { err('Группа ' + nm(g) + ': свою кость «' + boneRu(c, a) + '» кладут в группу выбором «Родителя», а не списком'); continue; }
+      if (!GROUPABLE.includes(c)) { err('Группа ' + nm(g) + ': кость «' + c + '» нельзя положить в группу (можно: ' + GROUPABLE.map((x) => BONE_RU[x]).join(', ') + ')'); continue; }
+      if (owner[c] && owner[c] !== g.id) err('Кость «' + BONE_RU[c] + '» лежит в двух группах сразу: «' + boneRu(owner[c], a) + '» и ' + nm(g) + ' — оставь в одной');
+      else owner[c] = g.id;
+    }
+  }
+}
+
 /** Зеркало позы: правое ↔ левое (ключи костей меняются местами, Y и Z поворота — с минусом). */
 function mirrorTracks(tracks) {
-  const sw = (b) => b.replace(/^right_/, '\u0001').replace(/^left_/, 'right_').replace('\u0001', 'left_').replace(/_l$/, '\u0002').replace(/_r$/, '_l').replace('\u0002', '_r');
+  // свои кости (x_…) не переименовываются: их родителей меняет местами mirrorBones
+  const sw = (b) => /^x_/.test(b) ? b : b.replace(/^right_/, '\u0001').replace(/^left_/, 'right_').replace('\u0001', 'left_').replace(/_l$/, '\u0002').replace(/_r$/, '_l').replace('\u0002', '_r');
   const out = {};
   for (const [b, tr] of Object.entries(tracks || {})) {
     const nb = sw(b);
@@ -484,6 +656,17 @@ function mirrorTracks(tracks) {
     out[nb] = t2;
   }
   return out;
+}
+
+/** Зеркало своих костей: родитель правая ↔ левая рука/нога, опора, поворот и кубик — по X. */
+function mirrorBones(bones) {
+  const sw = (b) => ({ right_arm: 'left_arm', left_arm: 'right_arm', right_leg: 'left_leg', left_leg: 'right_leg' })[b] || b;
+  return (bones || []).map((b) => {
+    const o = { ...b, parent: sw(b.parent), pivot: [-b.pivot[0], b.pivot[1], b.pivot[2]], rot: [b.rot[0], -b.rot[1], -b.rot[2]] };
+    if (b.children) o.children = b.children.map(sw);
+    if (b.from && b.size) o.from = [r3(-(b.from[0] + b.size[0])), b.from[1], b.from[2]];
+    return o;
+  });
 }
 
 /** Все времена ключей кости (или всех костей). */
@@ -728,4 +911,4 @@ const ANIM_LIBRARY = [
 function builtinAnim(id) { const a = ANIM_LIBRARY.find((x) => x.id === id); return a ? JSON.parse(JSON.stringify(a)) : null; }
 const BUILTIN_IDS = ANIM_LIBRARY.map((a) => a.id);
 
-module.exports = { ANIM_V, TICKS, SAFE_ID, DEG, BONE_RU, boneRu, BONE_HINT, TARGETS, CATS, EASES, EASE_RU, MODES, CHANNELS, CHANNEL_RU, CHANNEL_UNIT, CHANNEL_DEF, SPRING_DEF, SPRING_FIELDS, EVENT_KINDS, r3, cubicBezier, ease, sampleKeys, blendWeight, rotZYX, eulerZYX, mul3, tr3, app3, I3, axisAngle, WAIST, FEET, playerRig, villagerRig, RIG_BONES, vanillaPose, usesFreeArms, boneMode, animValues, solvePose, rotKeyFromWorld, springStep, newAnim, normalizeAnim, cleanAnim, ANIM_ERR, validateAnim, mirrorTracks, keyTimes, fmtT, ANIM_LIBRARY, builtinAnim, BUILTIN_IDS, ANIM_WARN };
+module.exports = { ANIM_V, TICKS, SAFE_ID, DEG, BONE_RU, boneRu, BONE_HINT, TARGETS, CATS, EASES, EASE_RU, MODES, CHANNELS, CHANNEL_RU, CHANNEL_UNIT, CHANNEL_DEF, SPRING_DEF, SPRING_FIELDS, EVENT_KINDS, CUSTOM_MAX, CUSTOM_ID, ITEM_ID, CUSTOM_KINDS, CUSTOM_KIND_RU, GROUPABLE, PARENTABLE, BODY_CARRIED, ITEM_DISPLAYS, ITEM_PICKS, customBones, customBone, normalizeBones, customInfo, r3, cubicBezier, ease, sampleKeys, blendWeight, rotZYX, eulerZYX, mul3, tr3, app3, I3, axisAngle, WAIST, FEET, playerRig, villagerRig, RIG_BONES, vanillaPose, usesFreeArms, boneMode, animValues, solvePose, rotKeyFromWorld, springStep, newAnim, normalizeAnim, cleanAnim, ANIM_ERR, validateAnim, mirrorTracks, mirrorBones, keyTimes, fmtT, ANIM_LIBRARY, builtinAnim, BUILTIN_IDS, ANIM_WARN };

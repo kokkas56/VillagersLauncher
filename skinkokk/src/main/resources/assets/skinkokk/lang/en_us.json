@@ -61,6 +61,8 @@
   "config.skinkokk.anim.particles": "Animation particles",
   "config.skinkokk.anim.root": "Animations move the whole body",
   "config.skinkokk.anim.firstPerson": "Keep first-person hands",
+  "config.skinkokk.anim.customBones": "Animation items and cubes",
+  "config.skinkokk.anim.customBonesDistance": "Animation items distance (blocks)",
   "config.skinkokk.anim.wheelPerPage": "Emotes per wheel page",
   "config.skinkokk.anim.favorites": "Favourite emotes (first page)",
   "config.skinkokk.anim.allowEmotes": "Allow emotes",

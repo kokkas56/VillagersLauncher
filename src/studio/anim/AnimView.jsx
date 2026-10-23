@@ -2,7 +2,7 @@
 // на 2D-канве — без WebGL, работает везде. Камера-орбита (ПКМ / Alt+ЛКМ — вращать, СКМ / Shift+ПКМ — двигать, колесо — ближе),
 // выбор кости щелчком, гизмо поворота (кольца X/Y/Z по осям кости + свободное вращение внутри) и сдвига.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { app3, mul3, tr3, axisAngle, FEET, I3 } from './animCore.js';
+import { app3, mul3, tr3, axisAngle, FEET, I3, ITEM_PICKS } from './animCore.js';
 
 const AX_COLOR = ['#e05050', '#63c34a', '#4f86ee'];
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -46,8 +46,27 @@ function cubeFaces(cb) {
   ];
 }
 
+// свои кости: предмет — заглушка-дощечка цвета предмета (без текстур), кубик — свой цвет
+const ITEM_COLOR = Object.fromEntries(ITEM_PICKS.map(([id, , c]) => [id, c]));
+export function itemColor(id) {
+  if (ITEM_COLOR[id]) return ITEM_COLOR[id];
+  let h = 0;
+  for (const ch of String(id || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return 'hsl(' + (h % 360) + ', 45%, 55%)';
+}
+export function itemShort(id) { const s = String(id || '?'); const i = s.indexOf(':'); return (i >= 0 ? s.slice(i + 1) : s).replace(/_/g, ' '); }
+function customCubes(cb) {
+  if (cb.kind === 'cube') return [{ from: cb.from, size: cb.size, color: cb.color }];
+  if (cb.kind === 'item') {
+    const color = itemColor(cb.item);
+    // «в руке» — дощечка от опоры вперёд (−Z), «плоско» — квадрат 8×8 по центру опоры
+    return cb.display === 'fixed' ? [{ from: [-4, -4, -0.5], size: [8, 8, 1], color }] : [{ from: [-0.5, -2, -11], size: [1, 4, 13], color }];
+  }
+  return [];
+}
+
 /** Все грани модели в экранных координатах (для рисования и выбора). */
-function buildFaces(rig, solved, extra, cam, texes) {
+function buildFaces(rig, solved, extra, cam, texes, custom) {
   const out = [];
   const add1 = (boneName, cubes, s, texFor) => {
     for (const cb of cubes) {
@@ -74,6 +93,11 @@ function buildFaces(rig, solved, extra, cam, texes) {
     const s = solved.bones[e.name];
     if (!s) continue;
     add1(e.name, e.cubes || [], s, (cb) => (cb.tex === 'skin' ? texes.skin : texes.extra && cb.uv ? texes.extra : null));
+  }
+  for (const cb of custom || []) {
+    const s = solved.bones[cb.id];
+    if (!s || !s.visible || cb.kind === 'group') continue;
+    add1(cb.id, customCubes(cb), s, () => null);
   }
   out.sort((a, b) => b.depth - a.depth);
   return out;
@@ -129,7 +153,7 @@ export function gizmoFrame(bone, solved) {
   return { P: s.P, R: s.R, parentM: s.parentM };
 }
 
-export default function AnimView({ rig, solved, extra, texes, sel, onSelect, tool, onRotate, onMove, cam, setCam, showGrid, hp, overlay, axesSpace }) {
+export default function AnimView({ rig, solved, extra, custom, texes, sel, onSelect, tool, onRotate, onMove, cam, setCam, showGrid, hp, overlay, axesSpace }) {
   const wrap = useRef(null);
   const cv = useRef(null);
   const [size, setSize] = useState({ w: 600, h: 400 });
@@ -137,6 +161,7 @@ export default function AnimView({ rig, solved, extra, texes, sel, onSelect, too
   const drag = useRef(null);
   const facesRef = useRef([]);
   const gizRef = useRef(null);
+  const marksRef = useRef([]); // группы: ромбики на экране (для выбора)
 
   useLayoutEffect(() => {
     const el = wrap.current;
@@ -180,9 +205,37 @@ export default function AnimView({ rig, solved, extra, texes, sel, onSelect, too
       ctx.fillStyle = 'rgba(0,0,0,0.28)';
       ctx.beginPath(); ctx.ellipse(sc[0], sc[1], r, r * 0.35 + 2, 0, 0, Math.PI * 2); ctx.fill();
     }
-    const faces = buildFaces(rig, solved, extra, C, texes || {});
+    const faces = buildFaces(rig, solved, extra, C, texes || {}, custom);
     facesRef.current = faces;
     for (const f of faces) drawFace(ctx, f, sel && f.bone === sel);
+    // свои кости: группы — ромбик с осями на опоре, предметы — подпись
+    const marks = [];
+    ctx.font = '10px Segoe UI, sans-serif';
+    for (const cb of custom || []) {
+      const s = solved.bones[cb.id];
+      if (!s) continue;
+      const pc = C.proj(toWorld(s.P));
+      if (cb.kind === 'group') {
+        const on = sel === cb.id;
+        for (let i = 0; i < 3; i++) {
+          const e = C.proj(toWorld(add(s.P, scl([s.R[i], s.R[3 + i], s.R[6 + i]], 3))));
+          ctx.strokeStyle = AX_COLOR[i]; ctx.globalAlpha = on ? 1 : 0.7; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.moveTo(pc[0], pc[1]); ctx.lineTo(e[0], e[1]); ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+        const r = on ? 7 : 5.5;
+        ctx.beginPath(); ctx.moveTo(pc[0], pc[1] - r); ctx.lineTo(pc[0] + r, pc[1]); ctx.lineTo(pc[0], pc[1] + r); ctx.lineTo(pc[0] - r, pc[1]); ctx.closePath();
+        ctx.fillStyle = on ? '#ffd25a' : 'rgba(255,210,90,0.55)'; ctx.fill();
+        ctx.strokeStyle = on ? '#fff' : 'rgba(30,30,30,0.9)'; ctx.lineWidth = 1; ctx.stroke();
+        ctx.fillStyle = on ? '#fff' : 'rgba(255,230,160,0.85)';
+        ctx.fillText(cb.name || cb.id, pc[0] + 9, pc[1] - 6);
+        marks.push({ bone: cb.id, x: pc[0], y: pc[1] });
+      } else if (cb.kind === 'item' && s.visible) {
+        ctx.fillStyle = sel === cb.id ? '#fff' : 'rgba(230,230,230,0.75)';
+        ctx.fillText(itemShort(cb.item), pc[0] + 6, pc[1] + 12);
+      }
+    }
+    marksRef.current = marks;
     // гизмо
     gizRef.current = null;
     if (sel && (tool === 'rotate' || tool === 'move')) {
@@ -289,7 +342,9 @@ export default function AnimView({ rig, solved, extra, texes, sel, onSelect, too
     }
     return null;
   };
-  const pick = (x, y) => { const fs = facesRef.current; for (let i = fs.length - 1; i >= 0; i--) if (inQuad(fs[i].ps, x, y)) return fs[i].bone; return null; };
+  const pick = (x, y) => {
+    for (const m of marksRef.current) if (Math.abs(x - m.x) + Math.abs(y - m.y) < 9) return m.bone;
+    const fs = facesRef.current; for (let i = fs.length - 1; i >= 0; i--) if (inQuad(fs[i].ps, x, y)) return fs[i].bone; return null; };
 
   const onDown = (e) => {
     const [x, y] = local(e);

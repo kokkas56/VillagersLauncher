@@ -15,11 +15,13 @@ import { slug, uniqueId } from '../model.js';
 import {
   playerRig, villagerRig, solvePose, rotKeyFromWorld, eulerZYX, mul3, tr3, DEG, r3, boneRu, BONE_HINT, TARGETS, CATS, MODES, CHANNELS,
   CHANNEL_RU, CHANNEL_UNIT, SPRING_FIELDS, SPRING_DEF, EVENT_KINDS, newAnim, normalizeAnim, cleanAnim, validateAnim, animValues, blendWeight,
-  RIG_BONES, springStep, app3, fmtT, boneMode
+  RIG_BONES, springStep, app3, fmtT, boneMode, BONE_RU, customBones, customInfo, CUSTOM_KINDS, CUSTOM_KIND_RU, CUSTOM_MAX, GROUPABLE, PARENTABLE,
+  ITEM_DISPLAYS, ITEM_PICKS, WAIST
 } from './animCore.js';
 import { ANIM_LIBRARY, builtinAnim, BUILTIN_IDS } from './animLib.js';
 import {
-  setKey, setKeyComp, valueAt, keyState, deleteKeys, copyKeys, pasteKeys, keyBone, mirrorAll, mirrorPoseAt, retime, clearBone, hasKey
+  setKey, setKeyComp, valueAt, keyState, deleteKeys, copyKeys, pasteKeys, keyBone, mirrorAll, mirrorPoseAt, retime, clearBone, hasKey,
+  customId, addCustomBone, updateCustomBone, removeCustomBone, setGroupChild, customDescendants
 } from './animOps.js';
 import AnimView, { defaultPlayerTexture, defaultVillagerTexture } from './AnimView.jsx';
 import AnimTimeline, { evKind } from './AnimTimeline.jsx';
@@ -310,7 +312,36 @@ export default function AnimTab() {
       edit((a) => { const evs = [...(a.events || []), ev].sort((x, y) => x.t - y.t); idx = evs.indexOf(ev); return { ...a, events: evs }; });
       setSelEv(idx); setRtab('events');
     },
-    delEvent: (i) => { edit((a) => ({ ...a, events: a.events.filter((_, j) => j !== i) })); setSelEv(null); }
+    delEvent: (i) => { edit((a) => ({ ...a, events: a.events.filter((_, j) => j !== i) })); setSelEv(null); },
+    // свои кости: группа (пустышка), предмет, кубик — крепятся к выбранной кости (или к правой руке / «Всему телу»)
+    addCustom: (kind) => {
+      if (!anim) return;
+      const cust = customBones(anim);
+      if (cust.length >= CUSTOM_MAX) { toast('Своих костей не больше ' + CUSTOM_MAX, 'error'); return; }
+      const info = customInfo(cust);
+      const s = selBone;
+      const selCustom = s && info.byId.get(s);
+      const okParent = s && (PARENTABLE.includes(s) || !!selCustom);
+      const n = cust.filter((b) => b.kind === kind).length + 1;
+      const handPivot = (p) => (p === 'right_arm' ? [-1, 10, -2] : p === 'left_arm' ? [1, 10, -2] : p === 'root' ? [0, 12, -6] : info.byId.has(p) ? [0, 0, 0] : [0, 0, -3]);
+      let b, put = null;
+      if (kind === 'group') {
+        const rb = rig.bones.find((x) => x.name === s);
+        const asChild = s && GROUPABLE.includes(s);
+        b = { id: customId(anim, 'group'), name: 'Группа ' + n, kind, parent: selCustom && selCustom.kind === 'group' ? s : 'root', pivot: asChild ? (s === 'body' ? WAIST.slice() : rb ? rb.pivot.slice() : [0, 12, 0]) : selCustom ? [0, 0, 0] : WAIST.slice(), rot: [0, 0, 0], children: [] };
+        if (asChild) put = s;
+      } else {
+        const parent = okParent ? s : 'right_arm';
+        const base = { kind, parent, pivot: handPivot(parent), rot: [0, 0, 0] };
+        b = kind === 'item'
+          ? { ...base, id: customId(anim, 'item'), name: 'Меч', item: 'minecraft:iron_sword', display: parent === 'right_arm' || parent === 'left_arm' ? 'hand' : 'fixed' }
+          : { ...base, id: customId(anim, 'cube'), name: 'Кубик ' + n, from: [-2, -2, -2], size: [4, 4, 4], color: '#c08040' };
+      }
+      edit((a) => { let x = addCustomBone(a, b); if (x && put) x = setGroupChild(x, b.id, put, true); return x; });
+      setSelBone(b.id); setRtab('bone');
+      learnMark('an-bone');
+    },
+    removeCustom: (id) => { edit((a) => removeCustomBone(a, id)); setSelBone(null); setSelKeys([]); }
   };
 
   // гизмо → ключи
@@ -368,12 +399,33 @@ export default function AnimTab() {
   });
 
   // ---------- что показывать ----------
-  const bonesList = useMemo(() => {
+  // дерево костей: тело, детали персонажа, свои кости — под своими родителями (кости тела из группы — под группой)
+  const boneTree = useMemo(() => {
     const base = RIG_BONES[model === 'villager' ? 'villager' : 'player'].slice();
-    for (const b of extra.bones) if (!base.includes(b.name)) base.push(b.name);
-    for (const b of Object.keys((anim && anim.tracks) || {})) if (!base.includes(b)) base.push(b);
-    return base;
+    const DEPTH = { root: 0, body: 1, head: 2, hat: 2, right_arm: 2, left_arm: 2, arms: 2, nose: 3, right_leg: 1, left_leg: 1 };
+    const cust = customBones(anim);
+    const info = customInfo(cust);
+    const placed = {};
+    for (const g of cust) if (g.kind === 'group') for (const c of g.children || []) if (base.includes(c) && !placed[c]) placed[c] = g.id;
+    const kids = {};
+    for (const b of cust) (kids[b.parent] = kids[b.parent] || []).push(b.id);
+    const out = [], done = new Set();
+    const emit = (name, depth) => {
+      if (done.has(name)) return;
+      done.add(name);
+      out.push({ name, depth });
+      const cb = info.byId.get(name);
+      if (cb && cb.kind === 'group') for (const c of cb.children || []) if (placed[c] === cb.id) emit(c, depth + 1);
+      for (const k of kids[name] || []) emit(k, depth + 1);
+    };
+    for (const b of base) if (!placed[b]) emit(b, DEPTH[b] == null ? 1 : DEPTH[b]);
+    for (const b of extra.bones) emit(b.name, 2);
+    for (const b of cust) emit(b.id, 1); // родитель не найден или круг — в конце (их покажет «Проверка»)
+    for (const b of base) emit(b, 1);
+    for (const b of Object.keys((anim && anim.tracks) || {})) emit(b, 1);
+    return out;
   }, [model, extra, anim]);
+  const bonesList = useMemo(() => boneTree.map((x) => x.name), [boneTree]);
   const problems = useMemo(() => (anim ? validateAnim(anim, new Set(BUILTIN_IDS)) : []), [anim]);
   const splitTl = (e) => {
     e.preventDefault();
@@ -406,7 +458,7 @@ export default function AnimTab() {
         {VIEWS.map(([id, l, yaw, pitch]) => <button key={id} className="c4-ib wide" onClick={() => setCam({ ...cam, yaw, pitch, dist: Math.max(cam.dist, 100) })} {...hp('Вид: ' + l + '.')}>{l}</button>)}
         <button className="c4-ib wide" onClick={() => setCam(DEF_CAM)} {...hp('Вернуть вид по умолчанию.')}><I name="frame" size={13} /></button>
         <div className="grow" />
-        <span className="an-status">{anim ? (anim.name || anim.id) + ' · ' + tInt + ' т / ' + anim.length + (anim.loop ? ' · по кругу' : '') + (selBone ? ' · ' + boneRu(selBone) : '') : ''}</span>
+        <span className="an-status">{anim ? (anim.name || anim.id) + ' · ' + tInt + ' т / ' + anim.length + (anim.loop ? ' · по кругу' : '') + (selBone ? ' · ' + boneRu(selBone, anim) : '') : ''}</span>
       </div>
     </>
   );
@@ -434,7 +486,7 @@ export default function AnimTab() {
           </div>
           <div className="an-viewwrap">
             {anim ? (
-              <AnimView rig={rig} solved={solved} extra={extra.bones} texes={{ skin: model === 'villager' ? tex.villager : model === 'valley' ? tex.valley : tex.player, extra: extra.tex }} sel={selBone} onSelect={(b) => { setSelBone(b); if (b) setRtab('bone'); }} tool={tool} onRotate={onRotate} onMove={onMove} cam={cam} setCam={setCam} hp={hp} overlay={overlay} />
+              <AnimView rig={rig} solved={solved} extra={extra.bones} custom={customBones(anim)} texes={{ skin: model === 'villager' ? tex.villager : model === 'valley' ? tex.valley : tex.player, extra: extra.tex }} sel={selBone} onSelect={(b) => { setSelBone(b); if (b) setRtab('bone'); }} tool={tool} onRotate={onRotate} onMove={onMove} cam={cam} setCam={setCam} hp={hp} overlay={overlay} />
             ) : (
               <div className="an-empty"><div className="c4-soon-card"><h3><I name="actor" size={18} /> Анимации</h3><p>Слева — библиотека: {ANIM_LIBRARY.length} встроенных движений (помахать, поклон, сесть, танец…) и анимации проекта. Открой любую — увидишь её ключи, поправь, сохрани как свою. Или начни с нуля.</p><div style={{ display: 'flex', gap: 6 }}><button className="c4-btn prim" onClick={() => setModal({ kind: 'new' })}><I name="plus" size={12} /> Новая анимация</button><button className="c4-btn" onClick={() => open('wave', 'builtin')}>Открыть «Помахать»</button></div></div></div>
             )}
@@ -446,7 +498,7 @@ export default function AnimTab() {
           </div>
           <div className="an-rbody">
             {!anim ? <div className="c4-tree-empty">Открой анимацию.</div>
-              : rtab === 'bone' ? <BonePane anim={anim} bones={bonesList} sel={selBone} setSel={setSelBone} time={tInt} edit={edit} act={act} hp={hp} extra={extra.bones} solved={solved} />
+              : rtab === 'bone' ? <BonePane anim={anim} tree={boneTree} openMenu={openMenu} rig={rig} sel={selBone} setSel={setSelBone} time={tInt} edit={edit} act={act} hp={hp} extra={extra.bones} solved={solved} />
                 : rtab === 'anim' ? <AnimPane anim={anim} edit={edit} hp={hp} rename={renameCur} source={cur.source} />
                   : rtab === 'events' ? <EventsPane anim={anim} edit={edit} hp={hp} sel={selEv} setSel={setSelEv} act={act} time={tInt} setTime={setTime} />
                     : <CheckPane problems={problems} />}
@@ -525,19 +577,113 @@ function NewModal({ kind, base, onClose, onCreate }) {
 }
 
 // ---------- кость ----------
-function BonePane({ anim, bones, sel, setSel, time, edit, act, hp, extra, solved }) {
+const KIND_ICON = { group: 'group', item: 'object', cube: 'cube3' };
+function BonePane({ anim, tree, sel, setSel, time, edit, act, hp, extra, solved, openMenu, rig }) {
   const extraNames = new Set((extra || []).map((b) => b.name));
+  const cust = customBones(anim);
+  const custById = new Map(cust.map((b) => [b.id, b]));
+  const full = cust.length >= CUSTOM_MAX;
+  const addMenu = (e) => openMenu(e, [
+    { head: 'Своя кость · ' + cust.length + ' из ' + CUSTOM_MAX },
+    ...CUSTOM_KINDS.map(([k, l, h]) => ({ label: l, icon: KIND_ICON[k], disabled: full, hint: h + (k === 'group' ? ' Если выбрана кость тела — она сразу ляжет в группу.' : ' Крепится к выбранной кости (или к правой руке).'), run: () => act.addCustom(k) }))
+  ], { x: e.currentTarget.getBoundingClientRect().left, y: e.currentTarget.getBoundingClientRect().bottom + 2 });
   return (
     <>
       <div className="an-bones" data-learn="an-bones">
-        {bones.map((b) => {
+        <div className="an-bones-h">
+          <span className="dim">Кости</span><span className="grow" />
+          <button className="c4-btn sm" data-learn="an-bone-add" disabled={full} onClick={addMenu} {...hp('+ Кость: своя кость этой анимации — группа-пустышка (двигает кости тела вокруг своей опоры), предмет (меч, факел, цветок…) или цветной кубик. Предметы и кубики видны в игре, только пока играет анимация. Не больше ' + CUSTOM_MAX + '.')}><I name="plus" size={11} /> Кость</button>
+        </div>
+        {tree.map(({ name: b, depth }) => {
           const has = !!anim.tracks[b];
-          const depth = ['head', 'right_arm', 'left_arm', 'arms', 'hat'].includes(b) ? 2 : b === 'root' ? 0 : b === 'nose' ? 3 : extraNames.has(b) ? 2 : 1;
-          return <div key={b} className={'an-brow' + (sel === b ? ' on' : '')} style={{ paddingLeft: 6 + depth * 12 }} onClick={() => setSel(b)} {...hp((BONE_HINT[b] || boneRu(b)) + (extraNames.has(b) ? ' (деталь персонажа)' : ''))}><span className={'an-bdot' + (has ? ' on' : '')} />{boneRu(b)}{extraNames.has(b) && <span className="an-badge p">перс.</span>}{has && <span className="dim" style={{ marginLeft: 'auto' }}>{Object.values(anim.tracks[b]).reduce((n, k) => n + k.length, 0)}◆</span>}</div>;
+          const cb = custById.get(b);
+          const hint = cb ? (CUSTOM_KIND_RU[cb.kind] || 'Своя кость') + ' «' + (cb.name || cb.id) + '» (' + cb.id + '). ' + ((CUSTOM_KINDS.find((k) => k[0] === cb.kind) || [])[2] || '') : (BONE_HINT[b] || boneRu(b)) + (extraNames.has(b) ? ' (деталь персонажа)' : '');
+          return (
+            <div key={b} className={'an-brow' + (sel === b ? ' on' : '')} style={{ paddingLeft: 6 + depth * 12 }} onClick={() => setSel(b)} {...hp(hint)}>
+              <span className={'an-bdot' + (has ? ' on' : '')} />
+              {cb && <I name={KIND_ICON[cb.kind] || 'marker'} size={12} />}
+              {boneRu(b, anim)}
+              {extraNames.has(b) && <span className="an-badge p">перс.</span>}
+              {cb && <span className={'an-badge ' + (cb.kind === 'group' ? 'g' : 'x')}>{(CUSTOM_KIND_RU[cb.kind] || '?').toLowerCase()}</span>}
+              {has && <span className="dim" style={{ marginLeft: 'auto' }}>{Object.values(anim.tracks[b]).reduce((n, k) => n + k.length, 0)}◆</span>}
+            </div>
+          );
         })}
       </div>
-      {sel ? <BoneAttrs anim={anim} bone={sel} time={time} edit={edit} act={act} hp={hp} isExtra={extraNames.has(sel)} extraDef={(extra || []).find((x) => x.name === sel)} solved={solved} /> : <div className="c4-tree-empty">Выбери кость — щелчком по модели или в списке.</div>}
+      {sel ? <BoneAttrs anim={anim} bone={sel} time={time} edit={edit} act={act} hp={hp} isExtra={extraNames.has(sel)} extraDef={(extra || []).find((x) => x.name === sel)} solved={solved} custom={custById.get(sel)} rig={rig} /> : <div className="c4-tree-empty">Выбери кость — щелчком по модели или в списке.</div>}
     </>
+  );
+}
+
+// своя кость: имя, родитель, опора, поворот по умолчанию; группа — какие кости тела в ней; предмет — id и вид; кубик — размер и цвет
+function CustomAttrs({ anim, cb, edit, act, hp }) {
+  const up = (patch) => edit((a) => updateCustomBone(a, cb.id, patch));
+  const cust = customBones(anim);
+  const info = customInfo(cust);
+  const desc = customDescendants(anim, cb.id);
+  const parents = [
+    ['root', 'Всё тело (корень)'],
+    ...PARENTABLE.filter((p) => p !== 'root').map((p) => [p, BONE_RU[p] + (p === 'arms' || p === 'nose' ? ' (житель)' : '')]),
+    ...cust.filter((b) => b.id !== cb.id && !desc.has(b.id)).map((b) => [b.id, (b.name || b.id) + ' — ' + (CUSTOM_KIND_RU[b.kind] || 'своя').toLowerCase()])
+  ];
+  if (!parents.some((p) => p[0] === cb.parent)) parents.push([cb.parent, cb.parent + ' (нет такой кости)']);
+  const v3 = (key, step, hintAxis) => (
+    <div className="an-xyz">{[0, 1, 2].map((c) => <Num key={c} ax={'XYZ'[c]} value={cb[key][c]} step={step} onChange={(n) => { const v = cb[key].slice(); v[c] = n; up({ [key]: v }); }} />)}{hintAxis}</div>
+  );
+  const ownKids = cust.filter((b) => b.parent === cb.id);
+  const isGroup = cb.kind === 'group';
+  const canHoldBody = isGroup && info.rootChain[cb.id];
+  const pickName = (label) => label.charAt(0).toUpperCase() + label.slice(1);
+  const autoName = !cb.name || /^Предмет( \d+)?$/.test(cb.name) || ITEM_PICKS.some(([, l]) => pickName(l) === cb.name);
+  return (
+    <Sec title={(CUSTOM_KIND_RU[cb.kind] || 'Своя кость') + ' · своя кость'}>
+      <div className="an-hint">{isGroup ? 'Группа без вида: поворот, сдвиг и размер группы двигают всё, что в ней, вокруг её опоры (ромбик на модели). Ключи ставятся как у любой кости.' : 'Видна в игре только пока играет эта анимация (появляется и исчезает со входом и выходом). Ключи ставятся как у любой кости.'}</div>
+      <ARow label="Название" hint="Как кость называется в списке и на таймлайне (по-русски)."><Text value={cb.name} onChange={(v) => up({ name: v })} /></ARow>
+      <ARow label="id" hint="Имя кости в файле: x_… латиницей. По нему игра находит ключи кости."><span className="mono dim" style={{ fontSize: 11 }}>{cb.id}</span></ARow>
+      <ARow label="Родитель" hint="К чему кость крепится: кость тела (идёт за её поворотом), своя кость (например, группа) или «Всё тело». Сменить родителя — кость перевесится; опора задаётся в пространстве родителя.">
+        <Select value={cb.parent} onChange={(v) => up({ parent: v })} options={parents} />
+      </ARow>
+      <ARow label="Опора" hint={'Точка, вокруг которой кость крутится, в пикселях (1/16 блока), в пространстве родителя — как pivot у ModelPart. Y + — вниз. На руке: 0,0,0 — плечо, Y 10 — кисть. На «Всём теле»: 0,0,0 — шея, 0,12,0 — пояс, 0,24,0 — ступни.'}>{v3('pivot', 0.5)}</ARow>
+      <ARow label="Поворот" hint="Поворот по умолчанию, градусы X / Y / Z — как кость стоит без ключей. Ключи «Поворот» прибавляются к нему.">{v3('rot', 5)}</ARow>
+      {isGroup && (
+        <>
+          <div className="an-subh" {...hp('Кости тела в этой группе. Кость может быть только в одной группе. Туловище в группе несёт с собой голову и руки (если они не в другой группе). Шапка и нос всегда идут за головой.')}>Кости тела в группе</div>
+          {!canHoldBody && <div className="an-hint">Группа висит на кости тела — кости тела в неё класть нельзя (только свои). Поставь ей родителя «Всё тело», чтобы класть голову, руки, ноги.</div>}
+          {canHoldBody && GROUPABLE.map((c) => {
+            const owner = cust.find((g) => g.kind === 'group' && g.id !== cb.id && (g.children || []).includes(c));
+            const on = (cb.children || []).includes(c);
+            return (
+              <label key={c} className="an-chkrow" {...hp(on ? 'Вынуть «' + BONE_RU[c] + '» из группы.' : owner ? '«' + BONE_RU[c] + '» сейчас в группе «' + (owner.name || owner.id) + '» — галочка перенесёт её сюда.' : 'Положить «' + BONE_RU[c] + '» в группу: она будет двигаться вместе с группой.')}>
+                <input type="checkbox" checked={on} onChange={(e) => edit((a) => setGroupChild(a, cb.id, c, e.target.checked))} /> {BONE_RU[c]}{c === 'arms' ? ' (житель)' : ''}
+                {owner && !on && <span className="dim"> · в «{owner.name || owner.id}»</span>}
+              </label>
+            );
+          })}
+          <div className="an-hint">{ownKids.length ? 'Свои кости в группе: ' + ownKids.map((b) => b.name || b.id).join(', ') + '.' : 'Свои кости (предметы, кубики, другие группы) кладутся в группу выбором «Родителя» у них.'}</div>
+        </>
+      )}
+      {cb.kind === 'item' && (
+        <>
+          <ARow label="Предмет" hint="id предмета Minecraft или мода: minecraft:iron_sword, minecraft:torch… В Студии он показан цветной дощечкой, в игре — настоящим предметом.">
+            <Text value={cb.item} mono onChange={(v) => up({ item: v.trim() })} />
+          </ARow>
+          <div className="c4-btnrow an-picks">
+            {ITEM_PICKS.map(([id, l]) => <button key={id} className={'c4-btn sm' + (cb.item === id ? ' on' : '')} onClick={() => up(autoName ? { item: id, name: pickName(l) } : { item: id })} {...hp('Быстрый выбор: ' + l + ' (' + id + ').')}>{l}</button>)}
+          </div>
+          <ARow label="Как держать" hint={ITEM_DISPLAYS.map((d) => d[1] + ' — ' + d[2]).join(' ')}><Select value={cb.display} onChange={(v) => up({ display: v })} options={ITEM_DISPLAYS.map(([k, l]) => [k, l])} /></ARow>
+        </>
+      )}
+      {cb.kind === 'cube' && (
+        <>
+          <ARow label="Угол (от)" hint="Ближний угол кубика от опоры, пиксели (как addBox у ModelPart): −2,−2,−2 при размере 4 — кубик по центру опоры.">{v3('from', 0.5)}</ARow>
+          <ARow label="Размер" hint="Ширина, высота, глубина в пикселях (0,1–32).">{v3('size', 0.5)}</ARow>
+          <ARow label="Цвет" hint="Цвет кубика (в игре — сплошной цвет со светом и тенью)."><input type="color" className="an-color" value={/^#[0-9a-f]{6}$/i.test(cb.color) ? cb.color : '#c08040'} onChange={(e) => up({ color: e.target.value })} /></ARow>
+        </>
+      )}
+      <div className="c4-btnrow">
+        <button className="c4-btn sm danger" onClick={() => act.removeCustom(cb.id)} {...hp('Удалить кость вместе с её ключами. Свои кости, что висели на ней, перейдут к её родителю; кости тела из группы вернутся на место.')}><I name="trash" size={11} /> Удалить кость</button>
+      </div>
+    </Sec>
   );
 }
 function KeyAllToggle({ hp }) {
@@ -549,7 +695,7 @@ function KeyAllToggle({ hp }) {
     </label>
   );
 }
-function BoneAttrs({ anim, bone, time, edit, act, hp, isExtra, extraDef }) {
+function BoneAttrs({ anim, bone, time, edit, act, hp, isExtra, extraDef, custom }) {
   const modeOv = anim.modes && anim.modes[bone];
   const row = (ch) => {
     const v = valueAt(anim, bone, ch, time);
@@ -569,8 +715,9 @@ function BoneAttrs({ anim, bone, time, edit, act, hp, isExtra, extraDef }) {
   const spDef = { ...SPRING_DEF, ...((extraDef && extraDef.spring) || {}) };
   return (
     <div className="an-attrs">
-      <Sec title={boneRu(bone)}>
-        <div className="an-hint">{BONE_HINT[bone] || (isExtra ? 'Деталь персонажа (трек «Персонаж»). Её ключи складываются с пружиной.' : 'Кость.')}</div>
+      {custom && <CustomAttrs anim={anim} cb={custom} edit={edit} act={act} hp={hp} />}
+      <Sec title={custom ? 'Ключи · ' + boneRu(bone, anim) : boneRu(bone)}>
+        <div className="an-hint">{custom ? 'Поворот и сдвиг — от позы по умолчанию (опора, поворот выше), размер — множитель.' : BONE_HINT[bone] || (isExtra ? 'Деталь персонажа (трек «Персонаж»). Её ключи складываются с пружиной.' : 'Кость.')}</div>
         {CHANNELS.map(row)}
         <ARow label="Режим" hint="Добавить — поза прибавляется к обычной (ходьба, взгляд живые). Заменить — только поза анимации.">
           <Select value={modeOv || ''} onChange={(v) => edit((a) => { const m = { ...(a.modes || {}) }; if (v) m[bone] = v; else delete m[bone]; return { ...a, modes: m }; })} options={[['', 'как у анимации (' + (anim.mode === 'replace' ? 'заменить' : 'добавить') + ')'], ...MODES.map(([k, l]) => [k, l])]} />
@@ -582,7 +729,7 @@ function BoneAttrs({ anim, bone, time, edit, act, hp, isExtra, extraDef }) {
           <button className="c4-btn sm" onClick={() => act.clearBone(bone)} {...hp('Удалить все ключи кости.')}><I name="trash" size={11} /></button>
         </div>
       </Sec>
-      {(isExtra || Object.keys(sp).length > 0 || /^(chest_|ear_|tail_|hair_|cape|x_)/.test(bone)) && (
+      {!custom && (isExtra || Object.keys(sp).length > 0 || /^(chest_|ear_|tail_|hair_|cape|x_)/.test(bone)) && (
         <Sec title="Пружина («вес»)">
           <div className="an-hint">Модели Minecraft — кубики, их нельзя «гнуть» весами по вершинам. Здесь вес — это насколько деталь отстаёт и раскачивается за родителем (пружина). Значения ниже — только на время этой анимации; пусто — как у персонажа.</div>
           {SPRING_FIELDS.map(([k, l, mn, mx, st, h]) => (

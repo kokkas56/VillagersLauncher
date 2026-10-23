@@ -61,6 +61,8 @@
   "config.skinkokk.anim.particles": "Частицы анимаций",
   "config.skinkokk.anim.root": "Анимации двигают всё тело",
   "config.skinkokk.anim.firstPerson": "Не трогать руки от первого лица",
+  "config.skinkokk.anim.customBones": "Предметы и кубики из анимаций",
+  "config.skinkokk.anim.customBonesDistance": "Дальность предметов анимаций (блоки)",
   "config.skinkokk.anim.wheelPerPage": "Эмоций на странице колеса",
   "config.skinkokk.anim.favorites": "Любимые эмоции (первая страница)",
   "config.skinkokk.anim.allowEmotes": "Разрешить эмоции игрокам",
