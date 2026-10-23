@@ -245,7 +245,7 @@ function ServerGame({ t, toast, hp, setHp, running }) {
         <b className="small">{t('Новый мир')}</b>
         <div className="row wrap">
           <label className="small grow">{t('Сид')}<input className="input mono" value={g.seed} placeholder={t('пусто — случайный')} onChange={val('seed')} disabled={g.worldExists} /></label>
-          <label className="small">{t('Тип мира')}<select className="input" value={g.levelType} onChange={val('levelType')} disabled={g.worldExists}>{LT.map(([v, l]) => <option key={v} value={v}>{t(l)}</option>)}</select></label>
+          <label className="small">{t('Тип мира')}<select className="input" value={g.levelType} onChange={val('levelType')} disabled={g.worldExists}>{(LT.some(([v]) => v === g.levelType) ? LT : [...LT, [g.levelType, g.levelType]]).map(([v, l]) => <option key={v} value={v}>{t(l)}</option>)}</select></label>
         </div>
         <small className="muted">{g.worldExists ? t('Мир сервера уже создан — сид и тип мира действуют только для нового мира (создай его выше).') : t('Сид и тип применятся, когда сервер впервые создаст этот мир.')}</small>
         <button className="btn sm primary" disabled={saving} onClick={save}>{saving ? t('Сохраняю…') : t('Сохранить настройки игры')}</button>

@@ -9,7 +9,7 @@ const net = require('net');
 require('../sync-cosmetics.cjs');
 const C = require('../../electron/friends-core.cjs');
 const X = require('../../electron/cosmetics.cjs');
-const { createLink } = require('../../electron/partylink.cjs');
+const { createLink, musicMessage } = require('../../electron/partylink.cjs');
 
 let n = 0;
 const tests = [];
@@ -237,6 +237,13 @@ t('экипировка и карта из игры чистятся', () => {
   assert.deepStrictEqual(C.cleanMap({ newWorld: { name: 'Мир: новый?', seed: 42, type: 'amplified' } }), { kind: 'new', name: 'Мир новый', seed: '42', type: 'amplified' });
   assert.deepStrictEqual(C.cleanMap({ newWorld: { type: 'weird' } }), { kind: 'new', name: 'Мир отряда', seed: '', type: 'normal' });
   assert.deepStrictEqual(C.cleanMap({ server: 'Мир сервера' }), { kind: 'server', name: 'Мир сервера' });
+  // тип мира — любой пресет мира из игры (моды сборки), в server.properties как level-type
+  assert.deepStrictEqual(C.cleanMap({ newWorld: { name: 'Сюжет', type: 'kokkstory:journey' } }), { kind: 'new', name: 'Сюжет', seed: '', type: 'kokkstory:journey' });
+  assert.strictEqual(C.levelTypeOf('kokkstory:journey'), 'kokkstory:journey');
+  assert.strictEqual(C.levelTypeOf('amplified'), 'minecraft:amplified');
+  assert.strictEqual(C.levelTypeOf('minecraft:flat'), 'minecraft:flat');
+  assert.strictEqual(C.levelTypeOf('../x:y'), 'minecraft:normal');
+  assert.strictEqual(C.levelTypeOf('A B'), 'minecraft:normal');
 });
 
 // ---------------- косметика ----------------
@@ -374,6 +381,17 @@ t('связь: без hello за 5 с — закрывается', async () => {
   await g.closed();
   assert.ok(Date.now() - t0 >= 4500);
   link.stop();
+});
+
+t('музыка лобби: только треки с файлом и правильным id, выбранный — из них', () => {
+  const m = musicMessage([{ id: 'default', name: 'Мелодия', file: '/g/.villagers/music/default.v1.wav' }, { id: 'bad id', file: '/x' }, { id: 'deep', file: '' },
+    { id: 'chains', name: 'Кандальный блюз', file: '/g/.villagers/music/chains.v1.wav' }], 'chains');
+  assert.deepStrictEqual(m, { t: 'music', tracks: [{ id: 'default', name: 'Мелодия', file: '/g/.villagers/music/default.v1.wav' },
+    { id: 'chains', name: 'Кандальный блюз', file: '/g/.villagers/music/chains.v1.wav' }], selected: 'chains' });
+  assert.strictEqual(musicMessage([{ id: 'default', file: '/a.wav' }], 'deep').selected, 'default');
+  assert.deepStrictEqual(musicMessage([], 'x'), { t: 'music', tracks: [], selected: null });
+  // треки-награды в списке косметики: по одному на награду «music»
+  assert.ok(X.REWARDS.filter((r) => r.kind === 'music').every((r) => typeof r.track === 'string'));
 });
 
 (async () => {

@@ -127,4 +127,16 @@ function createLink({ onMessage, onAuth, onClose, log = () => {}, version = '' }
   return { start, stop, send, broadcast, authed, writeLinkFile, removeLinkFile, port: () => port, token: () => token, PROTO, helloReply: (nick) => ({ t: 'hello', ok: true, proto: PROTO, nick, launcher: version }) };
 }
 
-module.exports = { createLink, BASE_PORT, PROTO };
+// Сообщение «музыка лобби» для игры: {t:'music', tracks:[{id, name, file}], selected} — только открытые игроком треки
+// лаунчера, file — абсолютный путь к готовому файлу на этом компьютере (WAV/OGG в <папка игры>/.villagers/music).
+// Игра играет выбранный по кругу в главном меню как «Музыку» Minecraft; выбор в игре приходит обратно {t:'music', id}.
+// Протокол: party_protocol.md, раздел 1.4.
+function musicMessage(tracks, selected) {
+  const list = (Array.isArray(tracks) ? tracks : [])
+    .filter((t) => t && typeof t.id === 'string' && /^[a-z0-9_-]{1,32}$/.test(t.id) && typeof t.file === 'string' && t.file)
+    .map((t) => ({ id: t.id, name: String(t.name || t.id).slice(0, 60), file: t.file }));
+  const sel = list.some((t) => t.id === selected) ? selected : (list[0] ? list[0].id : null);
+  return { t: 'music', tracks: list, selected: sel };
+}
+
+module.exports = { createLink, musicMessage, BASE_PORT, PROTO };

@@ -7,6 +7,7 @@ import { weekInfo } from './games/events.js';
 import RewardsModal from './components/RewardsModal.jsx';
 import { Badge } from './components/Badge.jsx';
 import { useMusic } from './components/FunBar.jsx';
+import { renderTrackWav } from './lib/music.js';
 import GameOverlay from './components/GameOverlay.jsx';
 import Icon from './components/Icon.jsx';
 import Head from './components/Head.jsx';
@@ -113,6 +114,24 @@ export default function App() {
      if (id && id !== sceneId) setSceneOverride(id); setGresult(null); setGmode('play'); };
   const chooseScene = (id) => { setSceneOverride(null); app.saveSettings({ bgScene: id }); };
   useMusic(settings, gameState.state === 'running' || gameState.state === 'starting', profile.equip.music);
+  // музыка лобби в игре: каждый открытый трек один раз записывается в файл (игра играет его в главном меню)
+  const musicRendering = useRef(false);
+  const rewardsKey = Object.keys(profile.rewards || {}).filter((k) => k.includes('_music_')).sort().join(',');
+  useEffect(() => {
+    if (musicRendering.current) return;
+    musicRendering.current = true;
+    const tm = setTimeout(async () => {
+      try {
+        const r = await call('friends:musicNeed');
+        for (const id of (r && r.need) || []) {
+          const data = await renderTrackWav(id, { seconds: 120 });
+          await call('friends:musicSave', { id, data });
+        }
+      } catch (e) { console.warn('музыка лобби: ' + e.message); }
+      musicRendering.current = false;
+    }, 4000);
+    return () => { clearTimeout(tm); musicRendering.current = false; };
+  }, [rewardsKey, settings.gameDir]);
   // друзья: счётчик у вкладки, приглашения поверх любой вкладки; мини-игра в лаунчере видна друзьям как статус
   const fs = useFriends();
   const friendsCount = fs ? fs.incoming.length + (fs.invites || []).length + fs.notes.filter((n) => !n.read).length : 0;
