@@ -18,7 +18,21 @@ function push() {
   ipcRenderer.send('scores-board', out);
 }
 
+// друзья и отряд (electron/friends.cjs): свои топики под FR, сообщения уходят в главный процесс как есть (подписи проверяет он)
+const FR = 'villagerskokk/v1/fr/';
+const frSeen = new Map(); // одно и то же сообщение приходит с двух брокеров — пропускаем повтор
+function frForward(topic, text) {
+  const k = topic + '\n' + text;
+  const now = Date.now();
+  if (frSeen.has(k) && now - frSeen.get(k) < 20000) return;
+  frSeen.set(k, now);
+  if (frSeen.size > 600) for (const [x, t] of frSeen) if (now - t > 20000) frSeen.delete(x);
+  ipcRenderer.send('fr-msg', { topic, text });
+}
+const frOk = (t) => typeof t === 'string' && t.startsWith(FR) && t.length < 200;
+
 function onMessage(topic, text) {
+  if (topic.startsWith(FR)) { frForward(topic, text); return; }
   if (topic.startsWith(SRV)) {
     try { ipcRenderer.send('srv-presence', { id: topic.slice(SRV.length), info: text ? JSON.parse(text) : null }); } catch (_) {}
     return;
@@ -46,7 +60,7 @@ ipcRenderer.on('scores-cmd', (e, { cmd, opts }) => {
   if (cmd === 'start') {
     if (clients.length) return;
     clients = (opts.brokers || []).slice(0, 2).map((url) => {
-      const c = new Mqtt(url, onMessage, () => {});
+      const c = new Mqtt(url, onMessage, () => setTimeout(() => ipcRenderer.send('fr-net', { online: clients.filter((x) => x.ready).length, total: clients.length }), 0));
       c.subscribe(ROOT + '+/+');
       return c;
     });
@@ -66,6 +80,12 @@ ipcRenderer.on('scores-cmd', (e, { cmd, opts }) => {
     const msg = JSON.stringify(opts.info);
     const topic = SRV + String(opts.id).replace(/[^a-f0-9]/g, '');
     for (const c of clients) c.publish(topic, msg, true);
+  }
+  if (cmd === 'frSub') { for (const c of clients) for (const t of opts.topics || []) if (frOk(t)) c.subscribe(t); }
+  if (cmd === 'frUnsub') { for (const c of clients) for (const t of opts.topics || []) if (frOk(t)) c.unsubscribe(t); }
+  if (cmd === 'frPub' && frOk(opts.topic)) {
+    const pub = (c, n) => { if (!c.publish(opts.topic, opts.text || '', !!opts.retain) && n < (opts.retain ? 20 : 3)) setTimeout(() => pub(c, n + 1), 3000); };
+    for (const c of clients) pub(c, 0);
   }
   if (cmd === 'saveProgress') {
     const msg = JSON.stringify(opts.doc);

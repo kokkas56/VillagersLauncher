@@ -23,6 +23,9 @@ import Studio from './pages/Studio.jsx';
 import Accounts from './pages/Accounts.jsx';
 import Donate from './pages/Donate.jsx';
 import Network from './pages/Network.jsx';
+import Friends from './pages/Friends.jsx';
+import FriendNotices from './components/FriendNotices.jsx';
+import { useFriends } from './lib/friends.js';
 import SkinEditor from './editor/SkinEditor.jsx';
 
 const NAV = [
@@ -33,6 +36,7 @@ const NAV = [
   { id: 'gallery', icon: 'image', label: 'Миры и скрины' },
   { id: 'servers', icon: 'globe', label: 'Сервера' },
   { id: 'network', icon: 'globe', label: 'С друзьями' },
+  { id: 'friends', icon: 'friends', label: 'Друзья' },
   { id: 'settings', icon: 'gear', label: 'Настройки' }
 ];
 
@@ -109,6 +113,13 @@ export default function App() {
      if (id && id !== sceneId) setSceneOverride(id); setGresult(null); setGmode('play'); };
   const chooseScene = (id) => { setSceneOverride(null); app.saveSettings({ bgScene: id }); };
   useMusic(settings, gameState.state === 'running' || gameState.state === 'starting', profile.equip.music);
+  // друзья: счётчик у вкладки, приглашения поверх любой вкладки; мини-игра в лаунчере видна друзьям как статус
+  const fs = useFriends();
+  const friendsCount = fs ? fs.incoming.length + (fs.invites || []).length + fs.notes.filter((n) => !n.read).length : 0;
+  const playingTitle = playing && scene.game ? scene.game.title : '';
+  useEffect(() => {
+    call('friends:activity', playingTitle ? 'Играет в «' + playingTitle + '» в лаунчере' : '').catch(() => {});
+  }, [playingTitle]);
   const [skin, setSkin] = useState(null);
   const [skinTick, setSkinTick] = useState(0);
 
@@ -130,7 +141,7 @@ export default function App() {
 
   if (!settings) return <div className="boot"><div className="boot-logo">VillagersLauncher</div></div>;
 
-  const nav = settings.authorMode ? [...NAV.slice(0, 7), { id: 'author', icon: 'crown', label: 'Автор' }, { id: 'studio', icon: 'film', label: 'Студия' }, NAV[7]] : NAV;
+  const nav = settings.authorMode ? [...NAV.slice(0, -1), { id: 'author', icon: 'crown', label: 'Автор' }, { id: 'studio', icon: 'film', label: 'Студия' }, NAV[NAV.length - 1]] : NAV;
   const go = (p) => { setPage(p); };
   const openEditor = (initial) => setEditor(initial || {});
 
@@ -159,6 +170,7 @@ export default function App() {
                 <button key={n.id} className={'nav' + (page === n.id ? ' on' : '')} onClick={() => go(n.id)}>
                   <Icon name={n.icon} size={18} />
                   <span>{t(n.label)}</span>
+                  {n.id === 'friends' && friendsCount > 0 && <span className="nav-count">{friendsCount}</span>}
                 </button>
               ))}
             </nav>
@@ -187,6 +199,7 @@ export default function App() {
             {page === 'gallery' && <Gallery {...pageProps} />}
             {page === 'servers' && <Servers {...pageProps} />}
             {page === 'network' && <Network {...pageProps} />}
+            {page === 'friends' && <Friends {...pageProps} />}
             {page === 'settings' && <Settings {...pageProps} />}
             {page === 'author' && <Author {...pageProps} />}
             {page === 'studio' && settings.authorMode && <Studio {...pageProps} />}
@@ -256,6 +269,8 @@ export default function App() {
           <pre className="crash-log">{(crash.tail || []).join('\n')}</pre>
         </Modal>
       )}
+      {!editor && page !== 'friends' && <FriendNotices fs={fs} onOpen={() => go('friends')} />}
+      {!editor && page === 'friends' && fs && fs.invites && fs.invites.length > 0 && <FriendNotices fs={{ ...fs, prompt: null }} />}
       <Toasts />
     </div>
   );

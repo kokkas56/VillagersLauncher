@@ -42,6 +42,11 @@ const DEFAULTS = {
   gameProfiles: {},
   hostServer: {}, // «Мой сервер»: имя, описание, мир, игроки, адрес Radmin (секрет ключа и пароль — в зашифрованных секретах)
   friendServers: [], // ключи серверов друзей (видны только тебе)
+  // «Друзья» (electron/friends.cjs), всё по нику: { ник: {friends, out, inc, blocked} }, настройки (скрыть статус, о себе, витрина), уведомления.
+  // Ключи установки для подписей — в зашифрованных секретах (friends:identity)
+  friendBooks: {},
+  friendPrefs: {},
+  friendNotes: {},
   hostingActive: false, // прогресс мини-игр и награды по никам: { ник: { games, rewards, equip } } // лучшие результаты мини-игр
   gameShareScores: true, // отправлять рекорды в общую таблицу
   disabledOptional: [],

@@ -89,6 +89,12 @@ class Mqtt {
 
   subscribe(topic) { this.subs.add(topic); if (this.ready) this.sendSub(topic); }
 
+  unsubscribe(topic) {
+    if (!this.subs.delete(topic) || !this.ready) return;
+    const id = this.pid++ & 0xffff || 1;
+    this.raw(packet(10, 2, Buffer.concat([Buffer.from([id >> 8, id & 255]), str(topic)])));
+  }
+
   publish(topic, text, retain) {
     if (!this.ready) return false;
     this.raw(packet(3, retain ? 1 : 0, Buffer.concat([str(topic), Buffer.from(text, 'utf8')])));
