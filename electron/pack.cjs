@@ -445,7 +445,7 @@ async function publish({ title, text, noNews, early: isEarly, freeAt, replaceTag
     files.push(entry);
   }
 
-  let changelog = [{ version, date: new Date().toISOString(), title, text,
+  let changelog = [{ version, date: new Date().toISOString(), title, text, ...(noNews ? { silent: true } : {}),
     added: ch.added.map((f) => f.path), changed: ch.changed.map((f) => f.path), removed: ch.removed.map((f) => f.path) },
   ...((prevManifest && prevManifest.changelog) || [])].slice(0, 40);
   if (replacing && changelog[1] && changelog[1].version === version) {
@@ -543,6 +543,7 @@ async function publish({ title, text, noNews, early: isEarly, freeAt, replaceTag
         n.deleted = n.deleted.filter((v) => v !== version);
         delete n.edits[version];
         if (noNews) n.hidden.push(version);
+        n.shown = (n.shown || []).filter((v) => v !== version);
       }, `Новость #${version}`);
     }
   } catch (e) { newsWarn = 'Сборка залита, но новость не удалось скрыть: ' + e.message; }
@@ -703,6 +704,8 @@ function normNews(n) {
     hidden: Array.isArray(n.hidden) ? n.hidden.map(Number).filter(Boolean) : [],
     deleted: Array.isArray(n.deleted) ? n.deleted.map(Number).filter(Boolean) : [],
     edits: n.edits && typeof n.edits === 'object' ? n.edits : {},
+    // тихие выпуски («без новости»), которые автор всё-таки решил показать
+    shown: Array.isArray(n.shown) ? n.shown.map(Number).filter(Boolean) : [],
     // новости без новой версии сборки: { id, date, title, text, version (какая сборка была), hidden?, deleted? }
     posts: Array.isArray(n.posts) ? n.posts.filter((p) => p && typeof p === 'object' && p.id && (p.title || p.text)) : []
   };
@@ -761,20 +764,28 @@ async function writeNews(mutate, message) {
   await gh('PUT', `/repos/${repo()}/contents/news.json`, token, { message: message || 'Новости', content, ...(sha ? { sha } : {}) });
   return n;
 }
-// для игроков: убрать скрытые/удалённые, подставить исправленный текст
+// тихий выпуск: залит «без новости» (новые — с пометкой silent; старые — без текста и с заголовком по умолчанию)
+function isSilent(c, n) {
+  if (!c || n.shown.includes(c.version) || n.edits[c.version]) return false;
+  return !!c.silent || (!String(c.text || '').trim() && String(c.title || '').trim() === 'Обновление');
+}
+// для игроков: убрать скрытые/удалённые/тихие, подставить исправленный текст
 function applyNews(changelog, n) {
   const list = (changelog || [])
-    .filter((c) => !n.hidden.includes(c.version) && !n.deleted.includes(c.version))
+    .filter((c) => !n.hidden.includes(c.version) && !n.deleted.includes(c.version) && !isSilent(c, n))
     .map((c) => (n.edits[c.version] ? { ...c, ...n.edits[c.version] } : c));
   const posts = (n.posts || []).filter((p) => !p.hidden && !p.deleted).map(postItem);
   return posts.length ? [...list, ...posts].sort(byDate) : list;
 }
 // для автора: все записи с пометками
 async function authorNews() {
-  const m = await latestManifest();
+  // та же сборка, что видит автор на главной (с ранним доступом — она новее публичной)
+  let m = null;
+  try { m = await chosenManifest(); } catch (_) {}
+  if (!m) { try { m = await latestManifest(); } catch (_) {} }
   const n = await readNews();
   const list = ((m && m.changelog) || []).map((c) => ({ ...c, ...(n.edits[c.version] || {}), edited: !!n.edits[c.version],
-    hidden: n.hidden.includes(c.version), deleted: n.deleted.includes(c.version) }));
+    hidden: n.hidden.includes(c.version) || isSilent(c, n), silent: isSilent(c, n), deleted: n.deleted.includes(c.version) }));
   const posts = (n.posts || []).map((p) => ({ ...postItem(p), hidden: !!p.hidden, deleted: !!p.deleted }));
   return posts.length ? [...list, ...posts].sort(byDate) : list;
 }
@@ -791,7 +802,11 @@ async function setNews({ version, post, hidden, deleted, title, text, restoreAll
       if (text != null) p.text = text;
       return;
     }
-    if (hidden != null) { n.hidden = n.hidden.filter((v) => v !== version); if (hidden) n.hidden.push(version); }
+    if (hidden != null) {
+      n.hidden = n.hidden.filter((v) => v !== version);
+      n.shown = n.shown.filter((v) => v !== version);
+      if (hidden) n.hidden.push(version); else n.shown.push(version);
+    }
     if (deleted != null) { n.deleted = n.deleted.filter((v) => v !== version); if (deleted) n.deleted.push(version); }
     if (title != null || text != null) n.edits[version] = { ...(n.edits[version] || {}), ...(title != null ? { title } : {}), ...(text != null ? { text } : {}) };
   }, `Новости: ${post ? 'новость' : '#' + (version || 'все')}`);

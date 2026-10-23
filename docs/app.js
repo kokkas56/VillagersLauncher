@@ -32,7 +32,10 @@
     const box = document.getElementById('news-list');
     box.textContent = '';
     // новости показываем по списку «Новости» в лаунчере (news.json), а не по тому, скрыта ли версия из выбора
-    const items = list.filter((r) => !r.draft && /^pack-\d+$/.test(r.tag_name) && !hide.has(+r.tag_name.slice(5))).slice(0, 8);
+    const shown = new Set((nj.shown || []).map(Number));
+    // тихие выпуски («без новости»): в названии только номер, без заголовка — на сайте их не показываем
+    const silent = (r) => { const v = +r.tag_name.slice(5); return !shown.has(v) && !edits[v] && !(r.name || '').replace(/^#\d+\s*/, '').trim(); };
+    const items = list.filter((r) => !r.draft && /^pack-\d+$/.test(r.tag_name) && !hide.has(+r.tag_name.slice(5)) && !silent(r)).slice(0, 8);
     const newest = list.find((r) => !r.draft && !r.prerelease && /^pack-\d+$/.test(r.tag_name));
     const pv0 = document.getElementById('pack-version');
     if (pv0 && newest) pv0.textContent = 'сборка ' + newest.tag_name.replace('pack-', '#');
