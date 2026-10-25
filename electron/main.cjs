@@ -151,6 +151,8 @@ handle('sys:info', () => ({
 handle('settings:get', () => store.get());
 handle('settings:set', (patch) => {
   const before = store.get();
+  // игрок сам снова включил/выключил полный экран — забываем прошлый вылет
+  if (patch && 'fullscreen' in patch && patch.fullscreen !== before.fullscreen) patch = { ...patch, fullscreenCrashed: false };
   const after = store.set(patch || {});
   // ретранслятор перезапускается при смене своих настроек (и сетевых, которыми пользуется)
   if (RELAY_KEYS.some((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k])) && (before.relayHelp || after.relayHelp)) relaySync().catch(() => {});
@@ -974,6 +976,7 @@ async function playGame(opts = {}) {
     proc.stderr.on('data', onLine);
     proc.on('error', (e) => send('game-log', ['[launcher] ' + e.message]));
     proc.on('close', (code) => {
+      const startedAt = game.started;
       const played = Date.now() - game.started;
       game = null;
       if (studioWins) studioWins.onGameExit();
@@ -984,6 +987,11 @@ async function playGame(opts = {}) {
       if (code !== 0 && code !== null && broken.splash && !broken.started && played < 5 * 60e3 && !s2.splashCrashed) {
         store.set({ splashCrashed: true });
         send('toast', { kind: 'warn', text: 'Игра упала при создании окна. Своя заставка загрузки отключена — нажми «Играть» ещё раз.' });
+      }
+      // упала, не открыв окно, в полноэкранном режиме — дальше запускаем в окне (F11 в игре), пока игрок снова не включит полный экран
+      if (code !== 0 && code !== null && s2.fullscreen && !broken.started && played < 5 * 60e3 && !s2.fullscreenCrashed) {
+        store.set({ fullscreenCrashed: true });
+        send('toast', { kind: 'warn', text: 'Игра упала при открытии полного экрана. Следующий запуск — в окне (полный экран в игре — F11). Нажми «Играть» ещё раз.' });
       }
       // повреждённая установка: битые jar удаляем (скачаются заново с полной проверкой), NeoForge переустановим при следующем запуске
       if (broken.neo || broken.jars.size) {
@@ -996,7 +1004,8 @@ async function playGame(opts = {}) {
         store.set({ repairPending: { neo: broken.neo || !!(s2.repairPending && s2.repairPending.neo), verify: true, at: Date.now() } });
         send('toast', { kind: 'warn', text: 'Игра не запустилась из-за повреждённых файлов' + (broken.neo ? ' (установка Minecraft/NeoForge)' : '') + (fixed.length ? ': ' + fixed.join(', ') : '') + '. Нажми «Играть» ещё раз — лаунчер всё перекачает и проверит сам.' });
       }
-      send('game-state', { state: 'stopped', code, crashed: code !== 0 && code !== null && played < 24 * 3600e3 && code !== 130, tail: tail.slice(-80) });
+      const crashed = code !== 0 && code !== null && played < 24 * 3600e3 && code !== 130;
+      send('game-state', { state: 'stopped', code, crashed, tail: tail.slice(-80), report: crashed ? readCrashReport(gameDir, startedAt) : null, fullscreen: !!s2.fullscreen, started: !!broken.started });
       if (friendsApi) friendsApi.onGameExit(code);
       if (!win || win.isDestroyed()) app.quit();
     });
@@ -1012,6 +1021,34 @@ async function playGame(opts = {}) {
   }
 }
 handle('game:play', (opts) => playGame(opts || {}));
+
+// Отчёт о вылете, созданный этим запуском: причина коротко + полный текст (чтобы скопировать и прислать)
+function readCrashReport(gameDir, startedAt) {
+  try {
+    const dir = path.join(gameDir, 'crash-reports');
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith('.txt')).map((f) => ({ f, t: fs.statSync(path.join(dir, f)).mtimeMs }))
+      .filter((x) => x.t >= startedAt - 3000).sort((a, b) => b.t - a.t);
+    // client-отчёт подробнее fml-отчёта
+    const pick = files.find((x) => /-client\.txt$/.test(x.f)) || files[0];
+    if (!pick) return null;
+    const text = fs.readFileSync(path.join(dir, pick.f), 'utf8');
+    const lines = text.split(/\r?\n/);
+    const di = lines.findIndex((l) => l.startsWith('Description:'));
+    const summary = [];
+    if (di >= 0) {
+      summary.push(lines[di].replace('Description:', '').trim());
+      for (let i = di + 1; i < lines.length && summary.length < 14; i++) {
+        const l = lines[i];
+        if (!l.trim()) { if (summary.length > 1) break; continue; }
+        if (/^\s+at /.test(l) && summary.filter((x) => /^\s+at /.test(x)).length >= 6) continue;
+        summary.push(l);
+      }
+    }
+    for (const l of lines) if (/^Caused by:/.test(l) && summary.length < 24) summary.push(l);
+    const mods = lines.filter((l) => /^\s*Suspected Mods?:/.test(l) || /^\s*Mod File:/.test(l)).slice(0, 6);
+    return { file: pick.f, summary: summary.join('\n'), suspected: mods.join('\n'), text: text.slice(0, 200000) };
+  } catch (_) { return null; }
+}
 
 handle('game:kill', () => { if (game) game.proc.kill(); return true; });
 

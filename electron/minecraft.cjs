@@ -218,7 +218,7 @@ function buildLaunch({ vanilla, neo, javaPath, account, gameDir, quickPlay, quic
     }
   }
   const classpath = [...libs.values(), ...extraClasspath, verJar].join(CP_SEP);
-  const features = { has_custom_resolution: !s.fullscreen, is_demo_user: false };
+  const features = { has_custom_resolution: !s.fullscreen || !!s.fullscreenCrashed, is_demo_user: false };
   const vars = {
     auth_player_name: account.name,
     version_name: id,
@@ -266,7 +266,7 @@ function buildLaunch({ vanilla, neo, javaPath, account, gameDir, quickPlay, quic
     if (/^\$\{/.test(game[i])) continue;
     cleanGame.push(game[i]);
   }
-  if (s.fullscreen) cleanGame.push('--fullscreen');
+  if (s.fullscreen && !s.fullscreenCrashed) cleanGame.push('--fullscreen');
   // сразу в одиночный мир (папка в saves) — для «Студии»; иначе — сразу на сервер
   if (quickPlayWorld) cleanGame.push('--quickPlaySingleplayer', quickPlayWorld);
   else if (quickPlay) cleanGame.push('--quickPlayMultiplayer', quickPlay);

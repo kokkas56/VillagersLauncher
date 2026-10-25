@@ -288,8 +288,28 @@ export default function App() {
             <button className="btn" onClick={() => call('shell:openPath', 'logs')}>{t('Логи')}</button>
             <button className="btn primary" onClick={() => setCrash(null)}>{t('Понятно')}</button>
           </>}>
-          <p className="muted">{t('Код выхода')}: {String(crash.code)}. {t('Последние строки лога:')}</p>
-          <pre className="crash-log">{(crash.tail || []).join('\n')}</pre>
+          {crash.report ? (
+            <>
+              <p className="muted">{t('Причина из отчёта о вылете')} <span className="mono small">({crash.report.file})</span>:</p>
+              <pre className="crash-log">{crash.report.summary || t('в отчёте нет описания')}</pre>
+              {crash.report.suspected && <pre className="crash-log small">{crash.report.suspected}</pre>}
+              <div className="row wrap">
+                <button className="btn" onClick={() => { try { navigator.clipboard.writeText(crash.report.text); app.toast(t('Отчёт скопирован — вставь его в чат Кокку'), 'ok'); } catch (_) {} }}><Icon name="copy" size={14} /> {t('Скопировать отчёт целиком')}</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="muted">{t('Код выхода')}: {String(crash.code)}. {t('Последние строки лога:')}</p>
+              <pre className="crash-log">{(crash.tail || []).join('\n')}</pre>
+              <button className="btn" onClick={() => { try { navigator.clipboard.writeText((crash.tail || []).join('\n')); app.toast(t('Скопировано'), 'ok'); } catch (_) {} }}><Icon name="copy" size={14} /> {t('Скопировать лог')}</button>
+            </>
+          )}
+          {crash.fullscreen && !crash.started && (
+            <div className="ok-box warn-box">
+              <span className="grow">{t('Игра упала, не успев открыть окно, а в настройках включён полный экран. На части видеокарт это и есть причина.')}</span>
+              <button className="btn sm primary" onClick={async () => { await app.saveSettings({ fullscreen: false }); setCrash(null); app.toast(t('Полный экран выключен — нажми «Играть» ещё раз'), 'ok'); }}>{t('Выключить полный экран')}</button>
+            </div>
+          )}
         </Modal>
       )}
       {!editor && page !== 'friends' && <FriendNotices fs={fs} onOpen={() => go('friends')} />}
