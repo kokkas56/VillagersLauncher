@@ -62,6 +62,7 @@ const DEFAULTS = {
   studioPops: {}, // отдельные окна редакторов Студии
   syncDirs: ['mods', 'config', 'defaultconfigs', 'resourcepacks', 'shaderpacks', 'kubejs'],
   // full — в сборку уходит вся папка игры, кроме личного (packExclude); dirs — только папки syncDirs (старый режим)
+  earlyWindowOff: false, // игра падала при создании окна с ранним окном NeoForge — запускаем без него
   packMode: 'full',
   packExclude: [
     // исходники и личные папки автора
@@ -71,7 +72,8 @@ const DEFAULTS = {
     'skinkokk/', 'command_history.txt', 'servers.dat', 'servers.dat_old', 'servers.dat.bak', 'emi.json', 'ponders_watched.json', 'hs_err_pid*.log',
     // это лаунчер ставит сам (Minecraft, NeoForge, Java) или игра пересоздаёт
     'versions/', 'libraries/', 'assets/', 'runtime/', 'natives/', '.mixin.out/', '.sable/', 'dynamic-data-pack-cache/', 'dynamic-resource-pack-cache/',
-    'server-resource-packs/', '.cache/', '.villagers/', 'server/', 'kokkstory-videos/', '.fabric/', 'distant_horizons_server_data/', 'Distant_Horizons_server_data/'
+    'server-resource-packs/', '.cache/', '.villagers/', 'server/', 'kokkstory-videos/', '.fabric/', 'distant_horizons_server_data/', 'Distant_Horizons_server_data/',
+    '.replay_cache/', 'ffmpeg*/', 'studio/undo/', '.trash/', 'schematics/uploaded/'
   ],
   // Личные настройки (клавиши, графика): новичку кладутся настройки автора, дальше у каждого свои и не перезаписываются
   seedFiles: ['options.txt', 'optionsof.txt', 'optionsshaders.txt', 'options.amecsapi.txt', 'config/fzzy_config/keybinds.toml',

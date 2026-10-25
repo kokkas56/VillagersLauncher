@@ -21,13 +21,13 @@ function ensureJar(libDir) {
   return dst;
 }
 
-/** Ставит earlyWindowProvider в config/fml.toml (ключ верхнего уровня — до первой [таблицы]). */
-function setProvider(gameDir, name) {
+/** Ставит ключ верхнего уровня в config/fml.toml (до первой [таблицы]). */
+function setFmlKey(gameDir, key, value) {
   const file = path.join(gameDir, 'config', 'fml.toml');
   let text = '';
   try { text = fs.readFileSync(file, 'utf8'); } catch (_) { /* FML создаст остальное сам */ }
-  const line = `earlyWindowProvider = "${name}"`;
-  const re = /^[ \t]*earlyWindowProvider[ \t]*=.*$/m;
+  const line = `${key} = ${value}`;
+  const re = new RegExp('^[ \\t]*' + key + '[ \\t]*=.*$', 'm');
   if (re.test(text)) {
     text = text.replace(re, line);
   } else {
@@ -39,6 +39,10 @@ function setProvider(gameDir, name) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, text.endsWith('\n') ? text : text + '\n');
 }
+const setProvider = (gameDir, name) => setFmlKey(gameDir, 'earlyWindowProvider', `"${name}"`);
+// earlyWindowControl = false — NeoForge не открывает раннее окно вовсе: окно создаёт сама игра, как без лаунчера.
+// На части компьютеров (видел на NVIDIA) передача раннего окна игре роняет её ещё до открытия окна.
+const setEarlyControl = (gameDir, on) => setFmlKey(gameDir, 'earlyWindowControl', on ? 'true' : 'false');
 
 /** Тёмный фон экрана загрузки Minecraft (options.txt → darkMojangStudiosBackground). */
 function setDarkBackground(gameDir, dark) {
@@ -56,9 +60,10 @@ function setDarkBackground(gameDir, dark) {
  * Подготовка перед запуском. Возвращает путь к jar, который надо добавить в classpath (или null).
  * Ошибки здесь не должны мешать запуску игры.
  */
-function prepare({ enabled, gameDir, libDir, log }) {
+function prepare({ enabled, early = true, gameDir, libDir, log }) {
   try {
-    if (!enabled) {
+    setEarlyControl(gameDir, early !== false);
+    if (!enabled || early === false) {
       setProvider(gameDir, STOCK);
       return null;
     }

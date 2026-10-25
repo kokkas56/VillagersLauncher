@@ -69,8 +69,11 @@ function walk(root, rel, out) {
 
 // Список файлов сборки в папке автора
 // Режим full: вся папка игры, кроме личного (packExclude) и масок ignore; личные настройки (seedFiles) — помечаются seed
+const ALWAYS_SKIP = ['.replay_cache/', 'ffmpeg*/', 'studio/undo/', '.trash/', 'schematics/uploaded/', 'hs_err_pid*.log', '.villagers/', 'crash-reports/', 'logs/'];
+
 function packFilters(s = store.get()) {
-  const ignored = makeIgnore(s.ignore);
+  // мусор, который никогда не нужен в сборке (у тех, у кого packExclude уже сохранён старым списком)
+  const ignored = makeIgnore([...(s.ignore || []), ...ALWAYS_SKIP]);
   const excluded = makeIgnore(s.packExclude || []);
   const seeds = makeIgnore(s.seedFiles || []);
   return { ignored, excluded, seeds, full: (s.packMode || 'full') === 'full' };

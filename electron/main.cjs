@@ -935,7 +935,9 @@ async function playGame(opts = {}) {
     try { characters.writeFile(gameDir); } catch (e) { console.error('character file', e); } // персонаж этого аккаунта
     // полный экран — через options.txt: окно создаётся обычным и разворачивается уже после запуска (аргумент --fullscreen ронял игру при создании окна)
     try { splash.setFullscreenOption(gameDir, !!s.fullscreen && !s.fullscreenCrashed); } catch (e) { send('game-log', ['[launcher] полный экран не записан: ' + e.message]); }
-    const splashJar = splash.prepare({ enabled: s.customSplash !== false && !s.splashCrashed, gameDir, libDir: mc.LIB_DIR, log: (l) => send('game-log', [l]) });
+    // после падения при создании окна — без раннего окна NeoForge вовсе (ни своей заставки, ни лисы): окно создаёт сама игра
+    const earlyOff = !!(s.earlyWindowOff || s.splashCrashed);
+    const splashJar = splash.prepare({ enabled: s.customSplash !== false && !earlyOff, early: !earlyOff, gameDir, libDir: mc.LIB_DIR, log: (l) => send('game-log', [l]) });
     // quickPlayWorld — имя папки одиночного мира в saves (кнопка «Запустить игру в этом мире» в Студии)
     let quickPlayWorld = null;
     if (opts.quickPlayWorld) {
@@ -956,7 +958,7 @@ async function playGame(opts = {}) {
       const lines = d.toString('utf8').split(/\r?\n/).filter(Boolean);
       for (const l of lines) {
         if (/Mod ID: 'minecraft'.*Actual version: '\[MISSING\]'/.test(l)) broken.neo = true;
-        if (/Loading ImmediateWindowProvider villagersearly/.test(l)) broken.splash = true;
+        if (/Loading ImmediateWindowProvider /.test(l)) broken.splash = true;
         if (/Setting user:|Backend library: LWJGL/.test(l)) broken.started = true;
         const z = /from mod ([^\s,]+\.jar), cause java\.util\.zip\.ZipException/.exec(l) || /ZipException[^\n]*?([\w.+\-]+\.jar)/.exec(l);
         if (z) broken.jars.add(path.basename(z[1]));
@@ -984,10 +986,11 @@ async function playGame(opts = {}) {
       const s2 = store.get();
       store.set({ playTimeMs: (s2.playTimeMs || 0) + played, lastPlayed: Date.now() });
       if (win && !win.isDestroyed()) { win.show(); win.restore(); }
-      // игра упала, не успев открыть окно, а грузилась с нашей заставкой — дальше запускаем без неё (на части видеокарт она ломает создание окна)
-      if (code !== 0 && code !== null && broken.splash && !broken.started && played < 5 * 60e3 && !s2.splashCrashed) {
-        store.set({ splashCrashed: true });
-        send('toast', { kind: 'warn', text: 'Игра упала при создании окна. Своя заставка загрузки отключена — нажми «Играть» ещё раз.' });
+      // игра упала, не успев открыть окно, а грузилась с ранним окном NeoForge (нашим или лисой) — дальше запускаем без него:
+      // на части компьютеров передача раннего окна игре роняет её (у друга с NVIDIA падали и наша заставка, и лиса, а без раннего окна — запускается)
+      if (code !== 0 && code !== null && broken.splash && !broken.started && played < 5 * 60e3 && !s2.earlyWindowOff) {
+        store.set({ splashCrashed: true, earlyWindowOff: true });
+        send('toast', { kind: 'warn', text: 'Игра упала при создании окна. Экран загрузки NeoForge отключён — нажми «Играть» ещё раз.' });
       }
       // упала, не открыв окно, в полноэкранном режиме — дальше запускаем в окне (F11 в игре), пока игрок снова не включит полный экран
       if (code !== 0 && code !== null && s2.fullscreen && !broken.started && played < 5 * 60e3 && !s2.fullscreenCrashed) {
