@@ -66,7 +66,7 @@ export default function FriendProfile({ nick, fs, onBack }) {
           </div>
           {p.status && <div className={'fp-status st-' + p.status}><i className={'fr-dot st-' + p.status} /> {p.status === 'offline' ? t('Не в сети') : p.doing || t(STATUS_TEXT[p.status])}</div>}
           {p.me && <div className="muted small">{t('Так тебя видят друзья. Скин и плащ — во вкладке «Скины», рамка, значок и тема — в «Наградах».')}</div>}
-          {!p.verified && p.friend && <div className="fr-warn small"><Icon name="lock" size={10} /> {t('Профиль подписан другим ключом — не тот, что был при дружбе')}</div>}
+          {!p.verified && p.friend && <div className="fr-warn small"><Icon name="lock" size={10} /> {t('Профиль подписан другим ключом — не тот, что был при дружбе')} · <button className="link-btn" onClick={() => act('friends:trustKey', p.key, 'Новый ключ принят')}>{t('Доверять новому ключу')}</button></div>}
           <div className="fp-stats">
             <Stat n={p.level} label={t('уровень')} gold />
             <Stat n={p.playMs ? fmtDuration(p.playMs, lang) : '—'} label={t('в Minecraft')} />

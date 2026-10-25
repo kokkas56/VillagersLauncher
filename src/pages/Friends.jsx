@@ -55,6 +55,7 @@ export default function Friends({ openAccounts }) {
           <span className="dot" style={{ background: online ? 'var(--emerald)' : 'var(--warn)' }} /> {online ? t('На связи') : t('Подключаюсь…')}{fs.net && fs.net.total ? ` ${fs.net.online}/${fs.net.total}` : ''}
         </span>
         <div className="grow" />
+        <button className="btn ghost" title={t('Скопировать отчёт о связи с друзьями — пришли его, если друг не виден или заявки не доходят')} onClick={async () => { try { const txt = await call('friends:diag'); await navigator.clipboard.writeText(txt); toast(t('Отчёт связи скопирован'), 'ok'); } catch (er) { toast(er.message, 'error'); } }}><Icon name="copy" /> {t('Отчёт связи')}</button>
         <button className="btn ghost" onClick={() => setView(fs.me.nick)}><Icon name="user" /> {t('Мой профиль')}</button>
       </div>
 

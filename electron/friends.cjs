@@ -14,6 +14,10 @@ module.exports = function setupFriends(d) {
   //      playGame, server, hosting, tunnelCmd, tunnelOpts, tunnelState, packVersions, progress, win, Notification, version }
   const { store } = d;
   const log = (l) => console.log('[friends] ' + l);
+  // журнал связи для «Отчёта связи» (вкладка «Друзья»): что пришло/ушло и почему отброшено
+  const diag = [];
+  const dl = (l) => { diag.push(new Date().toISOString().slice(11, 19) + ' ' + l); if (diag.length > 300) diag.shift(); };
+  const fp = (pk) => (pk ? String(pk).slice(0, 8) : '—');
   // связь с игрой: каждая попытка и её итог — в консоль, в «Консоль игры» окна лаунчера и в <папка игры>/.villagers/partylink.log
   function linkLog(l) {
     log('связь с игрой: ' + l);
@@ -64,7 +68,7 @@ module.exports = function setupFriends(d) {
   async function cmd(c, opts) { const w = await d.scoresWorker(); w.webContents.send('scores-cmd', { cmd: c, opts }); }
   function sub(topics) { const n = topics.filter((t) => !subs.has(t)); n.forEach((t) => subs.add(t)); if (n.length) cmd('frSub', { topics: n }).catch(() => {}); }
   function unsub(topics) { const n = topics.filter((t) => subs.has(t)); n.forEach((t) => subs.delete(t)); if (n.length) cmd('frUnsub', { topics: n }).catch(() => {}); }
-  function pub(topic, payload, retain) { return cmd('frPub', { topic, text: payload == null ? '' : C.seal(identity(), payload), retain: !!retain }).catch(() => {}); }
+  function pub(topic, payload, retain) { if (payload && payload.typ && payload.typ !== 'status' && payload.typ !== 'profile' && payload.typ !== 'hb') dl('→ ' + topic.slice(C.NS.length) + ' ' + payload.typ); return cmd('frPub', { topic, text: payload == null ? '' : C.seal(identity(), payload), retain: !!retain }).catch(() => {}); }
   const clearRetained = (topic) => cmd('frPub', { topic, text: '', retain: true }).catch(() => {});
 
   d.ipcMain.on('fr-net', (e, n) => { if (e.sender === d.scoresContents()) { net = n || net; changed(); } });
@@ -148,13 +152,14 @@ module.exports = function setupFriends(d) {
     const kind = rest[0];
     if (!text) return; // стёртый retained
     const msg = C.open(text);
-    if (!msg) return;
+    if (!msg) { dl('✗ ' + kind + ' ' + rest.slice(1).join('/') + ': подпись не сошлась'); return; }
     const now = Date.now();
+    if (kind !== 'pt') dl('← ' + kind + ' ' + rest.slice(1).join('/') + ' от ' + msg.p.from + ' [' + fp(msg.pk) + '] ' + (msg.p.typ || '') + (msg.p.t ? ' (часы отправителя ' + Math.round((now - msg.p.t) / 1000) + ' с назад)' : ''));
     if (kind === 'pr' && rest[1]) {
       const key = rest[1];
       if (C.keyOf(msg.p.from) !== key || msg.p.typ !== 'profile') return;
       const f = book().friends[key];
-      if (f && f.pk !== msg.pk && key !== m.key) { keyMismatch(key, msg); return; } // профиль друга с другим ключом
+      if (f && f.pk !== msg.pk && key !== m.key) { profiles[key] = { doc: msg.p, pk: msg.pk, t: Number(msg.p.t) || 0 }; keyMismatch(key, msg); changed(); return; } // профиль друга с другим ключом: показываем с предупреждением
       if (key === m.key && msg.pk !== m.pk) { profiles['!' + key] = { doc: msg.p, pk: msg.pk, t: msg.p.t }; return; } // тёзка
       const prev = profiles[key];
       if (prev && !C.fresher(prev.t, msg.p.t, now) && prev.pk === msg.pk) return;
@@ -182,6 +187,7 @@ module.exports = function setupFriends(d) {
       const fromKey = rest[2];
       const pr = profiles[fromKey];
       const r = C.onRq(book(), m.key, fromKey, msg, pr ? pr.pk : null);
+      dl('  заявка → ' + (r.events.map((e) => e.kind).join(',') || 'без изменений') + (r.reply ? ', отвечаю ' + r.reply.typ : ''));
       saveBook(r.book);
       if (r.reply) pub(C.T.rq(fromKey, m.key), { typ: r.reply.typ, from: m.nick, to: msg.p.from, t: Date.now() }, true);
       if (r.clear) clearRetained(topic);
@@ -194,6 +200,7 @@ module.exports = function setupFriends(d) {
   // друг пишет с другим ключом (переустановил лаунчер, другой компьютер): раньше такие статусы и профиль молча отбрасывались —
   // друг навсегда «не в сети» с пустым профилем. Теперь показываем «Ключ друга сменился · Доверять новому ключу».
   function keyMismatch(key, msg) {
+    dl('  ключ друга ' + key + ' не совпал: ждал ' + fp((book().friends[key] || {}).pk) + ', пришёл ' + fp(msg.pk));
     const b = book();
     const f = b.friends[key];
     if (!f || (f.newKey && f.newKey.pk === msg.pk)) return;
@@ -365,8 +372,13 @@ module.exports = function setupFriends(d) {
   function trustKey(key) {
     const b = book();
     const f = b.friends[key];
-    if (!f || !f.newKey) return false;
-    f.pk = f.newKey.pk; f.xk = f.newKey.xk; delete f.newKey;
+    if (!f) return false;
+    // новый ключ: из пришедшего статуса/заявки (newKey) или из профиля, подписанного другим ключом
+    const pr = profiles[key];
+    const nk = f.newKey || (pr && pr.pk && pr.pk !== f.pk && pr.doc && typeof pr.doc.xk === 'string' ? { pk: pr.pk, xk: pr.doc.xk } : null);
+    if (!nk) return false;
+    dl('доверяю новому ключу ' + key + ': ' + fp(f.pk) + ' → ' + fp(nk.pk));
+    f.pk = nk.pk; f.xk = nk.xk; delete f.newKey;
     saveBook(b);
     delete profiles[key]; delete statuses[key];
     unsub([C.T.profile(key), C.T.status(key)]); sub([C.T.profile(key), C.T.status(key)]); // перечитать retained
@@ -474,7 +486,10 @@ module.exports = function setupFriends(d) {
     const p = msg.p;
     const fromKey = C.keyOf(p.from);
     const f = C.friendBy(book(), fromKey, msg.pk);
-    if (!f || book().blocked[fromKey] || now - (Number(p.t) || 0) > C.MSG_MAX_AGE || C.keyOf(p.to) !== m.key) return;
+    if (!f || book().blocked[fromKey] || now - (Number(p.t) || 0) > C.MSG_MAX_AGE || C.keyOf(p.to) !== m.key) {
+      dl('  личное отброшено: ' + (!f ? 'не друг или другой ключ' : book().blocked[fromKey] ? 'в чёрном списке' : C.keyOf(p.to) !== m.key ? 'не мне' : 'слишком старое (часы?)'));
+      return;
+    }
     if (p.typ === 'inv') {
       const body = C.decryptFrom(identity(), f.xk, p.x);
       if (!body || !body.pkey || C.partyIdOf(body.pkey) !== body.id) return;
@@ -1207,6 +1222,19 @@ module.exports = function setupFriends(d) {
   // ---------------- IPC окна лаунчера ----------------
   const h = d.handle;
   h('friends:state', () => { bind(); return uiState(); });
+  h('friends:diag', () => {
+    const m = me();
+    const b = book();
+    const L = [];
+    L.push('VillagersLauncher ' + (d.version || '') + ' · ' + new Date().toISOString());
+    L.push('Я: ' + (m ? m.nick + ' (' + m.key + ') ключ ' + fp(m.pk) : 'не вошёл'));
+    L.push('Серверы: ' + (net.list ? net.list.map((x) => (x.ready ? '✓' : '✗') + x.host).join(' ') : net.online + '/' + net.total));
+    L.push('Друзья: ' + (Object.entries(b.friends).map(([k, f]) => f.nick + '[' + fp(f.pk) + (f.newKey ? '→' + fp(f.newKey.pk) : '') + ']' + ' ' + stOf(k, Date.now()).status).join(', ') || '—'));
+    L.push('Мои заявки: ' + (Object.values(b.out).map((o) => o.nick).join(', ') || '—') + ' · Входящие: ' + (Object.values(b.inc).map((o) => o.nick + '[' + fp(o.pk) + ']').join(', ') || '—') + ' · Чёрный список: ' + (Object.values(b.blocked).join(', ') || '—'));
+    L.push('Подписки: ' + subs.size);
+    L.push('--- журнал ---');
+    return L.concat(diag).join('\n');
+  });
   h('friends:add', (nick) => add(nick));
   h('friends:accept', (key) => accept(key));
   h('friends:decline', (key) => decline(key));
