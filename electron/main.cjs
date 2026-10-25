@@ -959,14 +959,18 @@ async function playGame(opts = {}) {
       for (const l of lines) {
         if (/Mod ID: 'minecraft'.*Actual version: '\[MISSING\]'/.test(l)) broken.neo = true;
         if (/Loading ImmediateWindowProvider /.test(l)) broken.splash = true;
-        if (/Setting user:|Backend library: LWJGL/.test(l)) broken.started = true;
+        // только строки лога ([время] [поток/уровень] ...): в тексте отчёта о вылете тоже есть «Backend library: LWJGL»,
+        // и раньше из-за него падение при создании окна считалось «игра уже открылась» — запасной запуск не включался
+        if (/^\[[^\]]*\].*(Setting user:|Backend library: LWJGL)/.test(l)) broken.started = true;
+        if (/^---- Minecraft Crash Report ----/.test(l)) broken.crashText = [];
+        if (broken.crashText && broken.crashText.length < 4000) broken.crashText.push(l);
         const z = /from mod ([^\s,]+\.jar), cause java\.util\.zip\.ZipException/.exec(l) || /ZipException[^\n]*?([\w.+\-]+\.jar)/.exec(l);
         if (z) broken.jars.add(path.basename(z[1]));
       }
       tail.push(...lines);
       if (tail.length > 400) tail = tail.slice(-400);
       send('game-log', lines);
-      if (!shown && lines.some((l) => /Backend library: LWJGL|Setting user:|Loading \d+ mods/i.test(l))) {
+      if (!shown && !broken.crashText && lines.some((l) => /^\[[^\]]*\].*(Backend library: LWJGL|Setting user:|Loading \d+ mods)/i.test(l))) {
         shown = true;
         send('game-state', { state: 'running' });
         const act = store.get().afterLaunch;
@@ -1009,7 +1013,7 @@ async function playGame(opts = {}) {
         send('toast', { kind: 'warn', text: 'Игра не запустилась из-за повреждённых файлов' + (broken.neo ? ' (установка Minecraft/NeoForge)' : '') + (fixed.length ? ': ' + fixed.join(', ') : '') + '. Нажми «Играть» ещё раз — лаунчер всё перекачает и проверит сам.' });
       }
       const crashed = code !== 0 && code !== null && played < 24 * 3600e3 && code !== 130;
-      send('game-state', { state: 'stopped', code, crashed, tail: tail.slice(-80), report: crashed ? readCrashReport(gameDir, startedAt) : null, fullscreen: !!s2.fullscreen, started: !!broken.started });
+      send('game-state', { state: 'stopped', code, crashed, tail: tail.slice(-80), report: crashed ? (readCrashReport(gameDir, startedAt) || (broken.crashText ? parseCrashReport(broken.crashText.join('\n'), 'отчёт из вывода игры') : null)) : null, fullscreen: !!s2.fullscreen, started: !!broken.started });
       if (friendsApi) friendsApi.onGameExit(code);
       if (!win || win.isDestroyed()) app.quit();
     });
@@ -1035,7 +1039,11 @@ function readCrashReport(gameDir, startedAt) {
     // client-отчёт подробнее fml-отчёта
     const pick = files.find((x) => /-client\.txt$/.test(x.f)) || files[0];
     if (!pick) return null;
-    const text = fs.readFileSync(path.join(dir, pick.f), 'utf8');
+    return parseCrashReport(fs.readFileSync(path.join(dir, pick.f), 'utf8'), pick.f);
+  } catch (_) { return null; }
+}
+function parseCrashReport(text, file) {
+  try {
     const lines = text.split(/\r?\n/);
     const di = lines.findIndex((l) => l.startsWith('Description:'));
     const summary = [];
@@ -1050,7 +1058,7 @@ function readCrashReport(gameDir, startedAt) {
     }
     for (const l of lines) if (/^Caused by:/.test(l) && summary.length < 24) summary.push(l);
     const mods = lines.filter((l) => /^\s*Suspected Mods?:/.test(l) || /^\s*Mod File:/.test(l)).slice(0, 6);
-    return { file: pick.f, summary: summary.join('\n'), suspected: mods.join('\n'), text: text.slice(0, 200000) };
+    return { file, summary: summary.join('\n'), suspected: mods.join('\n'), text: text.slice(0, 200000) };
   } catch (_) { return null; }
 }
 
