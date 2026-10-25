@@ -32,8 +32,13 @@ module.exports = function setupFriends(d) {
   let ident = null;
   function identity() {
     if (ident) return ident;
+    // запасная копия ключа рядом с настройками: если хранилище секретов не прочиталось, новый ключ не создаём —
+    // иначе у всех друзей ты пропадаешь («не в сети», пустой профиль), пока они не нажмут «Доверять новому ключу»
+    const backup = store.DATA_DIR ? path.join(store.DATA_DIR, 'friends-key.json') : null;
     try { const j = JSON.parse(store.getSecret('friends:identity') || 'null'); if (C.validIdentity(j)) ident = j; } catch (_) {}
+    if (!ident && backup) { try { const j = JSON.parse(fs.readFileSync(backup, 'utf8')); if (C.validIdentity(j)) { ident = j; store.setSecret('friends:identity', JSON.stringify(ident)); } } catch (_) {} }
     if (!ident) { ident = C.genIdentity(); store.setSecret('friends:identity', JSON.stringify(ident)); }
+    try { if (backup && !fs.existsSync(backup)) fs.writeFileSync(backup, JSON.stringify(ident)); } catch (_) {}
     return ident;
   }
   function me() {
@@ -149,7 +154,7 @@ module.exports = function setupFriends(d) {
       const key = rest[1];
       if (C.keyOf(msg.p.from) !== key || msg.p.typ !== 'profile') return;
       const f = book().friends[key];
-      if (f && f.pk !== msg.pk && key !== m.key) return; // чужой профиль под ником друга
+      if (f && f.pk !== msg.pk && key !== m.key) { keyMismatch(key, msg); return; } // профиль друга с другим ключом
       if (key === m.key && msg.pk !== m.pk) { profiles['!' + key] = { doc: msg.p, pk: msg.pk, t: msg.p.t }; return; } // тёзка
       const prev = profiles[key];
       if (prev && !C.fresher(prev.t, msg.p.t, now) && prev.pk === msg.pk) return;
@@ -160,6 +165,7 @@ module.exports = function setupFriends(d) {
     if (kind === 'st' && rest[1]) {
       const key = rest[1];
       const f = book().friends[key];
+      if (f && f.pk !== msg.pk && C.keyOf(msg.p.from) === key && msg.p.typ === 'status') { keyMismatch(key, msg); return; }
       if (!f || f.pk !== msg.pk || C.keyOf(msg.p.from) !== key || msg.p.typ !== 'status') return;
       const prev = statuses[key];
       // часы у друзей могут расходиться на минуты: свежесть считаем по времени получения, а не по часам отправителя
@@ -184,6 +190,16 @@ module.exports = function setupFriends(d) {
     }
     if (kind === 'in' && rest[1] === m.key) { onInbox(msg, now); return; }
     if (kind === 'pt' && party && rest[1] === party.id) { onParty(msg, now); }
+  }
+  // друг пишет с другим ключом (переустановил лаунчер, другой компьютер): раньше такие статусы и профиль молча отбрасывались —
+  // друг навсегда «не в сети» с пустым профилем. Теперь показываем «Ключ друга сменился · Доверять новому ключу».
+  function keyMismatch(key, msg) {
+    const b = book();
+    const f = b.friends[key];
+    if (!f || (f.newKey && f.newKey.pk === msg.pk)) return;
+    f.newKey = { pk: msg.pk, xk: msg.xk, t: Number(msg.p.t) || Date.now() };
+    saveBook(b);
+    onBookEvent({ kind: 'keychanged', nick: f.nick, key });
   }
   function onBookEvent(ev) {
     const m = me();

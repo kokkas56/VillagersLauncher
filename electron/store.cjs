@@ -174,8 +174,15 @@ function readSecrets() {
   try {
     if (!fs.existsSync(SECRETS_FILE)) return {};
     const buf = fs.readFileSync(SECRETS_FILE);
-    const txt = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : buf.toString('utf8');
-    return JSON.parse(txt);
+    try {
+      const txt = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : buf.toString('utf8');
+      return JSON.parse(txt);
+    } catch (e1) {
+      // файл записан другим способом (до/после включения шифрования) — пробуем как есть, чтобы не потерять ключи и токены
+      try { return JSON.parse(buf.toString('utf8')); } catch (_) {}
+      try { if (safeStorage.isEncryptionAvailable()) return JSON.parse(safeStorage.decryptString(buf)); } catch (_) {}
+      throw e1;
+    }
   } catch (e) {
     console.error('secrets read failed', e);
     return {};
