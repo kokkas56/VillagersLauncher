@@ -11,7 +11,7 @@ export const levelOf = (xp) => Math.floor(Math.sqrt(Math.max(0, Number(xp) || 0)
 // cond: { mastery: [игра, уровень] } | { masteryAll: уровень } | { masteryTotal: сумма уровней } | { anyReward: [id…] }
 //       | { events: сколько значков событий } | { rewards: сколько наград всего } | { party: совместных игр } | { friends: друзей }
 export const COSMETIC_REWARDS = [
-  // ---- фоны лобби отряда (два базовых — бесплатно, см. LOBBY_BGS) ----
+  // ---- фоны лобби отряда (базовые — бесплатно, см. LOBBY_BGS: free) ----
   { id: 'lobby_pier', game: 'lobby', kind: 'lobby', lobby: 'pier', name: 'Лобби «Рыбацкий причал»', how: 'Мастерство «Рыбалки» 5', cond: { mastery: ['fishing', 5] } },
   { id: 'lobby_mineshaft', game: 'lobby', kind: 'lobby', lobby: 'mineshaft', name: 'Лобби «Заброшенная шахта»', how: 'Мастерство «Вагонетки» 5', cond: { mastery: ['mine', 5] } },
   { id: 'lobby_fairground', game: 'lobby', kind: 'lobby', lobby: 'fairground', name: 'Лобби «Ночная ярмарка»', how: 'Мастерство «Ярмарочного тира» 5', cond: { mastery: ['fair', 5] } },
@@ -62,6 +62,7 @@ export const COSMETIC_REWARDS = [
 export const LOBBY_BGS = [
   { id: 'meadow', name: 'Летний луг', free: true, sky: ['#7ec8ff', '#d8f0ff'], ground: '#5fae4a' },
   { id: 'square', name: 'Деревенская площадь', free: true, sky: ['#f0b070', '#ffe0b0'], ground: '#a08060' },
+  { id: 'space', name: 'Орбита Земли', free: true, sky: ['#02030a', '#0a1838'], ground: '#2a6ab0' },
   { id: 'pier', name: 'Рыбацкий причал', sky: ['#4a90c8', '#bfe4f4'], ground: '#2a6a8a' },
   { id: 'mineshaft', name: 'Заброшенная шахта', sky: ['#1a1410', '#3a2c20'], ground: '#4a3a2a' },
   { id: 'fairground', name: 'Ночная ярмарка', sky: ['#1a1440', '#5a2a6a'], ground: '#3a2a3a' },

@@ -261,8 +261,8 @@ t('награды с условием: мастерство, события, о�
   assert.strictEqual(X.accountLevel({ mastery: { fishing: xp(5), mine: xp(2) } }), 8);
   assert.deepStrictEqual(X.condProgress({ masteryTotal: 30 }, { mastery: { fishing: xp(5) } }), [5, 30]);
 });
-t('фоны лобби: два бесплатных, остальные — по наградам; у каждой награды-фона есть фон', () => {
-  assert.deepStrictEqual([...X.lobbyUnlocked({ rewards: {} })].sort(), ['meadow', 'square']);
+t('фоны лобби: три бесплатных (луг, площадь, орбита), остальные — по наградам; у каждой награды-фона есть фон', () => {
+  assert.deepStrictEqual([...X.lobbyUnlocked({ rewards: {} })].sort(), ['meadow', 'space', 'square']);
   assert.ok(X.lobbyUnlocked({ rewards: { lobby_pier: 1 } }).has('pier'));
   for (const r of X.REWARDS.filter((x) => x.kind === 'lobby')) assert.ok(X.LOBBY_BGS.some((b) => b.id === r.lobby), r.id);
   for (const b of X.LOBBY_BGS.filter((x) => !x.free)) assert.ok(X.REWARDS.some((r) => r.lobby === b.id), b.id);
