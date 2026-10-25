@@ -1236,6 +1236,7 @@ module.exports = function setupFriends(d) {
   }, d.tickMs || 8000));
   timers.push(setInterval(() => { try { if (party) { pump(); if (party.st && party.st.live && !party.st.live.go) leaderCheck(); } } catch (_) {} }, 1000));
   timers.push(setInterval(() => changed(), 30000)); // статусы «устаревают» сами — обновить список
+  timers.push(setInterval(() => { if (subs.size) cmd('frSync', { topics: [...subs] }).catch(() => {}); }, 60000)); // сверка подписок с соединениями
 
   // ---------------- IPC окна лаунчера ----------------
   const h = d.handle;
@@ -1246,7 +1247,8 @@ module.exports = function setupFriends(d) {
     const L = [];
     L.push('VillagersLauncher ' + (d.version || '') + ' · ' + new Date().toISOString());
     L.push('Я: ' + (m ? m.nick + ' (' + m.key + ') ключ ' + fp(m.pk) : 'не вошёл'));
-    L.push('Серверы: ' + (net.list ? net.list.map((x) => (x.ready ? '✓' : '✗') + x.host).join(' ') : net.online + '/' + net.total));
+    L.push('Серверы: ' + (net.list ? net.list.map((x) => (x.ready ? '✓' : '✗') + x.host + (x.subs != null ? '(' + x.subs + ')' : '')).join(' ') : net.online + '/' + net.total) + (net.fr != null ? ' · подписок у соединений ' + net.fr : ''));
+    L.push('Подписан на: ' + [...subs].map((t) => t.slice(C.NS.length)).join(' '));
     L.push('Друзья: ' + (Object.entries(b.friends).map(([k, f]) => f.nick + '[' + fp(f.pk) + (f.newKey ? '→' + fp(f.newKey.pk) : '') + ']' + ' ' + stOf(k, Date.now()).status).join(', ') || '—'));
     L.push('Мои заявки: ' + (Object.values(b.out).map((o) => o.nick).join(', ') || '—') + ' · Входящие: ' + (Object.values(b.inc).map((o) => o.nick + '[' + fp(o.pk) + ']').join(', ') || '—') + ' · Чёрный список: ' + (Object.values(b.blocked).join(', ') || '—'));
     L.push('Подписки: ' + subs.size);

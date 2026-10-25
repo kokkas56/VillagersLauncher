@@ -11,6 +11,9 @@ const SRV = 'villagerskokk/v1/srv/'; // открытые сервера игро
 const keyOf = (nick) => String(nick).toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 24) || 'player';
 const boards = {}; // game -> { key -> {nick, score, at} }
 let clients = [];
+// подписки друзей храним здесь же: подписка, пришедшая раньше, чем открылись соединения, раньше терялась навсегда
+// (лаунчер считал, что подписан на статус друга, а сервер о ней не знал — друг «не в сети», профиль пустой)
+const frTopics = new Set();
 
 function push() {
   const out = {};
@@ -63,13 +66,15 @@ ipcRenderer.on('scores-cmd', (e, { cmd, opts }) => {
     // при двух серверах они могли вообще не встретиться (друг «не в сети», хотя оба в лаунчере)
     const netState = () => ipcRenderer.send('fr-net', {
       online: clients.filter((x) => x.ready).length, total: clients.length,
-      list: clients.map((x) => ({ host: String(x.url).replace(/^wss?:\/\//, '').replace(/[:/].*$/, ''), ready: !!x.ready }))
+      list: clients.map((x) => ({ host: String(x.url).replace(/^wss?:\/\//, '').replace(/[:/].*$/, ''), ready: !!x.ready, subs: [...x.subs].filter((t) => t.startsWith(FR)).length })), fr: frTopics.size
     });
     clients = [...new Set(opts.brokers || [])].slice(0, 5).map((url) => {
       const c = new Mqtt(url, onMessage, () => setTimeout(netState, 0));
       c.subscribe(ROOT + '+/+');
+      for (const t of frTopics) c.subscribe(t);
       return c;
     });
+    globalThis.netState = netState;
   }
   if (cmd === 'submit') {
     const key = keyOf(opts.nick);
@@ -87,8 +92,14 @@ ipcRenderer.on('scores-cmd', (e, { cmd, opts }) => {
     const topic = SRV + String(opts.id).replace(/[^a-f0-9]/g, '');
     for (const c of clients) c.publish(topic, msg, true);
   }
-  if (cmd === 'frSub') { for (const c of clients) for (const t of opts.topics || []) if (frOk(t)) c.subscribe(t); }
-  if (cmd === 'frUnsub') { for (const c of clients) for (const t of opts.topics || []) if (frOk(t)) c.unsubscribe(t); }
+  if (cmd === 'frSub') { for (const t of opts.topics || []) if (frOk(t)) { frTopics.add(t); for (const c of clients) c.subscribe(t); } if (globalThis.netState) globalThis.netState(); }
+  if (cmd === 'frUnsub') { for (const t of opts.topics || []) if (frOk(t)) { frTopics.delete(t); for (const c of clients) c.unsubscribe(t); } if (globalThis.netState) globalThis.netState(); }
+  // сверка: лаунчер раз в минуту присылает полный список — чего у соединений нет, досылаем (лишнего не трогаем)
+  if (cmd === 'frSync') {
+    for (const t of opts.topics || []) if (frOk(t) && !frTopics.has(t)) { frTopics.add(t); for (const c of clients) c.subscribe(t); }
+    for (const c of clients) for (const t of frTopics) if (!c.subs.has(t)) c.subscribe(t);
+    if (globalThis.netState) globalThis.netState();
+  }
   if (cmd === 'frPub' && frOk(opts.topic)) {
     const pub = (c, n) => { if (!c.publish(opts.topic, opts.text || '', !!opts.retain) && n < (opts.retain ? 20 : 3)) setTimeout(() => pub(c, n + 1), 3000); };
     for (const c of clients) pub(c, 0);
