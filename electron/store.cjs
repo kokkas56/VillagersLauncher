@@ -61,6 +61,22 @@ const DEFAULTS = {
   studioBounds: null, // окно «Студия Кокка»: где стояло и какого размера
   studioPops: {}, // отдельные окна редакторов Студии
   syncDirs: ['mods', 'config', 'defaultconfigs', 'resourcepacks', 'shaderpacks', 'kubejs'],
+  // full — в сборку уходит вся папка игры, кроме личного (packExclude); dirs — только папки syncDirs (старый режим)
+  packMode: 'full',
+  packExclude: [
+    // исходники и личные папки автора
+    'Исходники/', 'Claude outputs/', 'villagerskokk/', '*-сборки/', 'mods-backup*/', 'mods_old*/', '.git/', '.gitignore', '.gitattributes', '*.cmd', 'README.md',
+    // миры, скрины, логи и прочее личное
+    'saves/', 'screenshots/', 'logs/', 'crash-reports/', 'debug/', 'backups/', 'downloads/', 'replay_recordings/', 'journeymap/data/', 'XaeroWorldMap/', 'XaeroWaypoints/',
+    'skinkokk/', 'command_history.txt', 'servers.dat', 'servers.dat_old', 'servers.dat.bak', 'emi.json', 'ponders_watched.json', 'hs_err_pid*.log',
+    // это лаунчер ставит сам (Minecraft, NeoForge, Java) или игра пересоздаёт
+    'versions/', 'libraries/', 'assets/', 'runtime/', 'natives/', '.mixin.out/', '.sable/', 'dynamic-data-pack-cache/', 'dynamic-resource-pack-cache/',
+    'server-resource-packs/', '.cache/', '.villagers/', 'server/', 'kokkstory-videos/', '.fabric/', 'distant_horizons_server_data/', 'Distant_Horizons_server_data/'
+  ],
+  // Личные настройки (клавиши, графика): новичку кладутся настройки автора, дальше у каждого свои и не перезаписываются
+  seedFiles: ['options.txt', 'optionsof.txt', 'optionsshaders.txt', 'options.amecsapi.txt', 'config/fzzy_config/keybinds.toml',
+    'config/sodium-options.json', 'config/embeddium-options.json', 'config/rubidium-options.json', 'config/iris.properties', 'config/oculus.properties',
+    'config/DistantHorizons.toml', 'config/betterfpsdist.json', 'config/bobby.toml'],
   strictDirs: ['mods'],
   ignore: [
     'desktop.ini', 'Thumbs.db', '*.bak', '*.tmp', '*.log', '*.backup[0-9]',

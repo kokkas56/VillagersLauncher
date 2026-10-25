@@ -68,19 +68,72 @@ function walk(root, rel, out) {
 }
 
 // Список файлов сборки в папке автора
-async function scanSource(dir, onProgress) {
-  const s = store.get();
+// Режим full: вся папка игры, кроме личного (packExclude) и масок ignore; личные настройки (seedFiles) — помечаются seed
+function packFilters(s = store.get()) {
   const ignored = makeIgnore(s.ignore);
+  const excluded = makeIgnore(s.packExclude || []);
+  const seeds = makeIgnore(s.seedFiles || []);
+  return { ignored, excluded, seeds, full: (s.packMode || 'full') === 'full' };
+}
+
+function walkFiltered(root, rel, out, skipDir) {
+  let list;
+  try { list = fs.readdirSync(path.join(root, rel), { withFileTypes: true }); } catch (_) { return; }
+  for (const e of list) {
+    const r = rel ? rel + '/' + e.name : e.name;
+    if (e.isDirectory()) { if (!skipDir(r)) walkFiltered(root, r, out, skipDir); }
+    else if (e.isFile()) out.push(r);
+  }
+}
+
+function listSourceFiles(dir, s = store.get()) {
+  const f = packFilters(s);
   const rels = [];
-  for (const d of s.syncDirs) walk(dir, d, rels);
-  const files = rels.filter((r) => !ignored(r) && !r.endsWith('.part') && !r.endsWith('.disabled'));
+  if (f.full) {
+    // сиды кладём, даже если их папка/файл попали под общие маски (например options.txt)
+    walkFiltered(dir, '', rels, (r) => f.excluded(r + '/') || f.excluded(r + '/x') || f.ignored(r + '/x'));
+  } else {
+    for (const d of s.syncDirs) walk(dir, d, rels);
+  }
+  return rels.filter((r) => {
+    if (r.endsWith('.part') || r.endsWith('.disabled')) return false;
+    if (f.seeds(r)) return true;
+    return !f.ignored(r) && !f.excluded(r);
+  }).map((r) => ({ path: r, seed: f.seeds(r) }));
+}
+
+// Верхние папки игры: что уходит в сборку и сколько весит (для вкладки «Автор»)
+function topLevelSummary(dir, files) {
+  const s = store.get();
+  const f = packFilters(s);
+  const map = new Map();
+  let list = [];
+  try { list = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) {}
+  for (const e of list) {
+    const name = e.isDirectory() ? e.name + '/' : e.name;
+    map.set(name, { name, dir: e.isDirectory(), included: false, files: 0, size: 0, excludedBy: f.excluded(e.isDirectory() ? e.name + '/x' : e.name) ? 'exclude' : (f.ignored(e.isDirectory() ? e.name + '/x' : e.name) ? 'ignore' : null) });
+  }
+  for (const fl of files) {
+    const top = fl.path.includes('/') ? fl.path.split('/')[0] + '/' : fl.path;
+    const m = map.get(top) || { name: top, dir: top.endsWith('/'), files: 0, size: 0 };
+    m.included = true; m.files++; m.size += fl.size || 0;
+    map.set(top, m);
+  }
+  return [...map.values()].sort((a, b) => (b.included - a.included) || b.size - a.size || a.name.localeCompare(b.name));
+}
+
+async function scanSource(dir, onProgress) {
+  const files = listSourceFiles(dir);
   const cache = hashCache(dir);
   const out = [];
   let i = 0;
-  for (const rel of files) {
-    const abs = path.join(dir, rel);
-    const st = fs.statSync(abs);
-    out.push({ path: rel, size: st.size, sha1: await cache.sha1(abs) });
+  for (const it of files) {
+    const abs = path.join(dir, it.path);
+    let st;
+    try { st = fs.statSync(abs); } catch (_) { continue; }
+    const e = { path: it.path, size: st.size, sha1: await cache.sha1(abs) };
+    if (it.seed) e.seed = true;
+    out.push(e);
     if (onProgress && ++i % 25 === 0) onProgress({ stage: 'scan', text: `Проверяю файлы ${i}/${files.length}`, bytes: i, total: files.length });
   }
   cache.save();
@@ -240,6 +293,7 @@ async function sync(manifest, gameDir, progress, { verify = false } = {}) {
   const backupRoot = path.join(gameDir, '.villagers', 'backup', new Date().toISOString().replace(/[:.]/g, '-'));
   const toGet = [];
   const newFiles = {};
+  const seeds = {};
   let i = 0;
   const backup = (abs, rel) => {
     const dst = path.join(backupRoot, rel);
@@ -256,6 +310,12 @@ async function sync(manifest, gameDir, progress, { verify = false } = {}) {
     const other = wantDisabled ? enabledAbs : disabledAbs;
     if (f.optional && fs.existsSync(other) && !fs.existsSync(target)) fs.renameSync(other, target);
     else if (fs.existsSync(other)) fs.rmSync(other, { force: true });
+    if (f.seed) {
+      // личная настройка (клавиши, графика): кладём только если её ещё нет, потом не трогаем
+      seeds[f.path] = true;
+      if (!fs.existsSync(target)) toGet.push({ ...f, file: target });
+      continue;
+    }
     newFiles[f.path] = f.sha1;
     if (!fs.existsSync(target)) { toGet.push({ ...f, file: target }); continue; }
     const cur = await cache.sha1(target, verify);
@@ -267,7 +327,7 @@ async function sync(manifest, gameDir, progress, { verify = false } = {}) {
   }
   // удалённые из сборки файлы
   for (const [rel, sha] of Object.entries(st.files || {})) {
-    if (newFiles[rel]) continue;
+    if (newFiles[rel] || seeds[rel]) continue;
     for (const abs of [path.join(gameDir, rel), path.join(gameDir, rel) + '.disabled']) {
       if (!fs.existsSync(abs)) continue;
       const cur = await cache.sha1(abs);
@@ -300,7 +360,7 @@ async function sync(manifest, gameDir, progress, { verify = false } = {}) {
       onProgress: (p) => progress({ stage: 'pack', text: `Скачиваю сборку: ${p.files}/${p.filesTotal}`, bytes: p.bytes, total: p.total })
     });
   }
-  writeState(gameDir, { version: manifest.version, tag: manifest.tag, date: manifest.date, files: newFiles });
+  writeState(gameDir, { version: manifest.version, tag: manifest.tag, date: manifest.date, files: newFiles, seeds: Object.keys(seeds) });
   return { downloaded: toGet.length, removed };
 }
 
@@ -320,10 +380,10 @@ async function localChanges(progress) {
   const added = []; const changed = []; const removed = [];
   for (const f of files) {
     const p = prev.get(f.path);
-    if (!p) added.push(f); else if (p.sha1 !== f.sha1) changed.push(f);
+    if (!p) added.push(f); else if (p.sha1 !== f.sha1 || !!p.seed !== !!f.seed) changed.push(f);
   }
   for (const [p, f] of prev) if (!cur.has(p)) removed.push(f);
-  return { manifest, files, added, changed, removed, totalSize: files.reduce((a, f) => a + f.size, 0) };
+  return { manifest, files, added, changed, removed, totalSize: files.reduce((a, f) => a + f.size, 0), topLevel: topLevelSummary(s.authorSourceDir, files), packMode: s.packMode || 'full' };
 }
 
 function safeAssetName(sha1, rel) {
@@ -430,6 +490,7 @@ async function publish({ title, text, noNews, early: isEarly, freeAt, replaceTag
   for (const f of ch.files) {
     const p = prev.get(f.path);
     const entry = { path: f.path, sha1: f.sha1, size: f.size };
+    if (f.seed) entry.seed = true;
     if (optional.has(f.path)) entry.optional = true;
     if (p && p.sha1 === f.sha1 && p.url && (!isEarlyFile(p) || sameRel(p)) && !brokenUrl(p)) { entry.url = p.url; if (sameRel(p)) entry.enc = tag; }
     else if (mr[f.sha1]) { entry.url = mr[f.sha1].url; entry.source = 'modrinth'; }
@@ -465,6 +526,7 @@ async function publish({ title, text, noNews, early: isEarly, freeAt, replaceTag
     loader: { type: 'neoforge', version: s.neoforgeVersion },
     java: 21,
     syncDirs: s.syncDirs,
+    packMode: s.packMode || 'full',
     strictDirs: s.strictDirs,
     servers: s.publishServers || [],
     changelog,

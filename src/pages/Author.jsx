@@ -321,6 +321,7 @@ export default function Author() {
       {(progress || scanP) && <Progress p={progress || scanP} />}
 
       <div className="author-grid">
+        <div>
         <Section title={t('Локальные изменения')} icon="layers" right={changes && <span className="muted small">{changes.files.length} {t('файлов')}, {fmtBytes(changes.totalSize)}</span>}>
           <p className="muted small">{t('Ты меняешь моды и конфиги прямо в папке игры и играешь с ними — у остальных ничего не меняется, пока не нажмёшь «Залить сборку».')}</p>
           {changes && n === 0 && !optChanged && <div className="ok-box"><Icon name="check" /> {t('Всё уже залито: у игроков та же сборка, что у тебя.')}</div>}
@@ -334,6 +335,32 @@ export default function Author() {
           )}
           {!changes && <span className="muted">{t('Сканирую папку…')}</span>}
         </Section>
+
+        {changes && changes.topLevel && (settings.packMode || 'full') === 'full' && (
+          <Section title={t('Что уходит в сборку')} icon="folder" right={<span className="muted small">{t('вся папка игры, кроме личного')}</span>}>
+            <p className="muted small">{t('Игроки получают всё, что отмечено. Сняв галочку, папка или файл перестанут уходить в сборку. Minecraft, NeoForge и Java лаунчер ставит сам, поэтому versions, libraries и assets не нужны. Клавиши и графика (options.txt и т.п.) кладутся новичку один раз и дальше у каждого свои.')}</p>
+            <div className="pack-top">
+              {changes.topLevel.map((d) => {
+                const pat = d.name;
+                const excl = settings.packExclude || [];
+                const on = d.included;
+                const toggle = () => {
+                  const next = on ? [...excl, pat] : excl.filter((x) => x !== pat && x !== pat.replace(/\/$/, ''));
+                  saveSettings({ packExclude: next }).then(scan);
+                };
+                return (
+                  <label key={d.name} className={'pack-top-row' + (on ? '' : ' off')} title={!on && d.excludedBy === 'ignore' ? t('Скрыто масками «Не отправлять»') : ''}>
+                    <input type="checkbox" checked={on} disabled={!on && d.excludedBy === 'ignore'} onChange={toggle} />
+                    <Icon name={d.dir ? 'folder' : 'news'} size={12} />
+                    <span className="mono grow">{d.name}</span>
+                    <span className="muted small">{on ? `${d.files} · ${fmtBytes(d.size)}` : t('не уходит')}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </Section>
+        )}
+        </div>
 
         <div className="author-right">
           <Section title={t('Залить сборку')} icon="upload">
@@ -379,7 +406,14 @@ export default function Author() {
               </div>
             </div>
             <div className="field"><span>{t('Репозиторий сборки')}</span><input className="input mono" value={settings.packRepo} onChange={(e) => saveSettings({ packRepo: e.target.value })} /></div>
-            <div className="field"><span>{t('Папки в сборке')}</span><input className="input mono" value={settings.syncDirs.join(', ')} onChange={(e) => saveSettings({ syncDirs: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) })} /></div>
+            <div className="field"><span>{t('Что заливать')}</span>
+              <div className="seg">
+                <button className={(settings.packMode || 'full') === 'full' ? 'on' : ''} onClick={() => saveSettings({ packMode: 'full' }).then(scan)}>{t('Всю папку игры')}</button>
+                <button className={settings.packMode === 'dirs' ? 'on' : ''} onClick={() => saveSettings({ packMode: 'dirs' }).then(scan)}>{t('Только выбранные папки')}</button>
+              </div>
+            </div>
+            {settings.packMode === 'dirs' && <div className="field"><span>{t('Папки в сборке')}</span><input className="input mono" value={settings.syncDirs.join(', ')} onChange={(e) => saveSettings({ syncDirs: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) })} /></div>}
+            <div className="field"><span>{t('Личные настройки (новичку один раз, потом у каждого свои)')}</span><textarea className="input mono" rows={3} value={(settings.seedFiles || []).join('\n')} onChange={(e) => saveSettings({ seedFiles: e.target.value.split('\n').map((x) => x.trim()).filter(Boolean) })} /></div>
             <div className="field"><span>{t('Не отправлять (маски)')}</span><textarea className="input mono" rows={4} value={settings.ignore.join('\n')} onChange={(e) => saveSettings({ ignore: e.target.value.split('\n').map((x) => x.trim()).filter(Boolean) })} /></div>
             <div className="row">
               <div className="field"><span>Minecraft</span><input className="input mono" value={settings.minecraftVersion} onChange={(e) => saveSettings({ minecraftVersion: e.target.value })} /></div>
