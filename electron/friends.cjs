@@ -67,7 +67,18 @@ module.exports = function setupFriends(d) {
 
   // ---------------- кеш профилей и статусов ----------------
   const profiles = {}; // key -> { doc, pk, t }
-  const statuses = {}; // key -> { doc, pk, t }
+  const statuses = {}; // key -> { doc, pk, t, recv }
+  // статус друга: онлайн, пока от него идут пульсы (по времени получения у нас — не зависит от часов друга)
+  function stOf(key, now) {
+    const e = statuses[key];
+    if (!e || !e.doc) return { status: 'offline', doing: '', lastSeen: 0 };
+    const age = now - (e.recv || 0);
+    // сохранённая на брокере копия от давно ушедшего друга: если по его же часам ей больше получаса — не верим «в сети»
+    const ancient = !!(e.firstRetained && e.t && now - e.t > 30 * 60e3);
+    if (age > 150e3 || ancient) return { status: 'offline', doing: '', lastSeen: e.recv || 0 };
+    const r = C.statusOf({ ...e.doc, t: now }, now);
+    return { ...r, lastSeen: e.recv || 0 };
+  }
   const elySkins = {}; // nick -> { skin, slim } | false
   function wantProfile(key) { sub([C.T.profile(key)]); }
   function elySkin(nick) {
@@ -151,10 +162,12 @@ module.exports = function setupFriends(d) {
       const f = book().friends[key];
       if (!f || f.pk !== msg.pk || C.keyOf(msg.p.from) !== key || msg.p.typ !== 'status') return;
       const prev = statuses[key];
-      if (prev && !C.fresher(prev.t, msg.p.t, now)) return;
-      const was = prev ? C.statusOf(prev.doc, now).status : 'offline';
-      statuses[key] = { doc: msg.p, pk: msg.pk, t: Number(msg.p.t) || 0 };
-      const nowSt = C.statusOf(msg.p, now).status;
+      // часы у друзей могут расходиться на минуты: свежесть считаем по времени получения, а не по часам отправителя
+      const t = Number(msg.p.t) || 0;
+      if (prev && t && prev.t && t < prev.t && t > prev.t - 6 * 3600e3) return; // старая копия того же статуса
+      const was = prev ? stOf(key, now).status : 'offline';
+      statuses[key] = { doc: msg.p, pk: msg.pk, t, recv: now, firstRetained: !prev };
+      const nowSt = stOf(key, now).status;
       if (was === 'offline' && nowSt !== 'offline' && prev) d.send('toast', { text: f.nick + ' в сети', kind: 'info' });
       changed();
       return;
@@ -426,7 +439,7 @@ module.exports = function setupFriends(d) {
     const key = C.keyOf(nick);
     const f = book().friends[key];
     if (!f) throw Object.assign(new Error(nick + ' не в друзьях'), { code: 'not_friend' });
-    const s = statuses[key] ? C.statusOf(statuses[key].doc, Date.now()) : { status: 'offline' };
+    const s = stOf(key, Date.now());
     if (s.status === 'offline') throw Object.assign(new Error(f.nick + ' сейчас не в сети'), { code: 'offline' });
     ensureParty();
     if (party.st && party.st.members.some((x) => x.key === key)) throw Object.assign(new Error(f.nick + ' уже в отряде'), { code: 'busy' });
@@ -941,7 +954,7 @@ module.exports = function setupFriends(d) {
     const full = C.partyFull(party && party.st);
     const ord = { ingame: 0, online: 1, offline: 2 };
     return Object.entries(b.friends).map(([key, f]) => {
-      const s = statuses[key] ? C.statusOf(statuses[key].doc, now) : { status: 'offline', doing: '' };
+      const s = stOf(key, now);
       const pr = profiles[key];
       const v = memberView(key, f.nick, { status: s.status, doing: s.doing, inParty: inParty.has(key), invitable: s.status !== 'offline' && !inParty.has(key) && !full });
       v.equip = (pr && pr.doc && pr.doc.equipItems) ? C.cleanEquip(pr.doc.equipItems) : null;
@@ -959,7 +972,7 @@ module.exports = function setupFriends(d) {
     const pr = profiles[key];
     const doc = mine ? profileDoc(m) : pr ? pr.doc : null;
     const f = b.friends[key];
-    const s = mine ? { status: prefs().hide ? 'offline' : d.getGame() ? 'ingame' : 'online', doing: prefs().hide ? 'Статус скрыт' : doing() } : statuses[key] ? C.statusOf(statuses[key].doc, Date.now()) : { status: 'offline', doing: '' };
+    const s = mine ? { status: prefs().hide ? 'offline' : d.getGame() ? 'ingame' : 'online', doing: prefs().hide ? 'Статус скрыт' : doing() } : stOf(key, Date.now());
     const nick = (doc && doc.from) || (f && f.nick) || (b.inc[key] && b.inc[key].nick) || (b.out[key] && b.out[key].nick) || nickOrKey;
     const base = memberView(key, nick, {});
     return {

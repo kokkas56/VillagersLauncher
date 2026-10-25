@@ -17,7 +17,7 @@ const NICK_RE = /^[A-Za-z0-9_]{2,16}$/;
 const STATUS_STALE = 150e3; // статус без пульса дольше — офлайн
 const HB_STALE = 30e3; // участник отряда без пульса дольше — пропал
 const DROP_AFTER = 90e3; // в лобби пропавшего убираем из отряда
-const MSG_MAX_AGE = 10 * 60e3; // inbox/отряд: старые сообщения не принимаем
+const MSG_MAX_AGE = 3 * 3600e3; // inbox/отряд: старые сообщения не принимаем (с запасом: часы у игроков могут отставать)
 const INVITE_TTL = 120e3;
 const ENTER_WAIT = 60e3; // совместная загрузка: ждём остальных не дольше минуты
 const PARTY_MAX = 10; // в отряде не больше 10 игроков, лидер тоже считается
@@ -187,7 +187,7 @@ function statusOf(doc, now) {
   return { status, doing: status === 'offline' ? '' : String(doc.doing || '').slice(0, 60) };
 }
 // новее ли retained-документ (защита от повторов старых копий)
-function fresher(prevT, t, now) { t = Number(t) || 0; return t > (prevT || 0) && t < now + 5 * 60e3; }
+function fresher(prevT, t, now) { t = Number(t) || 0; return t > (prevT || 0) && t < now + 24 * 3600e3; } // часы у игроков могут спешить
 
 // ---------------- отряд ----------------
 // state (общее, рассылает лидер): { id, key, leader, members: [{key, nick, pk, xk}], seq, phase, background, map, live, t }
