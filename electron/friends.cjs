@@ -159,11 +159,12 @@ module.exports = function setupFriends(d) {
       const key = rest[1];
       if (C.keyOf(msg.p.from) !== key || msg.p.typ !== 'profile') return;
       const f = book().friends[key];
-      if (f && f.pk !== msg.pk && key !== m.key) { profiles[key] = { doc: msg.p, pk: msg.pk, t: Number(msg.p.t) || 0 }; keyMismatch(key, msg); changed(); return; } // профиль друга с другим ключом: показываем с предупреждением
+      if (f && f.pk !== msg.pk && key !== m.key) { if ((Number(msg.p.t) || 0) > (keySeenT[key] || 0)) profiles[key] = { doc: msg.p, pk: msg.pk, t: Number(msg.p.t) || 0 }; keyMismatch(key, msg); changed(); return; } // профиль друга с другим ключом: показываем с предупреждением
       if (key === m.key && msg.pk !== m.pk) { profiles['!' + key] = { doc: msg.p, pk: msg.pk, t: msg.p.t }; return; } // тёзка
       const prev = profiles[key];
       if (prev && !C.fresher(prev.t, msg.p.t, now) && prev.pk === msg.pk) return;
       profiles[key] = { doc: msg.p, pk: msg.pk, t: Number(msg.p.t) || 0 };
+      if (f) seen(key, msg.p.t);
       changed();
       return;
     }
@@ -178,6 +179,7 @@ module.exports = function setupFriends(d) {
       if (prev && t && prev.t && t < prev.t && t > prev.t - 6 * 3600e3) return; // старая копия того же статуса
       const was = prev ? stOf(key, now).status : 'offline';
       statuses[key] = { doc: msg.p, pk: msg.pk, t, recv: now, firstRetained: !prev };
+      seen(key, t);
       const nowSt = stOf(key, now).status;
       if (was === 'offline' && nowSt !== 'offline' && prev) d.send('toast', { text: f.nick + ' в сети', kind: 'info' });
       changed();
@@ -199,11 +201,17 @@ module.exports = function setupFriends(d) {
   }
   // друг пишет с другим ключом (переустановил лаунчер, другой компьютер): раньше такие статусы и профиль молча отбрасывались —
   // друг навсегда «не в сети» с пустым профилем. Теперь показываем «Ключ друга сменился · Доверять новому ключу».
+  // самое свежее время сообщения друга под принятым ключом (по его же часам): старые копии с другим ключом,
+  // оставшиеся на каком-то сервере-посреднике, не должны перебивать новый ключ (иначе ключ «скачет» туда-обратно)
+  const keySeenT = {};
+  const seen = (key, t) => { t = Number(t) || 0; if (t > (keySeenT[key] || 0)) keySeenT[key] = t; };
   function keyMismatch(key, msg) {
+    const t = Number(msg.p.t) || 0;
+    if (t && t <= (keySeenT[key] || 0)) { dl('  старая копия ' + key + ' под ключом ' + fp(msg.pk) + ' — пропускаю'); return; }
     dl('  ключ друга ' + key + ' не совпал: ждал ' + fp((book().friends[key] || {}).pk) + ', пришёл ' + fp(msg.pk));
     const b = book();
     const f = b.friends[key];
-    if (!f || (f.newKey && f.newKey.pk === msg.pk)) return;
+    if (!f) return;
     f.newKey = { pk: msg.pk, xk: msg.xk, t: Number(msg.p.t) || Date.now() };
     saveBook(b);
     onBookEvent({ kind: 'keychanged', nick: f.nick, key });
@@ -218,11 +226,12 @@ module.exports = function setupFriends(d) {
     if (ev.kind === 'keychanged') {
       // новый ключ друга принимаем сами (раньше нужно было нажать «Доверять новому ключу», а до того друг просто пропадал).
       // Не чаще раза в 10 минут на друга: если под одним ником пишут две установки, не скакать между ключами — тогда остаётся кнопка.
-      const last = autoTrusted[ev.key] || 0;
-      if (Date.now() - last > 10 * 60e3 && trustKey(ev.key)) {
+      const nt = (book().friends[ev.key] && book().friends[ev.key].newKey && book().friends[ev.key].newKey.t) || 0;
+      if (trustKey(ev.key)) {
+        seen(ev.key, nt);
+        if (!autoTrusted[ev.key]) note('key', 'У ' + ev.nick + ' сменился ключ (переустановил лаунчер или новый компьютер) — принят автоматически.', { nick: ev.nick });
         autoTrusted[ev.key] = Date.now();
-        note('key', 'У ' + ev.nick + ' сменился ключ (переустановил лаунчер или новый компьютер) — принят автоматически.', { nick: ev.nick });
-      } else note('key', 'У ' + ev.nick + ' снова сменился ключ. Если это точно он — нажми «Доверять новому ключу».', { nick: ev.nick });
+      }
     }
     if (m) changed();
   }
