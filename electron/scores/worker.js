@@ -66,10 +66,11 @@ ipcRenderer.on('scores-cmd', (e, { cmd, opts }) => {
     // при двух серверах они могли вообще не встретиться (друг «не в сети», хотя оба в лаунчере)
     const netState = () => ipcRenderer.send('fr-net', {
       online: clients.filter((x) => x.ready).length, total: clients.length,
-      list: clients.map((x) => ({ host: String(x.url).replace(/^wss?:\/\//, '').replace(/[:/].*$/, ''), ready: !!x.ready, subs: [...x.subs].filter((t) => t.startsWith(FR)).length })), fr: frTopics.size
+      list: clients.map((x) => ({ host: String(x.url).replace(/^wss?:\/\//, '').replace(/[:/].*$/, ''), ready: !!x.ready, subs: [...x.subs].filter((t) => t.startsWith(FR)).length, conn: x.conns || 0, rx: x.frRx || 0, tx: x.frTx || 0, lastRx: x.frLast || 0 })), fr: frTopics.size
     });
     clients = [...new Set(opts.brokers || [])].slice(0, 5).map((url) => {
-      const c = new Mqtt(url, onMessage, () => setTimeout(netState, 0));
+      // счётчики для «Отчёта связи»: сколько раз подключались, сколько сообщений друзей пришло/ушло через этот сервер
+      const c = new Mqtt(url, (topic, text) => { if (topic.startsWith(FR)) { c.frRx = (c.frRx || 0) + 1; c.frLast = Date.now(); } onMessage(topic, text); }, (up) => { if (up) c.conns = (c.conns || 0) + 1; setTimeout(netState, 0); });
       c.subscribe(ROOT + '+/+');
       for (const t of frTopics) c.subscribe(t);
       return c;
@@ -101,7 +102,7 @@ ipcRenderer.on('scores-cmd', (e, { cmd, opts }) => {
     if (globalThis.netState) globalThis.netState();
   }
   if (cmd === 'frPub' && frOk(opts.topic)) {
-    const pub = (c, n) => { if (!c.publish(opts.topic, opts.text || '', !!opts.retain) && n < (opts.retain ? 20 : 3)) setTimeout(() => pub(c, n + 1), 3000); };
+    const pub = (c, n) => { if (c.publish(opts.topic, opts.text || '', !!opts.retain)) c.frTx = (c.frTx || 0) + 1; else if (n < (opts.retain ? 20 : 3)) setTimeout(() => pub(c, n + 1), 3000); };
     for (const c of clients) pub(c, 0);
   }
   if (cmd === 'saveProgress') {

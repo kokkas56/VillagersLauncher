@@ -341,7 +341,9 @@ let scoresBoard = {};
 const PRESENCE_BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt', 'wss://mqtt.eclipseprojects.io:443/mqtt'];
 function scoresWorker() {
   if (scoresWin && !scoresWin.isDestroyed()) return scoresReady;
-  scoresWin = new BrowserWindow({ show: false, width: 200, height: 100, skipTaskbar: true, webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false } });
+  // backgroundThrottling: false — окно скрытое, и без этого Chromium «усыпляет» его таймеры (пинг сервера раз в минуту и реже):
+  // соединение с серверами-посредниками рвалось, живые статусы друзей не доходили, приходили только старые копии
+  scoresWin = new BrowserWindow({ show: false, width: 200, height: 100, skipTaskbar: true, webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false, backgroundThrottling: false } });
   scoresReady = new Promise((resolve) => ipcMain.once('scores-ready', () => resolve(scoresWin)));
   scoresWin.loadFile(path.join(__dirname, 'scores', 'worker.html'));
   scoresWin.on('closed', () => { scoresWin = null; });

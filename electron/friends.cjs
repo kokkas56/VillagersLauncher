@@ -1247,7 +1247,10 @@ module.exports = function setupFriends(d) {
     const L = [];
     L.push('VillagersLauncher ' + (d.version || '') + ' · ' + new Date().toISOString());
     L.push('Я: ' + (m ? m.nick + ' (' + m.key + ') ключ ' + fp(m.pk) : 'не вошёл'));
-    L.push('Серверы: ' + (net.list ? net.list.map((x) => (x.ready ? '✓' : '✗') + x.host + (x.subs != null ? '(' + x.subs + ')' : '')).join(' ') : net.online + '/' + net.total) + (net.fr != null ? ' · подписок у соединений ' + net.fr : ''));
+    const nowD = Date.now();
+    L.push('Серверы: ' + (net.list ? net.list.map((x) => (x.ready ? '✓' : '✗') + x.host + (x.subs != null ? ' [подп ' + x.subs + ', подкл ' + (x.conn || 0) + ', пришло ' + (x.rx || 0) + ', ушло ' + (x.tx || 0) + (x.lastRx ? ', последнее ' + Math.round((nowD - x.lastRx) / 1000) + 'с назад' : '') + ']' : '')).join(' ') : net.online + '/' + net.total) + (net.fr != null ? ' · подписок у соединений ' + net.fr : ''));
+    L.push('Мой статус отправлен ' + (statusAt ? Math.round((nowD - statusAt) / 1000) + ' с назад' : 'ни разу') + (lastStatus ? ': ' + lastStatus : ''));
+    for (const [k, e] of Object.entries(statuses)) L.push('Статус ' + k + ': получен ' + Math.round((nowD - (e.recv || 0)) / 1000) + ' с назад, отправлен ' + (e.t ? Math.round((nowD - e.t) / 1000) + ' с назад' : '?') + ' [' + fp(e.pk) + ']');
     L.push('Подписан на: ' + [...subs].map((t) => t.slice(C.NS.length)).join(' '));
     L.push('Друзья: ' + (Object.entries(b.friends).map(([k, f]) => f.nick + '[' + fp(f.pk) + (f.newKey ? '→' + fp(f.newKey.pk) : '') + ']' + ' ' + stOf(k, Date.now()).status).join(', ') || '—'));
     L.push('Мои заявки: ' + (Object.values(b.out).map((o) => o.nick).join(', ') || '—') + ' · Входящие: ' + (Object.values(b.inc).map((o) => o.nick + '[' + fp(o.pk) + ']').join(', ') || '—') + ' · Чёрный список: ' + (Object.values(b.blocked).join(', ') || '—'));
