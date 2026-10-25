@@ -338,13 +338,16 @@ handle('dialog:savePng', async ({ dataUrl, name }) => {
 let scoresWin = null;
 let scoresReady = null;
 let scoresBoard = {};
+const PRESENCE_BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt', 'wss://mqtt.eclipseprojects.io:443/mqtt'];
 function scoresWorker() {
   if (scoresWin && !scoresWin.isDestroyed()) return scoresReady;
   scoresWin = new BrowserWindow({ show: false, width: 200, height: 100, skipTaskbar: true, webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false } });
   scoresReady = new Promise((resolve) => ipcMain.once('scores-ready', () => resolve(scoresWin)));
   scoresWin.loadFile(path.join(__dirname, 'scores', 'worker.html'));
   scoresWin.on('closed', () => { scoresWin = null; });
-  scoresReady.then((w) => w.webContents.send('scores-cmd', { cmd: 'start', opts: { brokers: store.get().tunnelBrokers } }));
+  // друзья/рекорды: свои серверы + встроенный список (у кого tunnelBrokers сохранён старым — тоже получат новые)
+  const brokers = [...new Set([...(store.get().tunnelBrokers || []), ...PRESENCE_BROKERS])];
+  scoresReady.then((w) => w.webContents.send('scores-cmd', { cmd: 'start', opts: { brokers } }));
   return scoresReady;
 }
 ipcMain.on('scores-board', (e, b) => { if (scoresWin && e.sender === scoresWin.webContents) { scoresBoard = b || {}; send('scores', scoresBoard); } });

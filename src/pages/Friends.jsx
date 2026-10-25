@@ -51,8 +51,8 @@ export default function Friends({ openAccounts }) {
     <div className="page friends-page" onClick={() => menu && setMenu(null)}>
       <div className="page-head">
         <h2><Icon name="friends" size={22} /> {t('Друзья')}</h2>
-        <span className={'pill' + (online ? ' green' : ' warn')} title={t('Друзья работают через те же бесплатные серверы-посредники, что и таблица рекордов. Свой сервер не нужен.')}>
-          <span className="dot" style={{ background: online ? 'var(--emerald)' : 'var(--warn)' }} /> {online ? t('На связи') : t('Подключаюсь…')}
+        <span className={'pill' + (online ? ' green' : ' warn')} title={t('Друзья работают через бесплатные серверы-посредники (как таблица рекордов), свой сервер не нужен. Друга видно, если вы оба подключены хотя бы к одному общему серверу.') + (fs.net && fs.net.list ? '\n\n' + fs.net.list.map((b) => (b.ready ? '✓ ' : '✗ ') + b.host).join('\n') : '')}>
+          <span className="dot" style={{ background: online ? 'var(--emerald)' : 'var(--warn)' }} /> {online ? t('На связи') : t('Подключаюсь…')}{fs.net && fs.net.total ? ` ${fs.net.online}/${fs.net.total}` : ''}
         </span>
         <div className="grow" />
         <button className="btn ghost" onClick={() => setView(fs.me.nick)}><Icon name="user" /> {t('Мой профиль')}</button>

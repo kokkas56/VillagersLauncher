@@ -59,8 +59,14 @@ function onMessage(topic, text) {
 ipcRenderer.on('scores-cmd', (e, { cmd, opts }) => {
   if (cmd === 'start') {
     if (clients.length) return;
-    clients = (opts.brokers || []).slice(0, 2).map((url) => {
-      const c = new Mqtt(url, onMessage, () => setTimeout(() => ipcRenderer.send('fr-net', { online: clients.filter((x) => x.ready).length, total: clients.length }), 0));
+    // ко всем серверам сразу: если у одного игрока провайдер режет один сервер, а у друга — другой,
+    // при двух серверах они могли вообще не встретиться (друг «не в сети», хотя оба в лаунчере)
+    const netState = () => ipcRenderer.send('fr-net', {
+      online: clients.filter((x) => x.ready).length, total: clients.length,
+      list: clients.map((x) => ({ host: String(x.url).replace(/^wss?:\/\//, '').replace(/[:/].*$/, ''), ready: !!x.ready }))
+    });
+    clients = [...new Set(opts.brokers || [])].slice(0, 5).map((url) => {
+      const c = new Mqtt(url, onMessage, () => setTimeout(netState, 0));
       c.subscribe(ROOT + '+/+');
       return c;
     });
