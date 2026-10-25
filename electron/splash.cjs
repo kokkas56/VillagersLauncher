@@ -73,4 +73,21 @@ function prepare({ enabled, gameDir, libDir, log }) {
   }
 }
 
-module.exports = { prepare, PROVIDER };
+/**
+ * Полный экран — через options.txt (fullscreen:true), а не аргументом --fullscreen: окно создаётся обычным,
+ * и игра сама разворачивает его после запуска (KokkHUD — без рамки или настоящий полный экран).
+ * С --fullscreen окно создаётся сразу полноэкранным, и на части видеокарт игра падает ещё до открытия окна.
+ */
+function setFullscreenOption(gameDir, on) {
+  const file = path.join(gameDir, 'options.txt');
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8'); } catch (_) { /* первого запуска ещё не было */ }
+  const line = `fullscreen:${on ? 'true' : 'false'}`;
+  const re = /^fullscreen:.*$/m;
+  if (re.test(text)) text = text.replace(re, line);
+  else text = (text && !text.endsWith('\n') ? text + '\n' : text) + line + '\n';
+  fs.mkdirSync(gameDir, { recursive: true });
+  fs.writeFileSync(file, text);
+}
+
+module.exports = { prepare, PROVIDER, setFullscreenOption };

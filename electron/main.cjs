@@ -933,8 +933,9 @@ async function playGame(opts = {}) {
     }
     fs.mkdirSync(path.join(gameDir, 'skinkokk'), { recursive: true });
     try { characters.writeFile(gameDir); } catch (e) { console.error('character file', e); } // персонаж этого аккаунта
-    // своя заставка загрузки (villagersearly) вместе с полноэкранным режимом роняет игру при создании окна — тогда без неё
-    const splashJar = splash.prepare({ enabled: s.customSplash !== false && !s.fullscreen && !s.splashCrashed, gameDir, libDir: mc.LIB_DIR, log: (l) => send('game-log', [l]) });
+    // полный экран — через options.txt: окно создаётся обычным и разворачивается уже после запуска (аргумент --fullscreen ронял игру при создании окна)
+    try { splash.setFullscreenOption(gameDir, !!s.fullscreen && !s.fullscreenCrashed); } catch (e) { send('game-log', ['[launcher] полный экран не записан: ' + e.message]); }
+    const splashJar = splash.prepare({ enabled: s.customSplash !== false && !s.splashCrashed, gameDir, libDir: mc.LIB_DIR, log: (l) => send('game-log', [l]) });
     // quickPlayWorld — имя папки одиночного мира в saves (кнопка «Запустить игру в этом мире» в Студии)
     let quickPlayWorld = null;
     if (opts.quickPlayWorld) {
@@ -991,7 +992,7 @@ async function playGame(opts = {}) {
       // упала, не открыв окно, в полноэкранном режиме — дальше запускаем в окне (F11 в игре), пока игрок снова не включит полный экран
       if (code !== 0 && code !== null && s2.fullscreen && !broken.started && played < 5 * 60e3 && !s2.fullscreenCrashed) {
         store.set({ fullscreenCrashed: true });
-        send('toast', { kind: 'warn', text: 'Игра упала при открытии полного экрана. Следующий запуск — в окне (полный экран в игре — F11). Нажми «Играть» ещё раз.' });
+        send('toast', { kind: 'warn', text: 'Игра упала при создании окна. Следующий запуск — в окне (полный экран в игре — F11). Нажми «Играть» ещё раз.' });
       }
       // повреждённая установка: битые jar удаляем (скачаются заново с полной проверкой), NeoForge переустановим при следующем запуске
       if (broken.neo || broken.jars.size) {
