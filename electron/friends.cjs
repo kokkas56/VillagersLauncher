@@ -208,13 +208,22 @@ module.exports = function setupFriends(d) {
     saveBook(b);
     onBookEvent({ kind: 'keychanged', nick: f.nick, key });
   }
+  const autoTrusted = {};
   function onBookEvent(ev) {
     const m = me();
     if (ev.kind === 'request') { wantProfile(ev.key); note('request', ev.nick + ' хочет дружить — ответь во вкладке «Друзья»', { nick: ev.nick }); }
     if (ev.kind === 'accepted') { sub([C.T.profile(ev.key), C.T.status(ev.key)]); note('accepted', ev.nick + ' теперь твой друг', { nick: ev.nick }); bumpFriends(); publishStatus(true); }
     if (ev.kind === 'declined') note('declined', ev.nick + ' отклонил заявку в друзья', { nick: ev.nick });
     if (ev.kind === 'removed') { unsub([C.T.status(ev.key)]); delete statuses[ev.key]; note('removed', ev.nick + ' убрал тебя из друзей', { nick: ev.nick }); bumpFriends(); }
-    if (ev.kind === 'keychanged') note('key', 'У ' + ev.nick + ' сменился ключ (переустановил лаунчер?). Проверь, что это он, и нажми «Доверять новому ключу».', { nick: ev.nick });
+    if (ev.kind === 'keychanged') {
+      // новый ключ друга принимаем сами (раньше нужно было нажать «Доверять новому ключу», а до того друг просто пропадал).
+      // Не чаще раза в 10 минут на друга: если под одним ником пишут две установки, не скакать между ключами — тогда остаётся кнопка.
+      const last = autoTrusted[ev.key] || 0;
+      if (Date.now() - last > 10 * 60e3 && trustKey(ev.key)) {
+        autoTrusted[ev.key] = Date.now();
+        note('key', 'У ' + ev.nick + ' сменился ключ (переустановил лаунчер или новый компьютер) — принят автоматически.', { nick: ev.nick });
+      } else note('key', 'У ' + ev.nick + ' снова сменился ключ. Если это точно он — нажми «Доверять новому ключу».', { nick: ev.nick });
+    }
     if (m) changed();
   }
   function bumpFriends() {
