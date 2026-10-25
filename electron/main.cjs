@@ -924,6 +924,8 @@ async function playGame(opts = {}) {
   setBusy('play');
   send('game-state', { state: 'preparing' });
   try {
+    // 1.3.54–1.3.55 по ошибке отключали ранний экран после вылета из-за битых библиотек — возвращаем один раз
+    if (!store.get().earlyFix56) store.set({ earlyFix56: true, earlyWindowOff: false, splashCrashed: false });
     const s = store.get();
     const account = await auth.prepare(s.selectedAccount);
     const { installed, gameDir } = await prepareGame({ update: !!opts.update, noUpdate: !!opts.noUpdate });
@@ -992,12 +994,20 @@ async function playGame(opts = {}) {
       if (win && !win.isDestroyed()) { win.show(); win.restore(); }
       // игра упала, не успев открыть окно, а грузилась с ранним окном NeoForge (нашим или лисой) — дальше запускаем без него:
       // на части компьютеров передача раннего окна игре роняет её (у друга с NVIDIA падали и наша заставка, и лиса, а без раннего окна — запускается)
-      if (code !== 0 && code !== null && broken.splash && !broken.started && played < 5 * 60e3 && !s2.earlyWindowOff) {
+      // не хватает класса библиотеки/игры (NoClassDefFoundError и т.п.) — это битые файлы, а не окно: чиним файлы, окно не трогаем
+      const crashTxt = (broken.crashText || []).join('\n');
+      const missingClass = /(NoClassDefFoundError|ClassNotFoundException)[^\n]*?(it[./]unimi|com[./]google|com[./]mojang|org[./]lwjgl|io[./]netty|org[./]apache|net[./]minecraft|joptsimple|org[./]joml|com[./]ibm|oshi)/.test(crashTxt)
+        || /Pre-bootstrap|Initializing bootstrap/.test(crashTxt);
+      if (code !== 0 && code !== null && missingClass && !broken.started) {
+        store.set({ repairPending: { neo: true, verify: true, at: Date.now() } });
+        send('toast', { kind: 'warn', text: 'Игра не запустилась: повреждены файлы Minecraft/NeoForge. Нажми «Играть» ещё раз — лаунчер перепроверит и перекачает их.' });
+      }
+      if (code !== 0 && code !== null && broken.splash && !broken.started && !missingClass && played < 5 * 60e3 && !s2.earlyWindowOff) {
         store.set({ splashCrashed: true, earlyWindowOff: true });
         send('toast', { kind: 'warn', text: 'Игра упала при создании окна. Экран загрузки NeoForge отключён — нажми «Играть» ещё раз.' });
       }
       // упала, не открыв окно, в полноэкранном режиме — дальше запускаем в окне (F11 в игре), пока игрок снова не включит полный экран
-      if (code !== 0 && code !== null && s2.fullscreen && !broken.started && played < 5 * 60e3 && !s2.fullscreenCrashed) {
+      if (code !== 0 && code !== null && s2.fullscreen && !broken.started && !missingClass && played < 5 * 60e3 && !s2.fullscreenCrashed) {
         store.set({ fullscreenCrashed: true });
         send('toast', { kind: 'warn', text: 'Игра упала при создании окна. Следующий запуск — в окне (полный экран в игре — F11). Нажми «Играть» ещё раз.' });
       }

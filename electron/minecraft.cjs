@@ -107,17 +107,19 @@ async function installVanilla(mcVersion, progress, { verify = false } = {}) {
   const client = json.downloads.client;
   items.push({ url: client.url, file: path.join(VER_DIR, mcVersion, mcVersion + '.jar'), sha1: client.sha1, size: client.size, name: 'client.jar' });
   items.push(...libraryDownloads(json));
+  const libCount = items.length; // client.jar + библиотеки
   if (json.logging && json.logging.client) {
     const f = json.logging.client.file;
     items.push({ url: f.url, file: path.join(ASSET_DIR, 'log_configs', f.id), sha1: f.sha1, size: f.size, name: f.id });
   }
   items.push(...(await assetDownloads(json)));
   const threads = store.get().downloadThreads || 8;
-  await netu.downloadAll(items, {
-    threads: Math.max(threads, 16),
-    quick: !verify,
-    onProgress: (p) => progress({ stage: 'mc', text: `Minecraft ${mcVersion}: файлы ${p.files}/${p.filesTotal}`, bytes: p.bytes, total: p.total })
-  });
+  // client.jar и библиотеки — всегда по контрольной сумме (≈100 МБ, доля секунды): битая библиотека с правильным размером
+  // роняла игру ещё до окна (NoClassDefFoundError: it/unimi/dsi/fastutil/...), а проверка «по размеру» её пропускала.
+  // Звуки/текстуры (тысячи файлов) — по размеру, полностью — по «Проверить папку».
+  const onProgress = (p) => progress({ stage: 'mc', text: `Minecraft ${mcVersion}: файлы ${p.files}/${p.filesTotal}`, bytes: p.bytes, total: p.total });
+  await netu.downloadAll(items.slice(0, libCount), { threads: Math.max(threads, 16), quick: false, onProgress });
+  await netu.downloadAll(items.slice(libCount), { threads: Math.max(threads, 16), quick: !verify, onProgress });
   return json;
 }
 
@@ -128,7 +130,12 @@ async function installNeoForge(mcVersion, neoVersion, progress) {
   const jsonFile = path.join(VER_DIR, id, id + '.json');
   if (fs.existsSync(jsonFile)) {
     const j = readJson(jsonFile);
-    const missing = libraryDownloads(j).filter((i) => !fs.existsSync(i.file));
+    // библиотеки NeoForge: нет файла или не сходится контрольная сумма — качаем заново
+    const missing = [];
+    for (const i of libraryDownloads(j)) {
+      if (!fs.existsSync(i.file)) { missing.push(i); continue; }
+      if (i.sha1 && !(await netu.fileOk(i.file, i.sha1, i.size))) { try { fs.rmSync(i.file, { force: true }); } catch (_) {} missing.push(i); }
+    }
     const generated = (j.libraries || []).filter((l) => l.downloads && l.downloads.artifact && !l.downloads.artifact.url)
       .some((l) => !fs.existsSync(path.join(LIB_DIR, l.downloads.artifact.path || mavenPath(l.name))));
     if (!generated) {
