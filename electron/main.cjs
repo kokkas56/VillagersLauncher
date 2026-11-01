@@ -956,7 +956,10 @@ async function playGame(opts = {}) {
     progress({ stage: 'launch', text: 'Запускаю Minecraft…', indeterminate: true });
     if (friendsApi) friendsApi.beforeLaunch(gameDir);
     const proc = spawn(launch.javaPath, launch.args, { cwd: launch.cwd, windowsHide: false, detached: false });
-    game = { proc, started: Date.now() };
+    game = { proc, started: Date.now(), worldAt: 0, worldMs: 0 };
+    // «Наиграно» — только время в мире (одиночном или на сервере), без загрузки игры и главного меню
+    const worldOn = () => { if (game && !game.worldAt) game.worldAt = Date.now(); };
+    const worldOff = () => { if (game && game.worldAt) { game.worldMs += Date.now() - game.worldAt; game.worldAt = 0; } };
     let tail = [];
     let shown = false;
     // поломки установки, которые лаунчер умеет чинить сам (ловим по строкам лога игры)
@@ -969,6 +972,8 @@ async function playGame(opts = {}) {
         // только строки лога ([время] [поток/уровень] ...): в тексте отчёта о вылете тоже есть «Backend library: LWJGL»,
         // и раньше из-за него падение при создании окна считалось «игра уже открылась» — запасной запуск не включался
         if (/^\[[^\]]*\].*(Setting user:|Backend library: LWJGL)/.test(l)) broken.started = true;
+        if (/AdvancementTree\/\]: Loaded \d+ advancements/.test(l)) worldOn();
+        else if (/Client disconnected with reason|\/\]: Stopping server|Disconnecting voicechat|\[CHAT\] Disconnected/.test(l)) worldOff();
         if (/^---- Minecraft Crash Report ----/.test(l)) broken.crashText = [];
         if (broken.crashText && broken.crashText.length < 4000) broken.crashText.push(l);
         const z = /from mod ([^\s,]+\.jar), cause java\.util\.zip\.ZipException/.exec(l) || /ZipException[^\n]*?([\w.+\-]+\.jar)/.exec(l);
@@ -992,10 +997,12 @@ async function playGame(opts = {}) {
     proc.on('close', (code) => {
       const startedAt = game.started;
       const played = Date.now() - game.started;
+      worldOff();
+      const inWorld = game.worldMs;
       game = null;
       if (studioWins) studioWins.onGameExit();
       const s2 = store.get();
-      store.set({ playTimeMs: (s2.playTimeMs || 0) + played, lastPlayed: Date.now() });
+      store.set({ playTimeMs: (s2.playTimeMs || 0) + inWorld, lastPlayed: Date.now() });
       if (win && !win.isDestroyed()) { win.show(); win.restore(); }
       // игра упала, не успев открыть окно, а грузилась с ранним окном NeoForge (нашим или лисой) — дальше запускаем без него:
       // на части компьютеров передача раннего окна игре роняет её (у друга с NVIDIA падали и наша заставка, и лиса, а без раннего окна — запускается)
