@@ -363,8 +363,32 @@ async function sync(manifest, gameDir, progress, { verify = false } = {}) {
       onProgress: (p) => progress({ stage: 'pack', text: `Скачиваю сборку: ${p.files}/${p.filesTotal}`, bytes: p.bytes, total: p.total })
     });
   }
+  try { fixOwnShaders(gameDir, newFiles, backup); } catch (e) { console.error('shaders fix', e); }
   writeState(gameDir, { version: manifest.version, tag: manifest.tag, date: manifest.date, files: newFiles, seeds: Object.keys(seeds) });
   return { downloaded: toGet.length, removed };
+}
+
+// Шейдеры сборки (ItsNotYourSpace-Shaders*.zip): config/iris.properties у игрока личный (его не перезаписываем), и в нём мог
+// остаться выбор старой версии пака (…-Shaders-2.9.zip) — тогда Iris пишет «пак не годится» и играет без шейдеров.
+// Если выбран наш пак, но не тот, что сейчас в сборке, — переключаем на актуальный, старые копии нашего пака убираем в резерв.
+// Чужие паки игрока (Complementary и т.п.) и его выбор не трогаем.
+function fixOwnShaders(gameDir, newFiles, backup) {
+  const OWN = /^ItsNotYourSpace-Shaders.*\.zip$/i;
+  const current = Object.keys(newFiles).map((r) => r.split('/')).filter((p) => p.length === 2 && p[0] === 'shaderpacks' && OWN.test(p[1])).map((p) => p[1]);
+  if (!current.length) return;
+  const want = current[0];
+  const dir = path.join(gameDir, 'shaderpacks');
+  if (fs.existsSync(dir)) for (const name of fs.readdirSync(dir)) {
+    if (OWN.test(name) && !current.includes(name)) { try { backup(path.join(dir, name), 'shaderpacks/' + name); } catch (_) {} }
+  }
+  const props = path.join(gameDir, 'config', 'iris.properties');
+  if (!fs.existsSync(props)) return;
+  const txt = fs.readFileSync(props, 'utf8');
+  const m = /^shaderPack=(.*)$/m.exec(txt);
+  if (!m) return;
+  const sel = m[1].trim();
+  if (!OWN.test(sel) || current.includes(sel)) return;
+  fs.writeFileSync(props, txt.replace(/^shaderPack=.*$/m, 'shaderPack=' + want), 'utf8');
 }
 
 // ---------- автор: локальные изменения и публикация ----------
