@@ -324,8 +324,15 @@ const step = (s) => console.log('✓ ' + s);
   await until(() => A.ui.incoming.some((r) => r.nick === 'Carl' && r.code === Carl.ui.me.code), 'заявка по коду у Алисы');
   step('добавить по коду: заявка пришла, рядом с ником виден код');
   await assert.rejects(async () => Carl.handlers['friends:add']('Nobody_here'), /не найден/);
-  await assert.rejects(async () => Carl.handlers['friends:add']('ZZZZ-ZZZZ'), /не найден/);
-  step('нет такого ника или кода — сразу «не найден», заявка в пустоту не уходит');
+  const zz = await Carl.handlers['friends:add']('ZZZZ-ZZZZ');
+  assert.ok(zz && zz.unverified, 'код верного вида без профиля — заявка всё равно уходит (связь могла подвести)');
+  await Carl.handlers['friends:cancel']('zzzzzzzz');
+  step('нет такого ника — «не найден»; код без профиля — заявка уходит с пометкой «профиль не пришёл»');
+  // однобокая дружба: у Алисы Карл в друзьях, у Карла Алисы нет — Алиса жмёт «добавить» ещё раз, Карлу приходит заявка
+  await A.handlers['friends:accept'](A.ui.incoming.find((r) => r.nick === 'Carl').key);
+  await until(() => Carl.ui.friends.some((f) => f.nick === 'Alice'), 'Алиса у Карла');
+  await Carl.handlers['friends:remove'](Carl.ui.friends.find((f) => f.nick === 'Alice').key);
+  await until(() => !A.ui.friends.some((f) => f.nick === 'Carl'), 'Карл удалён у Алисы');
   const T1 = launcher('Twin'), T2 = launcher('twin');
   await until(() => T1.ui && T2.ui && T1.ui.me && T2.ui.me, 'тёзки');
   await sleep(300);

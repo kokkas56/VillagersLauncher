@@ -46,6 +46,8 @@ export default function Friends({ openAccounts }) {
     try {
       const r = await call('friends:add', nick.trim());
       if (r && r.choose) setChoose(r.choose);
+      else if (r && r.resent) { toast(r.nick + ' ' + t('уже у тебя в друзьях — заявка отправлена ещё раз: если он удалил тебя, она придёт ему как новая'), 'ok', 7000); setNick(''); }
+      else if (r && r.unverified) { toast(t('Профиль по коду пока не пришёл (связь), но заявка отправлена') + ': ' + r.code + '. ' + t('Если код верный — друг увидит её у себя.'), 'ok', 8000); setNick(''); }
       else { toast(t('Заявка отправлена') + ': ' + nick.trim(), 'ok'); setNick(''); }
     } catch (er) { toast(er.message, 'error', 7000); }
     setBusy(false);
@@ -65,7 +67,7 @@ export default function Friends({ openAccounts }) {
       <div className="page-head">
         <h2><Icon name="friends" size={22} /> {t('Друзья')}</h2>
         <span className={'pill' + (online ? ' green' : ' warn')} title={t('Друзья работают через бесплатные серверы-посредники (как таблица рекордов), свой сервер не нужен. Друга видно, если вы оба подключены хотя бы к одному общему серверу.') + (fs.net && fs.net.list ? '\n\n' + fs.net.list.map((b) => (b.ready ? '✓ ' : '✗ ') + b.host).join('\n') : '')}>
-          <span className="dot" style={{ background: online ? 'var(--emerald)' : 'var(--warn)' }} /> {online ? t('На связи') : t('Подключаюсь…')}{fs.net && fs.net.total ? ` ${fs.net.online}/${fs.net.total}` : ''}
+          <span className="dot" style={{ background: online ? 'var(--emerald)' : 'var(--warn)' }} /> {online ? t('На связи') : t('Подключаюсь…')}{fs.net && fs.net.total ? ' · ' + t('серверов') + ` ${fs.net.online}/${fs.net.total}` : ''}
         </span>
         <div className="grow" />
         <button className="btn ghost" title={t('Скопировать отчёт о связи с друзьями — пришли его, если друг не виден или заявки не доходят')} onClick={async () => { try { const txt = await call('friends:diag'); await navigator.clipboard.writeText(txt); toast(t('Отчёт связи скопирован'), 'ok'); } catch (er) { toast(er.message, 'error'); } }}><Icon name="copy" /> {t('Отчёт связи')}</button>

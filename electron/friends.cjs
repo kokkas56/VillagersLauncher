@@ -435,18 +435,24 @@ module.exports = function setupFriends(d) {
     }
     if (code === m.key) throw new Error('Это твой код :)');
     const b = book();
-    if (b.friends[code]) throw new Error(b.friends[code].nick + ' уже в друзьях');
+    // уже в друзьях у меня, а у него меня может не быть (удалил со своей стороны) — шлём заявку ещё раз: у него она станет входящей
+    if (b.friends[code]) { resendRequest(code, b.friends[code].nick); return { resent: true, nick: b.friends[code].nick }; }
     if (!nick) {
       const hit = await findByCode(code);
-      if (!hit) throw new Error('Игрок с кодом ' + C.fmtCode(code) + ' не найден. Проверь код — друг должен хоть раз открыть лаунчер новой версии');
+      // профиль мог не дойти (связь), но код верного вида — заявку всё равно отправляем: она лежит на серверах, пока друг не ответит
+      if (!hit) { sendRequest(code, C.fmtCode(code)); return { sent: true, unverified: true, code: C.fmtCode(code) }; }
       nick = hit.nick;
     }
     return sendRequest(code, nick);
   }
+  function resendRequest(code, nick) {
+    const m = me();
+    pub(C.T.rq(code, m.key), { typ: 'req', from: m.nick, to: nick, toCode: code, t: Date.now(), note: '' }, true);
+  }
   function sendRequest(code, nick) {
     const m = me();
     const b = book();
-    if (b.friends[code]) throw new Error(b.friends[code].nick + ' уже в друзьях');
+    if (b.friends[code]) { resendRequest(code, b.friends[code].nick); return true; }
     if (b.blocked[code]) delete b.blocked[code];
     if (b.blockedNick[C.keyOf(nick)]) delete b.blockedNick[C.keyOf(nick)];
     if (b.inc[code]) { saveBook(b); return accept(code); }
