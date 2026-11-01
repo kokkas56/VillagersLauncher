@@ -7,8 +7,9 @@ import Head from '../components/Head.jsx';
 import { Badge } from '../components/Badge.jsx';
 import { Empty, Toggle } from '../components/ui.jsx';
 import FriendProfile from '../components/FriendProfile.jsx';
+import ElyOk from '../components/ElyOk.jsx';
 
-// «Друзья», как в Steam: заявки по нику, статусы, отряд для совместной игры, уведомления, профили.
+// «Друзья», как в Steam: у каждого аккаунта свой код (K7Q2-9M4X); заявки по коду или нику, статусы, отряд, уведомления, профили.
 export default function Friends({ openAccounts }) {
   const { t, toast, account } = useApp();
   const fs = useFriends();
@@ -16,6 +17,7 @@ export default function Friends({ openAccounts }) {
   const [view, setView] = useState(null); // ник открытого профиля
   const [menu, setMenu] = useState(null); // ключ друга с открытым меню «…»
   const [busy, setBusy] = useState(false);
+  const [choose, setChoose] = useState(null); // несколько игроков с одним ником — выбрать нужного
 
   const act = async (ch, arg, ok) => {
     try { await call(ch, arg); if (ok) toast(t(ok), 'ok'); } catch (e) { toast(e.message, 'error', 6000); }
@@ -28,7 +30,7 @@ export default function Friends({ openAccounts }) {
       <div className="page">
         <div className="page-head"><h2><Icon name="friends" size={22} /> {t('Друзья')}</h2></div>
         <Empty icon="user">
-          {t('Друзья привязаны к нику. Войди в аккаунт (Ely.by или офлайн-ник) — и добавляй друзей по нику.')}
+          {t('У каждого аккаунта свой код друга. Войди в аккаунт (Ely.by или офлайн-ник) — и добавляй друзей по коду или нику.')}
           <div style={{ marginTop: 10 }}><button className="btn primary" onClick={openAccounts}><Icon name="user" /> {t('Войти')}</button></div>
         </Empty>
       </div>
@@ -40,9 +42,20 @@ export default function Friends({ openAccounts }) {
     e && e.preventDefault();
     if (!nick.trim()) return;
     setBusy(true);
-    try { await call('friends:add', nick.trim()); toast(t('Заявка отправлена') + ': ' + nick.trim(), 'ok'); setNick(''); } catch (er) { toast(er.message, 'error', 6000); }
+    setChoose(null);
+    try {
+      const r = await call('friends:add', nick.trim());
+      if (r && r.choose) setChoose(r.choose);
+      else { toast(t('Заявка отправлена') + ': ' + nick.trim(), 'ok'); setNick(''); }
+    } catch (er) { toast(er.message, 'error', 7000); }
     setBusy(false);
   };
+  const pick = async (x) => {
+    setBusy(true);
+    try { await call('friends:add', x.code); toast(t('Заявка отправлена') + ': ' + x.nick + ' (' + x.code + ')', 'ok'); setNick(''); setChoose(null); } catch (er) { toast(er.message, 'error', 7000); }
+    setBusy(false);
+  };
+  const copyCode = async () => { try { await navigator.clipboard.writeText(fs.me.code); toast(t('Код скопирован') + ': ' + fs.me.code, 'ok'); } catch (er) { toast(er.message, 'error'); } };
   const groups = [['ingame', fs.friends.filter((f) => f.status === 'ingame')], ['online', fs.friends.filter((f) => f.status === 'online')], ['offline', fs.friends.filter((f) => f.status === 'offline')]];
   const unread = fs.notes.filter((n) => !n.read).length;
   const online = fs.net && fs.net.online > 0;
@@ -56,18 +69,33 @@ export default function Friends({ openAccounts }) {
         </span>
         <div className="grow" />
         <button className="btn ghost" title={t('Скопировать отчёт о связи с друзьями — пришли его, если друг не виден или заявки не доходят')} onClick={async () => { try { const txt = await call('friends:diag'); await navigator.clipboard.writeText(txt); toast(t('Отчёт связи скопирован'), 'ok'); } catch (er) { toast(er.message, 'error'); } }}><Icon name="copy" /> {t('Отчёт связи')}</button>
-        <button className="btn ghost" onClick={() => setView(fs.me.nick)}><Icon name="user" /> {t('Мой профиль')}</button>
+        <button className="btn ghost" onClick={() => setView(fs.me.key)}><Icon name="user" /> {t('Мой профиль')}</button>
       </div>
 
       <div className="friends-layout">
         <div className="friends-main">
           <section className="card">
-            <div className="card-head"><Icon name="plus" /><h3>{t('Добавить друга')}</h3></div>
+            <div className="card-head"><Icon name="plus" /><h3>{t('Добавить друга')}</h3><div className="grow" />
+              {fs.me && fs.me.code && <button type="button" className="fr-mycode" title={t('Твой код друга — скинь его другу, и он добавит тебя по нему. Код нельзя занять или подделать.')} onClick={copyCode}><span className="muted small">{t('Мой код')}</span> <b className="mono">{fs.me.code}</b> <Icon name="copy" size={12} /></button>}
+            </div>
             <form className="row" onSubmit={add}>
-              <input className="input" value={nick} maxLength={16} placeholder={t('Ник друга, как в игре')} onChange={(e) => setNick(e.target.value.replace(/[^A-Za-z0-9_]/g, ''))} />
-              <button className="btn primary" disabled={busy || nick.length < 2}><Icon name="plus" size={14} /> {t('Отправить заявку')}</button>
+              <input className="input" value={nick} maxLength={20} placeholder={t('Код друга (K7Q2-9M4X) или ник')} onChange={(e) => { setNick(e.target.value.replace(/[^A-Za-z0-9_#\- ]/g, '')); setChoose(null); }} />
+              <button className="btn primary" disabled={busy || nick.trim().length < 2}><Icon name="plus" size={14} /> {busy ? t('Ищу…') : t('Отправить заявку')}</button>
             </form>
-            <small className="muted hint-line">{t('Друг увидит заявку, даже если сейчас не в сети. Когда он примет — вы увидите статусы друг друга и сможете звать в отряд.')}</small>
+            {choose && (
+              <div className="fr-choose">
+                <div className="muted small">{t('С таким ником несколько игроков — выбери своего друга (спроси у него код, если не уверен):')}</div>
+                {choose.map((x) => (
+                  <div key={x.key} className="fr-req">
+                    <Head size={28} />
+                    <div className="grow"><b>{x.nick}</b> <span className="mono muted small">{x.code}</span> {x.level ? <span className="pill sm gold">{t('ур.')} {x.level}</span> : null}{x.friend ? <span className="pill sm green">{t('уже друг')}</span> : null}
+                      <div className="muted small">{x.t ? t('был в сети') + ' ' + ago(x.t) : ''}</div></div>
+                    <button className="btn sm primary" disabled={busy || x.friend} onClick={() => pick(x)}>{t('Выбрать')}</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <small className="muted hint-line">{t('Проще всего — по коду: у каждого он свой, его не займёшь. Друг увидит заявку, даже если сейчас не в сети.')}</small>
           </section>
 
           <PartyCard fs={fs} act={act} openProfile={setView} />
@@ -76,11 +104,11 @@ export default function Friends({ openAccounts }) {
             <section className="card">
               <div className="card-head"><Icon name="bell" /><h3>{t('Заявки')}</h3></div>
               {fs.incoming.map((r) => (
-                <div key={r.key} className={'fr-req' + (r.suspicious ? ' sus' : '')}>
+                <div key={r.key} className="fr-req">
                   <Head size={32} />
-                  <div className="grow">
-                    <b>{r.nick}</b> {r.level ? <span className="pill sm gold">{t('ур.')} {r.level}</span> : null}
-                    <div className="muted small">{t('хочет дружить')} · {ago(r.t)}{r.suspicious ? ' · ' + t('ключ не совпадает с профилем этого ника — возможно, это не он') : ''}</div>
+                  <div className="grow" onClick={() => setView(r.key)}>
+                    <b>{r.nick}</b> <ElyOk on={r.elyOk} t={t} /> <span className="mono muted small">{r.code}</span> {r.level ? <span className="pill sm gold">{t('ур.')} {r.level}</span> : null}
+                    <div className="muted small">{t('хочет дружить')} · {ago(r.t)}</div>
                   </div>
                   <button className="btn sm primary" onClick={() => act('friends:accept', r.key, 'Теперь вы друзья')}><Icon name="check" size={12} /> {t('Принять')}</button>
                   <button className="btn sm" onClick={() => act('friends:decline', r.key)}>{t('Отклонить')}</button>
@@ -90,7 +118,7 @@ export default function Friends({ openAccounts }) {
               {fs.outgoing.map((r) => (
                 <div key={r.key} className="fr-req out">
                   <Head size={32} />
-                  <div className="grow"><b>{r.nick}</b><div className="muted small">{t('ждём ответа')} · {ago(r.t)}</div></div>
+                  <div className="grow"><b>{r.nick}</b> <span className="mono muted small">{r.code}</span><div className="muted small">{t('ждём ответа')} · {ago(r.t)}</div></div>
                   <button className="btn sm ghost" onClick={() => act('friends:cancel', r.key)}>{t('Отозвать')}</button>
                 </div>
               ))}
@@ -100,12 +128,12 @@ export default function Friends({ openAccounts }) {
           <section className="card">
             <div className="card-head"><Icon name="friends" /><h3>{t('Друзья')} <span className="muted small">{fs.friends.length}</span></h3></div>
             {fs.friends.length === 0 ? (
-              <Empty icon="friends">{t('Пока никого. Впиши ник друга сверху — как только он примет заявку, он появится здесь.')}</Empty>
+              <Empty icon="friends">{t('Пока никого. Впиши код или ник друга сверху — как только он примет заявку, он появится здесь.')}</Empty>
             ) : groups.map(([st, list]) => list.length > 0 && (
               <div key={st} className="fr-group">
                 <div className={'fr-group-head st-' + st}>{t(STATUS_TEXT[st])} <span>{list.length}</span></div>
                 {list.map((f) => (
-                  <FriendRow key={f.key} f={f} t={t} act={act} open={() => setView(f.nick)} menuOpen={menu === f.key} setMenu={(v) => setMenu(v ? f.key : null)} />
+                  <FriendRow key={f.key} f={f} t={t} act={act} open={() => setView(f.key)} menuOpen={menu === f.key} setMenu={(v) => setMenu(v ? f.key : null)} />
                 ))}
               </div>
             ))}
@@ -140,7 +168,7 @@ export default function Friends({ openAccounts }) {
           <section className="card fr-help">
             <div className="card-head"><Icon name="info" /><h3>{t('Как играть вместе')}</h3></div>
             <ol className="small">
-              <li>{t('Добавьте друг друга по нику.')}</li>
+              <li>{t('Добавьте друг друга по коду (он сверху, рядом с «Добавить друга») или по нику.')}</li>
               <li>{t('Запусти игру — лобби отряда в главном меню. Позови друзей оттуда или отсюда.')}</li>
               <li>{t('Лидер выбирает мир и жмёт «Играть»: лаунчер сам поднимет «Мой сервер» и туннель.')}</li>
               <li>{t('У кого игра не запущена — придёт «Принять и запустить игру».')}</li>
@@ -169,13 +197,12 @@ function FriendRow({ f, t, act, open, menuOpen, setMenu }) {
         <i className={'fr-dot st-' + f.status} />
       </span>
       <div className="fr-info" onClick={open}>
-        <div className="fr-name"><b>{f.nick}</b>{f.badge && <Badge id={f.badge.id} />}{f.title && <span className="ac-title small">{f.title}</span>}</div>
+        <div className="fr-name"><b>{f.nick}</b><ElyOk on={f.elyOk} t={t} />{f.badge && <Badge id={f.badge.id} />}{f.title && <span className="ac-title small">{f.title}</span>}<span className="mono muted small fr-code">{f.code}</span></div>
         <div className="fr-doing">{f.status === 'offline' ? t('Не в сети') : f.doing || t(STATUS_TEXT[f.status])}</div>
-        {f.newKey && <div className="fr-warn small"><Icon name="lock" size={10} /> {t('Ключ друга сменился')} · <button className="link-btn" onClick={(e) => { e.stopPropagation(); act('friends:trustKey', f.key, 'Новый ключ принят'); }}>{t('Доверять новому ключу')}</button></div>}
       </div>
       <span className="pill sm gold" title={t('Уровень: 1 + мастерство во всех мини-играх')}>{t('ур.')} {f.level}</span>
       {f.inParty ? <span className="pill sm green">{t('в отряде')}</span>
-        : <button className="btn sm" disabled={!f.invitable} title={f.invitable ? t('Позвать в отряд — друг увидит приглашение в лаунчере и в игре') : f.status !== 'offline' ? t('Отряд полон (10/10)') : t('Друг не в сети')} onClick={() => act('friends:invite', f.nick, 'Приглашение отправлено')}><Icon name="plus" size={12} /> {t('Позвать')}</button>}
+        : <button className="btn sm" disabled={!f.invitable} title={f.invitable ? t('Позвать в отряд — друг увидит приглашение в лаунчере и в игре') : f.status !== 'offline' ? t('Отряд полон (10/10)') : t('Друг не в сети')} onClick={() => act('friends:invite', f.key, 'Приглашение отправлено')}><Icon name="plus" size={12} /> {t('Позвать')}</button>}
       <div className="fr-menu-wrap">
         <button className="btn sm icon-btn ghost" onClick={(e) => { e.stopPropagation(); setMenu(!menuOpen); }}>⋯</button>
         {menuOpen && (

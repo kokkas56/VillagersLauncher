@@ -25,23 +25,27 @@ function brokerCmd(inst, cmd, o) {
   }
 }
 
+// ---------- Ely.by в памяти: join запоминает (ник, serverId), hasJoined проверяет ----------
+const elyJoined = new Set();
+
 // ---------- один «лаунчер» ----------
-function launcher(nick) {
+function launcher(nick, opts = {}) {
   const gameDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vl-sim-' + nick + '-'));
   const inst = { nick, gameDir, ipcMain: new EventEmitter(), contents: {}, handlers: {}, ui: null, toasts: [], played: [], tunnel: { active: false }, tunnelCmds: [], game: null, serverRunning: false, serverStarts: [] };
   inst.partyFile = path.join(gameDir, 'server', 'config', 'villagerskokk', 'party.json');
   inst.readPartyFile = () => { try { return JSON.parse(fs.readFileSync(inst.partyFile, 'utf8')); } catch (_) { return null; } };
-  let settings = { gameDir, serverPort: 25565, tunnelLocalPort: 25565, serverEulaAccepted: true, gameBest: { fishing: 120 }, playTimeMs: 3600e3 };
-  const secrets = {};
+  let settings = { gameDir, serverPort: 25565, tunnelLocalPort: 25565, serverEulaAccepted: true, gameBest: { fishing: 120 }, playTimeMs: 3600e3, ...(opts.settings || {}) };
+  const secrets = { ...(opts.secrets || {}) };
   let prof = { games: {}, rewards: {}, equip: {}, equipT: 0, mastery: { fishing: 5 * 5 * 120 }, stats: {} };
   let hostWorld = null;
   inst.api = setupFriends({
     handle: (ch, fn) => { inst.handlers[ch] = fn; }, ipcMain: inst.ipcMain,
     send: (ch, d) => { if (ch === 'friends') inst.ui = d; if (ch === 'toast') inst.toasts.push(d.text); },
     store: { get: () => settings, set: (p) => { settings = { ...settings, ...p }; return settings; }, getSecret: (k) => secrets[k], setSecret: (k, v) => { if (v == null) delete secrets[k]; else secrets[k] = v; } },
-    auth: { elySkin: async () => null }, extras: { currentSkin: () => null },
+    auth: { elySkin: async () => null, elyJoin: async (accId, sid) => { if (!opts.ely) throw new Error('не Ely'); elyJoined.add(nick.toLowerCase() + '|' + sid); return true; }, elyHasJoined: async (name, sid) => (elyJoined.has(String(name).toLowerCase() + '|' + sid) ? { id: 'u', name } : null) },
+    extras: { currentSkin: () => null },
     scoresWorker: async () => ({ webContents: { send: (ch, m) => brokerCmd(inst, m.cmd, m.opts) } }), scoresContents: () => inst.contents,
-    currentAcc: () => ({ name: nick, type: 'offline' }),
+    currentAcc: () => ({ id: 'acc-' + nick, name: nick, type: opts.ely ? 'ely' : 'offline', uuid: '00000000-0000-0000-0000-000000000001' }),
     profile: () => JSON.parse(JSON.stringify(prof)), setProfile: (p) => { prof = p; },
     getGame: () => inst.game, isBusy: () => false,
     playGame: async (o) => { inst.played.push(o); inst.game = { started: Date.now() }; inst.api.onGameStart(); return true; },
@@ -64,7 +68,7 @@ function launcher(nick) {
       return true;
     },
     tunnelOpts: (x) => x, tunnelState: () => inst.tunnel,
-    version: 'sim', win: () => null, Notification: null, whenReady: () => Promise.resolve(), bindDelay: 0, tickMs: 300
+    version: 'sim', win: () => null, Notification: null, whenReady: () => Promise.resolve(), bindDelay: 0, tickMs: 300, lookupMs: 150
   });
   return inst;
 }
@@ -100,7 +104,7 @@ const step = (s) => console.log('✓ ' + s);
   await A.handlers['friends:add']('Bob');
   await until(() => B.ui.incoming.some((r) => r.nick === 'Alice'), 'заявка у Боба');
   assert.ok(B.toasts.some((x) => /Alice хочет дружить/.test(x)));
-  await B.handlers['friends:accept']('alice');
+  await B.handlers['friends:accept'](B.ui.incoming.find((r) => r.nick === 'Alice').key);
   await until(() => A.ui.friends.some((f) => f.nick === 'Bob'), 'Боб у Алисы в друзьях');
   await until(() => B.ui.friends.some((f) => f.nick === 'Alice'), 'Алиса у Боба в друзьях');
   assert.strictEqual(A.ui.outgoing.length, 0);
@@ -217,7 +221,7 @@ const step = (s) => console.log('✓ ' + s);
   step('вышедший из отряда пропадает из party.json (мод уберёт его из команды отряда)');
 
   // удалить из друзей
-  await B.handlers['friends:remove']('alice');
+  await B.handlers['friends:remove'](B.ui.friends.find((f) => f.nick === 'Alice').key);
   await until(() => !A.ui.friends.some((f) => f.nick === 'Bob'), 'удалён у Алисы');
   step('удалить из друзей — пропадает у обоих');
 
@@ -227,7 +231,7 @@ const step = (s) => console.log('✓ ' + s);
   await until(() => P.every((p) => p.ui), 'ещё десять лаунчеров');
   for (const p of P) await A.handlers['friends:add'](p.nick);
   await until(() => P.every((p) => p.ui.incoming.some((r) => r.nick === 'Alice')), 'заявки у десятерых');
-  for (const p of P) await p.handlers['friends:accept']('alice');
+  for (const p of P) await p.handlers['friends:accept'](p.ui.incoming.find((r) => r.nick === 'Alice').key);
   await until(() => P.every((p) => { const f = A.ui.friends.find((x) => x.nick === p.nick); return f && f.status === 'online'; }), 'десятеро в сети у Алисы');
   const joinOne = async (p) => {
     await A.handlers['friends:invite'](p.nick);
@@ -310,6 +314,49 @@ const step = (s) => console.log('✓ ' + s);
   await until(() => { try { return JSON.parse(fs.readFileSync(lanFile, 'utf8')).members.length === 0; } catch (_) { return false; } }, 'party.json в папке игры пуст');
   step('лидер закрыл мир: туннель закрыт, отряд в лобби, party.json пуст');
   gq.s.destroy();
+
+  // коды друга: добавить по коду; ника нет — «не найден»; тёзки — выбор; перенос старой книги и прежнего ключа
+  const C2 = require('../../electron/friends-core.cjs');
+  const Carl = launcher('Carl');
+  await until(() => Carl.ui && Carl.ui.me && Carl.ui.me.code, 'код у Карла');
+  assert.match(A.ui.me.code, /^[0-9A-Z]{4}-[0-9A-Z]{4}$/);
+  assert.strictEqual(await Carl.handlers['friends:add'](A.ui.me.code.toLowerCase()), true);
+  await until(() => A.ui.incoming.some((r) => r.nick === 'Carl' && r.code === Carl.ui.me.code), 'заявка по коду у Алисы');
+  step('добавить по коду: заявка пришла, рядом с ником виден код');
+  await assert.rejects(async () => Carl.handlers['friends:add']('Nobody_here'), /не найден/);
+  await assert.rejects(async () => Carl.handlers['friends:add']('ZZZZ-ZZZZ'), /не найден/);
+  step('нет такого ника или кода — сразу «не найден», заявка в пустоту не уходит');
+  const T1 = launcher('Twin'), T2 = launcher('twin');
+  await until(() => T1.ui && T2.ui && T1.ui.me && T2.ui.me, 'тёзки');
+  await sleep(300);
+  const ch = await Carl.handlers['friends:add']('Twin');
+  assert.ok(ch && ch.choose && ch.choose.length === 2, 'два игрока с ником Twin');
+  assert.deepStrictEqual(ch.choose.map((x) => x.code).sort(), [T1.ui.me.code, T2.ui.me.code].sort());
+  await Carl.handlers['friends:add'](T2.ui.me.code);
+  await until(() => T2.ui.incoming.some((r) => r.nick === 'Carl'), 'заявка у нужного тёзки');
+  assert.ok(!T1.ui.incoming.some((r) => r.nick === 'Carl'), 'второму тёзке заявка не ушла');
+  step('тёзки: по нику — выбор из двух с кодами, заявка уходит только выбранному');
+  // старая установка: общий ключ и книга по никам → ключ достаётся аккаунту (код из него), друзья переносятся по их ключам
+  const legacy = C2.genIdentity();
+  const aKey = C2.parseCode(A.ui.me.code);
+  const aPk = JSON.parse(broker.retained.get(C2.T.profile(aKey))).k;
+  const Old = launcher('Oldie', { secrets: { 'friends:identity': JSON.stringify(legacy) }, settings: { friendBooks: { oldie: { friends: { alice: { nick: 'Alice', pk: aPk, xk: 'x', since: 1 } }, out: { bob: { nick: 'Bob', t: 1 } } } } } });
+  await until(() => Old.ui && Old.ui.me, 'старый лаунчер');
+  assert.strictEqual(C2.parseCode(Old.ui.me.code), C2.codeOf(legacy.pk), 'прежний ключ установки стал ключом аккаунта');
+  await until(() => Old.ui.friends.some((f) => f.nick === 'Alice' && f.code === A.ui.me.code), 'Алиса перенесена с кодом');
+  assert.strictEqual(Old.ui.outgoing.length, 0);
+  step('перенос: прежний ключ установки → ключ аккаунта (код из него), друзья по никам → друзья по кодам');
+  // галочка Ely.by: друг с аккаунтом Ely.by подтверждает ник через join/hasJoined; офлайн-тёзку не подтвердить
+  const E1 = launcher('Elya', { ely: true });
+  await until(() => E1.ui && E1.ui.me, 'Ely-лаунчер');
+  await E1.handlers['friends:add'](Carl.ui.me.code);
+  await until(() => Carl.ui.incoming.some((r) => r.nick === 'Elya'), 'заявка от Ely-игрока');
+  await until(() => { const r = Carl.ui.incoming.find((x) => x.nick === 'Elya'); return r && r.elyOk; }, 'ник Elya подтверждён через Ely.by');
+  await Carl.handlers['friends:accept'](Carl.ui.incoming.find((r) => r.nick === 'Elya').key);
+  await until(() => { const f = Carl.ui.friends.find((x) => x.nick === 'Elya'); return f && f.elyOk; }, 'галочка у друга');
+  assert.ok(!Carl.ui.friends.some((f) => f.nick !== 'Elya' && f.elyOk), 'у офлайн-ников галочки нет');
+  step('галочка Ely.by: ник подтверждён через join/hasJoined без своего сервера');
+  [Carl, T1, T2, Old, E1].forEach((x) => x.api.shutdown());
 
   A.api.shutdown(); B.api.shutdown(); P.forEach((p) => p.api.shutdown());
   ga.s.destroy();

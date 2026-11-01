@@ -3,8 +3,11 @@
 'use strict';
 const crypto = require('crypto');
 
-const NS = 'villagerskokk/v1/fr/';
+// v2: всё адресуется кодом аккаунта (8 знаков из открытого ключа), а не ником — ник может совпасть у двоих,
+// а код подделать нельзя (он вычисляется из ключа подписи). v1 (по нику) со v2 не совместим.
+const NS = 'villagerskokk/v2/fr/';
 const T = {
+  nick: (nickKey, code) => NS + 'nk/' + nickKey + '/' + code, // справочник «ник → коды» (для добавления по нику)
   profile: (k) => NS + 'pr/' + k,
   status: (k) => NS + 'st/' + k,
   rq: (to, from) => NS + 'rq/' + to + '/' + from,
@@ -13,6 +16,27 @@ const T = {
 };
 const keyOf = (nick) => String(nick || '').toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 24) || 'player';
 const NICK_RE = /^[A-Za-z0-9_]{2,16}$/;
+// код аккаунта: Crockford base32 (без I L O U) от SHA-256 открытого ключа, 40 бит → 8 знаков. Ключ в топиках — строчными без дефиса,
+// показываем ЗАГЛАВНЫМИ с дефисом: K7Q2-9M4X
+const CODE_ABC = '0123456789abcdefghjkmnpqrstvwxyz';
+const CODE_RE = /^[0-9abcdefghjkmnpqrstvwxyz]{8}$/;
+function codeOf(pk) {
+  if (!pk) return null;
+  const h = crypto.createHash('sha256').update(Buffer.from(String(pk).replace(/-/g, '+').replace(/_/g, '/'), 'base64')).digest();
+  let bits = 0n;
+  for (let i = 0; i < 5; i++) bits = (bits << 8n) | BigInt(h[i]);
+  let out = '';
+  for (let i = 7; i >= 0; i--) out += CODE_ABC[Number((bits >> BigInt(i * 5)) & 31n)];
+  return out;
+}
+const fmtCode = (k) => (k && CODE_RE.test(k) ? (k.slice(0, 4) + '-' + k.slice(4)).toUpperCase() : '');
+// разобрать введённый код: «k7q2-9m4x», «#K7Q2 9M4X», путаные буквы (O→0, I/L→1, U→V)
+function parseCode(s) {
+  const t = String(s || '').trim().replace(/^#/, '').replace(/[\s-]/g, '').toLowerCase().replace(/o/g, '0').replace(/[il]/g, '1').replace(/u/g, 'v');
+  return CODE_RE.test(t) ? t : null;
+}
+// похоже ли введённое на код (с дефисом или #), а не на ник
+const looksLikeCode = (s) => /^#?\s*[0-9a-z]{4}[\s-][0-9a-z]{4}\s*$/i.test(String(s || '').trim()) || /^#[0-9a-z]{8}$/i.test(String(s || '').trim());
 
 const STATUS_STALE = 150e3; // статус без пульса дольше — офлайн
 const HB_STALE = 30e3; // участник отряда без пульса дольше — пропал
@@ -110,8 +134,18 @@ const partyOpen = (key, data) => aesOpen(unb64u(key), data);
 
 // ---------------- заявки в друзья ----------------
 // book: { friends: {key: {nick, pk, xk, since, newKey?}}, out: {key: {nick, t}}, inc: {key: {nick, pk, xk, t, note, suspicious}}, blocked: {key: nick} }
-function emptyBook() { return { friends: {}, out: {}, inc: {}, blocked: {} }; }
-function normBook(b) { b = b && typeof b === 'object' ? b : {}; return { friends: { ...(b.friends || {}) }, out: { ...(b.out || {}) }, inc: { ...(b.inc || {}) }, blocked: { ...(b.blocked || {}) } }; }
+function emptyBook() { return { v: 2, friends: {}, out: {}, inc: {}, blocked: {}, blockedNick: {} }; }
+function normBook(b) { b = b && typeof b === 'object' ? b : {}; return { v: 2, friends: { ...(b.friends || {}) }, out: { ...(b.out || {}) }, inc: { ...(b.inc || {}) }, blocked: { ...(b.blocked || {}) }, blockedNick: { ...(b.blockedNick || {}) } }; }
+// книга v1 (ключи — ники) → v2 (ключи — коды). Друзья и входящие известны с ключом — переносятся; исходящие (без ключа) — нет,
+// чёрный список по нику остаётся списком ников
+function migrateBook(raw) {
+  if (!raw || typeof raw !== 'object' || raw.v === 2) return normBook(raw);
+  const b = normBook(null);
+  for (const f of Object.values(raw.friends || {})) { const c = codeOf(f && f.pk); if (c && f.nick) b.friends[c] = { nick: f.nick, pk: f.pk, xk: f.xk, since: f.since || Date.now() }; }
+  for (const r of Object.values(raw.inc || {})) { const c = codeOf(r && r.pk); if (c && r.nick) b.inc[c] = { nick: r.nick, pk: r.pk, xk: r.xk, t: r.t || Date.now(), note: r.note || '' }; }
+  for (const [k, n] of Object.entries(raw.blocked || {})) b.blockedNick[k] = n;
+  return b;
+}
 
 // пришло сообщение в слот rq/<я>/<fromKey>. profilePk — ключ из опубликованного профиля этого ника (если знаем).
 // Возвращает { book, events: [{kind, nick, key}], reply?: {typ}, clear: bool }
@@ -121,15 +155,14 @@ function onRq(book, me, fromKey, msg, profilePk) {
   const res = { book, events, clear: true, reply: null };
   if (!msg) return res;
   const { p, pk, xk } = msg;
-  if (!p || keyOf(p.from) !== fromKey || keyOf(p.to) !== me || !NICK_RE.test(String(p.from))) return res;
+  // отправитель — владелец кода fromKey (код = хеш его ключа подписи), адресат — я (мой код)
+  if (!p || codeOf(pk) !== fromKey || p.toCode !== me || !NICK_RE.test(String(p.from))) return res;
   const nick = String(p.from);
-  if (book.blocked[fromKey]) return res;
+  if (book.blocked[fromKey] || book.blockedNick[keyOf(nick)]) return res;
   const fr = book.friends[fromKey];
+  if (fr && fr.nick !== nick) fr.nick = nick; // друг сменил ник — код тот же
   if (p.typ === 'req') {
-    if (fr) {
-      if (fr.pk === pk) { res.reply = { typ: 'acc' }; return res; } // друг переспросил (потерял ответ) — подтверждаем снова
-      fr.newKey = { pk, xk, t: p.t }; events.push({ kind: 'keychanged', nick, key: fromKey }); return res;
-    }
+    if (fr) { res.reply = { typ: 'acc' }; return res; } // друг переспросил (потерял ответ) — подтверждаем снова
     if (book.out[fromKey]) { // встречные заявки — сразу дружим
       book.friends[fromKey] = { nick, pk, xk, since: Date.now() };
       delete book.out[fromKey];
@@ -139,13 +172,13 @@ function onRq(book, me, fromKey, msg, profilePk) {
     }
     const prev = book.inc[fromKey];
     if (prev && prev.t >= (p.t || 0)) { res.clear = false; return res; }
-    book.inc[fromKey] = { nick, pk, xk, t: Number(p.t) || Date.now(), note: String(p.note || '').slice(0, 140), suspicious: !!(profilePk && profilePk !== pk) };
+    book.inc[fromKey] = { nick, pk, xk, t: Number(p.t) || Date.now(), note: String(p.note || '').slice(0, 140) };
     res.clear = false; // заявка лежит, пока не ответим
     events.push({ kind: 'request', nick, key: fromKey });
     return res;
   }
   if (p.typ === 'acc') {
-    if (fr) { if (fr.pk === pk) return res; fr.newKey = { pk, xk, t: p.t }; events.push({ kind: 'keychanged', nick, key: fromKey }); return res; }
+    if (fr) return res;
     if (!book.out[fromKey]) return res; // мы не звали — чужой ответ
     book.friends[fromKey] = { nick, pk, xk, since: Date.now() };
     delete book.out[fromKey];
@@ -330,7 +363,7 @@ function cleanMap(m) {
 }
 
 module.exports = {
-  NS, T, keyOf, NICK_RE, STATUS_STALE, HB_STALE, DROP_AFTER, MSG_MAX_AGE, INVITE_TTL, ENTER_WAIT, LEVEL_TYPES,
+  NS, T, keyOf, NICK_RE, CODE_RE, codeOf, fmtCode, parseCode, looksLikeCode, migrateBook, STATUS_STALE, HB_STALE, DROP_AFTER, MSG_MAX_AGE, INVITE_TTL, ENTER_WAIT, LEVEL_TYPES,
   PARTY_MAX, FULL_TEXT, PLAYERS, clampPlayers, partyFull, partyFileDoc,
   b64u, unb64u, genIdentity, validIdentity, seal, open, encryptFor, decryptFrom, newPartyKey, partyIdOf, partySeal, partyOpen,
   emptyBook, normBook, onRq, acceptIncoming, friendBy, statusOf, fresher,

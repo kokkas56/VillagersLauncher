@@ -4,6 +4,7 @@ import { call, fmtDuration } from '../lib/api.js';
 import { STATUS_TEXT, ago } from '../lib/friends.js';
 import Icon from './Icon.jsx';
 import Head from './Head.jsx';
+import ElyOk from './ElyOk.jsx';
 import SkinPreview from './SkinPreview.jsx';
 import { Badge } from './Badge.jsx';
 import { defaultSkinDataUrl } from '../editor/templates.js';
@@ -60,13 +61,13 @@ export default function FriendProfile({ nick, fs, onBack }) {
           <div className="fp-name">
             <span className={'avatar-frame' + (p.equip.frame ? ' frame-' + p.equip.frame : '')}><Head skin={p.skin} size={46} /></span>
             <div>
-              <h2>{p.nick} <Badge id={p.equip.badge} size={18} /></h2>
+              <h2>{p.nick} <ElyOk on={p.elyOk} t={t} /> <Badge id={p.equip.badge} size={18} /></h2>
+              {p.code && <button className="fr-mycode sm" title={t('Код друга — по нему тебя/его можно добавить. Нажми, чтобы скопировать')} onClick={() => navigator.clipboard.writeText(p.code).then(() => toast(t('Код скопирован') + ': ' + p.code, 'ok')).catch(() => {})}><span className="muted small">{t('Код')}</span> <b className="mono">{p.code}</b> <Icon name="copy" size={11} /></button>}
               {p.title && <div className="ac-title">{p.title}</div>}
             </div>
           </div>
           {p.status && <div className={'fp-status st-' + p.status}><i className={'fr-dot st-' + p.status} /> {p.status === 'offline' ? t('Не в сети') : p.doing || t(STATUS_TEXT[p.status])}</div>}
           {p.me && <div className="muted small">{t('Так тебя видят друзья. Скин и плащ — во вкладке «Скины», рамка, значок и тема — в «Наградах».')}</div>}
-          {!p.verified && p.friend && <div className="fr-warn small"><Icon name="lock" size={10} /> {t('Профиль подписан другим ключом — не тот, что был при дружбе')} · <button className="link-btn" onClick={() => act('friends:trustKey', p.key, 'Новый ключ принят')}>{t('Доверять новому ключу')}</button></div>}
           <div className="fp-stats">
             <Stat n={p.level} label={t('уровень')} gold />
             <Stat n={p.playMs ? fmtDuration(p.playMs, lang) : '—'} label={t('в Minecraft')} />
@@ -77,12 +78,12 @@ export default function FriendProfile({ nick, fs, onBack }) {
           <div className="row fp-actions">
             {p.me ? null : p.friend ? (
               <>
-                <button className="btn primary" disabled={p.status === 'offline'} onClick={() => act('friends:invite', p.nick, 'Приглашение отправлено')}><Icon name="plus" size={14} /> {t('Позвать в отряд')}</button>
+                <button className="btn primary" disabled={p.status === 'offline'} onClick={() => act('friends:invite', p.key, 'Приглашение отправлено')}><Icon name="plus" size={14} /> {t('Позвать в отряд')}</button>
                 <button className="btn ghost" onClick={() => { if (window.confirm(t('Убрать') + ' ' + p.nick + ' ' + t('из друзей?'))) act('friends:remove', p.key, 'Убран из друзей'); }}>{t('Удалить из друзей')}</button>
               </>
             ) : p.incoming ? <button className="btn primary" onClick={() => act('friends:accept', p.key, 'Теперь вы друзья')}><Icon name="check" size={14} /> {t('Принять заявку')}</button>
               : p.outgoing ? <span className="pill">{t('Заявка отправлена')}</span>
-                : !p.blocked && <button className="btn primary" onClick={() => act('friends:add', p.nick, 'Заявка отправлена')}><Icon name="plus" size={14} /> {t('Добавить в друзья')}</button>}
+                : !p.blocked && <button className="btn primary" onClick={() => act('friends:add', p.code || p.nick, 'Заявка отправлена')}><Icon name="plus" size={14} /> {t('Добавить в друзья')}</button>}
             {p.since && <span className="muted small">{t('друзья с')} {new Date(p.since).toLocaleDateString('ru-RU')}</span>}
           </div>
         </div>

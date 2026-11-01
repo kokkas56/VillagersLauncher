@@ -668,6 +668,15 @@ input[type='range'] { accent-color: var(--emerald); width: 100%; }
 .fr-menu button.danger { color: #ffb0a6; }
 .fr-req { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); }
 .fr-req + .fr-req { margin-top: 6px; }
+/* код друга (K7Q2-9M4X): кнопка «Мой код» с копированием, код рядом с ником, выбор среди тёзок, галочка Ely.by */
+.fr-mycode { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); color: var(--text); cursor: pointer; font: inherit; }
+.fr-mycode:hover { border-color: var(--emerald); }
+.fr-mycode b { letter-spacing: .06em; }
+.fr-mycode.sm { padding: 2px 8px; margin-top: 4px; font-size: 12px; }
+.fr-code { margin-left: 6px; letter-spacing: .04em; opacity: .7; }
+.fr-choose { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.fr-choose .fr-req + .fr-req { margin-top: 0; }
+.fr-ely { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; margin-left: 4px; border-radius: 50%; background: #3fa9f5; color: #fff; vertical-align: middle; flex: none; }
 .fr-req.sus { border-color: rgba(232, 169, 58, .5); }
 .fr-req.out { opacity: .8; }
 .fr-notes { display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow: auto; }

@@ -250,4 +250,24 @@ async function elyCape(name) {
   }
 }
 
-module.exports = { loginEly, loginElyBrowser, cancelBrowserLogin, browserLoginReady, addOffline, remove, select, prepare, publicAccounts, elySkin, elyCape, offlineUuid };
+// ---------------- проверка ника через сессию Ely.by (галочка «ник подтверждён» у друзей) ----------------
+// Игрок «заходит на сервер» с serverId из вызова друга (join), друг спрашивает Ely.by, заходил ли этот ник с этим serverId
+// (hasJoined). Так ник проверяется без нашего сервера: подтвердить чужой ник Ely.by не даст.
+const ELY_SESSION = 'https://authserver.ely.by/session';
+async function elyJoin(accId, serverId) {
+  const a = await prepare(accId);
+  if (a.type !== 'ely' || !a.uuid) throw new Error('Не аккаунт Ely.by');
+  const res = await netu.fetchRaw(`${ELY_SESSION}/join`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ accessToken: a.accessToken, selectedProfile: String(a.uuid).replace(/-/g, ''), serverId })
+  });
+  if (!res.ok) throw new Error('Ely.by: join ' + res.status);
+  return true;
+}
+async function elyHasJoined(name, serverId) {
+  const res = await netu.fetchRaw(`${ELY_SESSION}/hasJoined?username=${encodeURIComponent(name)}&serverId=${encodeURIComponent(serverId)}`);
+  if (res.status !== 200) return null;
+  try { const j = JSON.parse(await res.text()); return j && j.name ? j : null; } catch (_) { return null; }
+}
+
+module.exports = { elyJoin, elyHasJoined, loginEly, loginElyBrowser, cancelBrowserLogin, browserLoginReady, addOffline, remove, select, prepare, publicAccounts, elySkin, elyCape, offlineUuid };

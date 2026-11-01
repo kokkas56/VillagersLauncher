@@ -32,35 +32,66 @@ module.exports = function setupFriends(d) {
     } catch (_) {}
   }
 
-  // ---------------- ключи установки ----------------
-  let ident = null;
-  function identity() {
-    if (ident) return ident;
-    // запасная копия ключа рядом с настройками: если хранилище секретов не прочиталось, новый ключ не создаём —
-    // иначе у всех друзей ты пропадаешь («не в сети», пустой профиль), пока они не нажмут «Доверять новому ключу»
-    const backup = store.DATA_DIR ? path.join(store.DATA_DIR, 'friends-key.json') : null;
-    try { const j = JSON.parse(store.getSecret('friends:identity') || 'null'); if (C.validIdentity(j)) ident = j; } catch (_) {}
-    if (!ident && backup) { try { const j = JSON.parse(fs.readFileSync(backup, 'utf8')); if (C.validIdentity(j)) { ident = j; store.setSecret('friends:identity', JSON.stringify(ident)); } } catch (_) {} }
-    if (!ident) { ident = C.genIdentity(); store.setSecret('friends:identity', JSON.stringify(ident)); }
-    try { if (backup && !fs.existsSync(backup)) fs.writeFileSync(backup, JSON.stringify(ident)); } catch (_) {}
-    return ident;
+  // ---------------- ключи аккаунтов ----------------
+  // У каждого аккаунта лаунчера своя пара ключей; код друга (K7Q2-9M4X) — из открытого ключа. Ключи — в хранилище секретов
+  // и в запасной копии рядом с настройками (если хранилище не прочиталось, новый ключ не создаём — иначе пропадёшь у друзей).
+  // Прежний общий ключ установки (до кодов) достаётся первому аккаунту, который его попросит: друзья сразу узнают его по коду.
+  let idMap = null;
+  const backupFile = () => (store.DATA_DIR ? path.join(store.DATA_DIR, 'friends-keys.json') : null);
+  function loadIds() {
+    if (idMap) return idMap;
+    let m = null;
+    try { const j = JSON.parse(store.getSecret('friends:ids') || 'null'); if (j && typeof j === 'object') m = j; } catch (_) {}
+    if (!m && backupFile()) { try { const j = JSON.parse(fs.readFileSync(backupFile(), 'utf8')); if (j && typeof j === 'object') m = j; } catch (_) {} }
+    idMap = m || {};
+    return idMap;
   }
+  function saveIds() {
+    store.setSecret('friends:ids', JSON.stringify(idMap));
+    try { if (backupFile()) fs.writeFileSync(backupFile(), JSON.stringify(idMap)); } catch (_) {}
+  }
+  function legacyIdentity() {
+    let j = null;
+    try { j = JSON.parse(store.getSecret('friends:identity') || 'null'); } catch (_) {}
+    if (!C.validIdentity(j) && store.DATA_DIR) { try { j = JSON.parse(fs.readFileSync(path.join(store.DATA_DIR, 'friends-key.json'), 'utf8')); } catch (_) {} }
+    return C.validIdentity(j) ? j : null;
+  }
+  function identityFor(nickKey) {
+    const m = loadIds();
+    if (C.validIdentity(m[nickKey])) return m[nickKey];
+    const old = !m.__legacyUsed ? legacyIdentity() : null;
+    m[nickKey] = old || C.genIdentity();
+    if (old) m.__legacyUsed = nickKey;
+    saveIds();
+    return m[nickKey];
+  }
+  const curAcc = () => { const a = d.currentAcc(); return a && C.NICK_RE.test(String(a.name)) ? a : null; };
+  function identity() { const a = curAcc(); return identityFor(a ? C.keyOf(a.name) : '_none'); }
   function me() {
-    const a = d.currentAcc();
-    if (!a || !C.NICK_RE.test(String(a.name))) return null;
-    const id = identity();
-    return { nick: a.name, key: C.keyOf(a.name), pk: id.pk, xk: id.xk, ely: a.type === 'ely' };
+    const a = curAcc();
+    if (!a) return null;
+    const nickKey = C.keyOf(a.name);
+    const id = identityFor(nickKey);
+    const key = C.codeOf(id.pk);
+    return { nick: a.name, nickKey, key, code: C.fmtCode(key), pk: id.pk, xk: id.xk, ely: a.type === 'ely', accId: a.id };
   }
 
   // ---------------- хранилище (по нику) ----------------
   const per = (field, k, def) => { const all = store.get()[field] || {}; return all[k] !== undefined ? all[k] : def; };
   const setPer = (field, k, v) => { const all = { ...(store.get()[field] || {}) }; all[k] = v; store.set({ [field]: all }); };
-  const book = () => { const m = me(); return C.normBook(m ? per('friendBooks', m.key, null) : null); };
-  const saveBook = (b) => { const m = me(); if (m) setPer('friendBooks', m.key, b); changed(); };
+  // книга друзей по аккаунту (ключ хранилища — ник аккаунта), внутри — по кодам; старая книга (по никам) переносится сама
+  const book = () => {
+    const m = me();
+    if (!m) return C.normBook(null);
+    const raw = per('friendBooks', m.nickKey, null);
+    if (raw && raw.v !== 2) { const b = C.migrateBook(raw); setPer('friendBooks', m.nickKey, b); dl('книга друзей перенесена на коды: ' + Object.keys(b.friends).length + ' друзей'); return b; }
+    return C.normBook(raw);
+  };
+  const saveBook = (b) => { const m = me(); if (m) setPer('friendBooks', m.nickKey, b); changed(); };
   const DEF_PREFS = { hide: false, about: '', showcase: [], equip: { main: null, off: null, head: null, chest: null, legs: null, feet: null }, notify: true };
-  const prefs = () => { const m = me(); return { ...DEF_PREFS, ...(m ? per('friendPrefs', m.key, {}) : {}) }; };
-  const savePrefs = (p) => { const m = me(); if (m) setPer('friendPrefs', m.key, { ...prefs(), ...p }); changed(); };
-  const notes = () => { const m = me(); return m ? per('friendNotes', m.key, []) : []; };
+  const prefs = () => { const m = me(); return { ...DEF_PREFS, ...(m ? per('friendPrefs', m.nickKey, {}) : {}) }; };
+  const savePrefs = (p) => { const m = me(); if (m) setPer('friendPrefs', m.nickKey, { ...prefs(), ...p }); changed(); };
+  const notes = () => { const m = me(); return m ? per('friendNotes', m.nickKey, []) : []; };
 
   // ---------------- MQTT ----------------
   let net = { online: 0, total: 0 };
@@ -103,7 +134,7 @@ module.exports = function setupFriends(d) {
     const m = me();
     if (!m) return;
     const list = [{ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), kind, text, t: Date.now(), read: false, ...(extra || {}) }, ...notes()].slice(0, 40);
-    setPer('friendNotes', m.key, list);
+    setPer('friendNotes', m.nickKey, list);
     if (prefs().notify !== false) {
       d.send('toast', { text, kind: kind === 'removed' || kind === 'declined' ? 'info' : 'ok' });
       systemNote(text);
@@ -133,6 +164,7 @@ module.exports = function setupFriends(d) {
     if (!m) { changed(); return; }
     const b = book();
     sub([C.T.rq(m.key, '+'), C.T.inbox(m.key), C.T.profile(m.key)]);
+    publishNick();
     const keys = Object.keys(b.friends);
     sub(keys.flatMap((x) => [C.T.profile(x), C.T.status(x)]));
     Object.keys(b.out).forEach(wantProfile);
@@ -140,7 +172,7 @@ module.exports = function setupFriends(d) {
     publishProfile(true);
     publishStatus(true);
     // повторить свои незавершённые заявки (вдруг брокер потерял retained)
-    for (const [k2, o] of Object.entries(b.out)) pub(C.T.rq(k2, m.key), { typ: 'req', from: m.nick, to: o.nick, t: o.t, note: o.note || '' }, true);
+    for (const [k2, o] of Object.entries(b.out)) pub(C.T.rq(k2, m.key), { typ: 'req', from: m.nick, to: o.nick, toCode: k2, t: o.t, note: o.note || '' }, true);
     changed();
   }
 
@@ -154,32 +186,37 @@ module.exports = function setupFriends(d) {
     const msg = C.open(text);
     if (!msg) { dl('✗ ' + kind + ' ' + rest.slice(1).join('/') + ': подпись не сошлась'); return; }
     const now = Date.now();
-    if (kind !== 'pt') dl('← ' + kind + ' ' + rest.slice(1).join('/') + ' от ' + msg.p.from + ' [' + fp(msg.pk) + '] ' + (msg.p.typ || '') + (msg.p.t ? ' (часы отправителя ' + Math.round((now - msg.p.t) / 1000) + ' с назад)' : ''));
+    if (kind !== 'pt') dl('← ' + kind + ' ' + rest.slice(1).join('/') + ' от ' + msg.p.from + ' [' + C.fmtCode(C.codeOf(msg.pk)) + '] ' + (msg.p.typ || '') + (msg.p.t ? ' (часы отправителя ' + Math.round((now - msg.p.t) / 1000) + ' с назад)' : ''));
+    // топик адресован кодом; код обязан совпасть с ключом подписи — подделать профиль/статус чужого аккаунта нельзя
+    const owner = C.codeOf(msg.pk);
     if (kind === 'pr' && rest[1]) {
       const key = rest[1];
-      if (C.keyOf(msg.p.from) !== key || msg.p.typ !== 'profile') return;
-      const f = book().friends[key];
-      if (f && f.pk !== msg.pk && key !== m.key) { if ((Number(msg.p.t) || 0) > (keySeenT[key] || 0)) profiles[key] = { doc: msg.p, pk: msg.pk, t: Number(msg.p.t) || 0 }; keyMismatch(key, msg); changed(); return; } // профиль друга с другим ключом: показываем с предупреждением
-      if (key === m.key && msg.pk !== m.pk) { profiles['!' + key] = { doc: msg.p, pk: msg.pk, t: msg.p.t }; return; } // тёзка
+      if (owner !== key || msg.p.typ !== 'profile' || !C.NICK_RE.test(String(msg.p.from))) return;
       const prev = profiles[key];
-      if (prev && !C.fresher(prev.t, msg.p.t, now) && prev.pk === msg.pk) return;
+      if (prev && !C.fresher(prev.t, msg.p.t, now)) { lookupHit('pr/' + key, key, msg.p); return; }
       profiles[key] = { doc: msg.p, pk: msg.pk, t: Number(msg.p.t) || 0 };
-      if (f) seen(key, msg.p.t);
+      const f = book().friends[key];
+      if (f && f.nick !== msg.p.from) { const b = book(); b.friends[key].nick = String(msg.p.from); saveBook(b); } // друг сменил ник
+      lookupHit('pr/' + key, key, msg.p);
+      if (msg.p.elyAcc) elyCheck(key, String(msg.p.from));
       changed();
+      return;
+    }
+    if (kind === 'nk' && rest[1] && rest[2]) {
+      if (owner !== rest[2] || msg.p.typ !== 'nick' || C.keyOf(msg.p.from) !== rest[1]) return;
+      lookupHit('nk/' + rest[1], rest[2], msg.p);
       return;
     }
     if (kind === 'st' && rest[1]) {
       const key = rest[1];
       const f = book().friends[key];
-      if (f && f.pk !== msg.pk && C.keyOf(msg.p.from) === key && msg.p.typ === 'status') { keyMismatch(key, msg); return; }
-      if (!f || f.pk !== msg.pk || C.keyOf(msg.p.from) !== key || msg.p.typ !== 'status') return;
+      if (!f || owner !== key || msg.p.typ !== 'status') return;
       const prev = statuses[key];
       // часы у друзей могут расходиться на минуты: свежесть считаем по времени получения, а не по часам отправителя
       const t = Number(msg.p.t) || 0;
       if (prev && t && prev.t && t < prev.t && t > prev.t - 6 * 3600e3) return; // старая копия того же статуса
       const was = prev ? stOf(key, now).status : 'offline';
       statuses[key] = { doc: msg.p, pk: msg.pk, t, recv: now, firstRetained: !prev };
-      seen(key, t);
       const nowSt = stOf(key, now).status;
       if (was === 'offline' && nowSt !== 'offline' && prev) d.send('toast', { text: f.nick + ' в сети', kind: 'info' });
       changed();
@@ -191,7 +228,7 @@ module.exports = function setupFriends(d) {
       const r = C.onRq(book(), m.key, fromKey, msg, pr ? pr.pk : null);
       dl('  заявка → ' + (r.events.map((e) => e.kind).join(',') || 'без изменений') + (r.reply ? ', отвечаю ' + r.reply.typ : ''));
       saveBook(r.book);
-      if (r.reply) pub(C.T.rq(fromKey, m.key), { typ: r.reply.typ, from: m.nick, to: msg.p.from, t: Date.now() }, true);
+      if (r.reply) pub(C.T.rq(fromKey, m.key), { typ: r.reply.typ, from: m.nick, to: msg.p.from, toCode: fromKey, t: Date.now() }, true);
       if (r.clear) clearRetained(topic);
       for (const ev of r.events) onBookEvent(ev);
       return;
@@ -199,40 +236,12 @@ module.exports = function setupFriends(d) {
     if (kind === 'in' && rest[1] === m.key) { onInbox(msg, now); return; }
     if (kind === 'pt' && party && rest[1] === party.id) { onParty(msg, now); }
   }
-  // друг пишет с другим ключом (переустановил лаунчер, другой компьютер): раньше такие статусы и профиль молча отбрасывались —
-  // друг навсегда «не в сети» с пустым профилем. Теперь показываем «Ключ друга сменился · Доверять новому ключу».
-  // самое свежее время сообщения друга под принятым ключом (по его же часам): старые копии с другим ключом,
-  // оставшиеся на каком-то сервере-посреднике, не должны перебивать новый ключ (иначе ключ «скачет» туда-обратно)
-  const keySeenT = {};
-  const seen = (key, t) => { t = Number(t) || 0; if (t > (keySeenT[key] || 0)) keySeenT[key] = t; };
-  function keyMismatch(key, msg) {
-    const t = Number(msg.p.t) || 0;
-    if (t && t <= (keySeenT[key] || 0)) { dl('  старая копия ' + key + ' под ключом ' + fp(msg.pk) + ' — пропускаю'); return; }
-    dl('  ключ друга ' + key + ' не совпал: ждал ' + fp((book().friends[key] || {}).pk) + ', пришёл ' + fp(msg.pk));
-    const b = book();
-    const f = b.friends[key];
-    if (!f) return;
-    f.newKey = { pk: msg.pk, xk: msg.xk, t: Number(msg.p.t) || Date.now() };
-    saveBook(b);
-    onBookEvent({ kind: 'keychanged', nick: f.nick, key });
-  }
-  const autoTrusted = {};
   function onBookEvent(ev) {
     const m = me();
     if (ev.kind === 'request') { wantProfile(ev.key); note('request', ev.nick + ' хочет дружить — ответь во вкладке «Друзья»', { nick: ev.nick }); }
     if (ev.kind === 'accepted') { sub([C.T.profile(ev.key), C.T.status(ev.key)]); note('accepted', ev.nick + ' теперь твой друг', { nick: ev.nick }); bumpFriends(); publishStatus(true); }
     if (ev.kind === 'declined') note('declined', ev.nick + ' отклонил заявку в друзья', { nick: ev.nick });
     if (ev.kind === 'removed') { unsub([C.T.status(ev.key)]); delete statuses[ev.key]; note('removed', ev.nick + ' убрал тебя из друзей', { nick: ev.nick }); bumpFriends(); }
-    if (ev.kind === 'keychanged') {
-      // новый ключ друга принимаем сами (раньше нужно было нажать «Доверять новому ключу», а до того друг просто пропадал).
-      // Не чаще раза в 10 минут на друга: если под одним ником пишут две установки, не скакать между ключами — тогда остаётся кнопка.
-      const nt = (book().friends[ev.key] && book().friends[ev.key].newKey && book().friends[ev.key].newKey.t) || 0;
-      if (trustKey(ev.key)) {
-        seen(ev.key, nt);
-        if (!autoTrusted[ev.key]) note('key', 'У ' + ev.nick + ' сменился ключ (переустановил лаунчер или новый компьютер) — принят автоматически.', { nick: ev.nick });
-        autoTrusted[ev.key] = Date.now();
-      }
-    }
     if (m) changed();
   }
   function bumpFriends() {
@@ -268,7 +277,7 @@ module.exports = function setupFriends(d) {
       level: X.accountLevel(p), mastery: X.masteryLevels(p), rewards: rw.map(([id]) => id).slice(0, 300),
       recent: rw.sort((a, b) => (Number(b[1]) || 0) - (Number(a[1]) || 0)).slice(0, 8).map(([id, t]) => ({ id, t: Number(t) || 0 })),
       equip: { badge: p.equip.badge || null, title: p.equip.title || null, frame: p.equip.frame || null, theme: p.equip.theme || null, cape: p.equip.cape || null, decor: p.equip.decor || null, lobby: p.equip.lobby || null },
-      skin, slim, cape, ely: !!m.ely && !skin, character,
+      skin, slim, cape, ely: !!m.ely && !skin, elyAcc: !!m.ely, character,
       about: String(pr.about || '').slice(0, 300), showcase: (pr.showcase || []).slice(0, 6),
       records: { ...(s.gameBest || {}) }, playMs: s.playTimeMs || 0, party: (p.stats && p.stats.party) || 0,
       friends: Object.keys(book().friends).length, equipItems: pr.equip
@@ -307,22 +316,144 @@ module.exports = function setupFriends(d) {
     pub(C.T.status(m.key), { ...doc, t: Date.now() }, true);
   }
 
+  // ---------------- справочник ников и поиск ----------------
+  // Каждый аккаунт держит на серверах-посредниках запись «ник → код» (nk/<ник>/<код>, retained). Поиск по нику собирает все
+  // коды с этим ником: никого — «не найден», один — сразу заявка, несколько (тёзки) — выбор в окне.
+  let nickAt = 0;
+  function publishNick() {
+    const m = me();
+    if (!m) return;
+    nickAt = Date.now();
+    pub(C.T.nick(m.nickKey, m.key), { typ: 'nick', from: m.nick, t: Date.now(), ely: !!m.ely }, true);
+  }
+  const lookups = new Map(); // 'nk/<ник>' | 'pr/<код>' -> Set(fn(code, doc))
+  function lookupHit(id, code, doc) { const l = lookups.get(id); if (l) for (const fn of l) { try { fn(code, doc); } catch (_) {} } }
+  function waitFor(id, topic, ms, onHit, keepSub) {
+    return new Promise((resolve) => {
+      const fn = (code, doc) => { if (onHit(code, doc)) done(); };
+      let set = lookups.get(id);
+      if (!set) { set = new Set(); lookups.set(id, set); }
+      set.add(fn);
+      const had = subs.has(topic);
+      if (had) { unsub([topic]); } // переподписка — чтобы сервер заново отдал сохранённые копии
+      sub([topic]);
+      const tm = setTimeout(done, ms);
+      function done() { clearTimeout(tm); set.delete(fn); if (!set.size) lookups.delete(id); if (!keepSub && !had) unsub([topic]); resolve(); }
+    });
+  }
+  async function findByNick(nick) {
+    const nk = C.keyOf(nick);
+    const found = new Map();
+    await waitFor('nk/' + nk, C.T.nick(nk, '+'), d.lookupMs || 3000, (code, doc) => { found.set(code, { key: code, code: C.fmtCode(code), nick: String(doc.from), ely: !!doc.ely, t: Number(doc.t) || 0 }); return false; });
+    return [...found.values()];
+  }
+  async function findByCode(code) {
+    if (profiles[code]) return { key: code, code: C.fmtCode(code), nick: String(profiles[code].doc.from) };
+    let hit = null;
+    await waitFor('pr/' + code, C.T.profile(code), 5000, (c, doc) => { hit = { key: c, code: C.fmtCode(c), nick: String(doc.from) }; return true; }, true);
+    return hit;
+  }
+
+  // ---------------- галочка Ely.by ----------------
+  // Подтверждённые ники: код → ник (строчными). Проверка: шлём вызов (elych, случайное n), игрок с аккаунтом Ely.by делает join
+  // с serverId = sha1(n + его код) и отвечает elyok; мы спрашиваем Ely.by hasJoined(ник, serverId). Результат запоминаем навсегда
+  // (код с ником не меняется; сменил ник — проверим заново).
+  const elyOkAll = () => store.get().friendElyOk || {};
+  function elyVerified(key, nick) { return !!(nick && elyOkAll()[key] === String(nick).toLowerCase()); }
+  const elyPending = {}; // код -> { n, nick, t }
+  const elyServerId = (n, code) => require('crypto').createHash('sha1').update('vlfriend:' + n + ':' + code).digest('hex');
+  function elyCheck(key, nick) {
+    const m = me();
+    if (!m || key === m.key || elyVerified(key, nick)) return;
+    const b = book();
+    if (!b.friends[key] && !b.inc[key] && !b.out[key]) return; // только тех, с кем дружим или кто в заявках
+    const p0 = elyPending[key];
+    if (p0 && Date.now() - p0.t < 10 * 60e3) return;
+    const n = require('crypto').randomBytes(12).toString('hex');
+    elyPending[key] = { n, nick, t: Date.now() };
+    pub(C.T.inbox(key), { typ: 'elych', from: m.nick, toCode: key, n, t: Date.now() });
+  }
+  const elyAnswered = {}; // код спросившего -> время (не чаще раза в минуту)
+  async function onEly(fromKey, msg, now) {
+    const m = me();
+    const p = msg.p;
+    if (!m || p.toCode !== m.key || now - (Number(p.t) || 0) > C.MSG_MAX_AGE || !/^[0-9a-f]{24}$/.test(String(p.n || ''))) return;
+    if (p.typ === 'elych') {
+      if (!m.ely || book().blocked[fromKey] || now - (elyAnswered[fromKey] || 0) < 60e3) return;
+      elyAnswered[fromKey] = now;
+      try {
+        await d.auth.elyJoin(m.accId, elyServerId(p.n, m.key));
+        pub(C.T.inbox(fromKey), { typ: 'elyok', from: m.nick, toCode: fromKey, n: p.n, t: Date.now() });
+        dl('  Ely.by: подтвердил свой ник для ' + C.fmtCode(fromKey));
+      } catch (e) { dl('  Ely.by: не смог подтвердить ник: ' + e.message); }
+      return;
+    }
+    const pend = elyPending[fromKey];
+    if (!pend || pend.n !== p.n || String(p.from).toLowerCase() !== pend.nick.toLowerCase()) return;
+    delete elyPending[fromKey];
+    try {
+      const j = await d.auth.elyHasJoined(pend.nick, elyServerId(p.n, fromKey));
+      if (j && String(j.name).toLowerCase() === pend.nick.toLowerCase()) {
+        store.set({ friendElyOk: { ...elyOkAll(), [fromKey]: pend.nick.toLowerCase() } });
+        dl('  Ely.by: ник ' + pend.nick + ' подтверждён');
+        changed();
+      } else dl('  Ely.by: ник ' + pend.nick + ' НЕ подтверждён');
+    } catch (e) { dl('  Ely.by: проверка не удалась: ' + e.message); }
+  }
+
   // ---------------- заявки ----------------
-  function add(nick) {
+  // add(«ник» | «код») → true (заявка ушла) | { choose: [...] } (несколько игроков с таким ником)
+  async function add(input) {
     const m = me();
     if (!m) throw new Error('Сначала войди в аккаунт');
-    nick = String(nick || '').trim();
-    if (!C.NICK_RE.test(nick)) throw new Error('Ник — 2–16 символов: латиница, цифры, «_»');
-    const key = C.keyOf(nick);
-    if (key === m.key) throw new Error('Это ты :)');
+    const s0 = String(input || '').trim();
+    if (!s0) throw new Error('Впиши ник или код друга');
+    let code = C.looksLikeCode(s0) ? C.parseCode(s0) : null;
+    let nick = null;
+    if (!code) {
+      if (!C.NICK_RE.test(s0)) {
+        const c2 = C.parseCode(s0);
+        if (!c2) throw new Error('Ник — 2–16 символов (латиница, цифры, «_»), код — как K7Q2-9M4X');
+        code = c2;
+      } else {
+        const list = (await findByNick(s0)).filter((x) => x.key !== m.key);
+        if (list.length > 1) {
+          // тёзки: друзья/заявки — в начале, дальше свежие
+          const b = book();
+          list.sort((a, b2) => (!!b.friends[b2.key] - !!b.friends[a.key]) || (b2.t - a.t));
+          for (const x of list) { wantProfile(x.key); const pr = profiles[x.key]; x.level = pr ? Number(pr.doc.level) || 1 : null; x.friend = !!b.friends[x.key]; }
+          return { choose: list };
+        }
+        if (list.length === 1) { code = list[0].key; nick = list[0].nick; }
+        else {
+          const c3 = C.parseCode(s0);
+          if (c3) code = c3; // ввели код без дефиса
+          else if (C.keyOf(s0) === m.nickKey) throw new Error('Это твой ник :)');
+          else throw new Error('Игрок «' + s0 + '» не найден. Проверь ник (он должен хоть раз открыть лаунчер) или попроси у друга код — он во вкладке «Друзья»');
+        }
+      }
+    }
+    if (code === m.key) throw new Error('Это твой код :)');
     const b = book();
-    if (b.friends[key]) throw new Error(nick + ' уже в друзьях');
-    if (b.blocked[key]) delete b.blocked[key];
-    if (b.inc[key]) { saveBook(b); return accept(key); }
-    b.out[key] = { nick, t: Date.now() };
+    if (b.friends[code]) throw new Error(b.friends[code].nick + ' уже в друзьях');
+    if (!nick) {
+      const hit = await findByCode(code);
+      if (!hit) throw new Error('Игрок с кодом ' + C.fmtCode(code) + ' не найден. Проверь код — друг должен хоть раз открыть лаунчер новой версии');
+      nick = hit.nick;
+    }
+    return sendRequest(code, nick);
+  }
+  function sendRequest(code, nick) {
+    const m = me();
+    const b = book();
+    if (b.friends[code]) throw new Error(b.friends[code].nick + ' уже в друзьях');
+    if (b.blocked[code]) delete b.blocked[code];
+    if (b.blockedNick[C.keyOf(nick)]) delete b.blockedNick[C.keyOf(nick)];
+    if (b.inc[code]) { saveBook(b); return accept(code); }
+    b.out[code] = { nick, t: Date.now() };
     saveBook(b);
-    wantProfile(key);
-    pub(C.T.rq(key, m.key), { typ: 'req', from: m.nick, to: nick, t: b.out[key].t, note: '' }, true);
+    wantProfile(code);
+    pub(C.T.rq(code, m.key), { typ: 'req', from: m.nick, to: nick, toCode: code, t: b.out[code].t, note: '' }, true);
     return true;
   }
   function accept(key) {
@@ -333,7 +464,7 @@ module.exports = function setupFriends(d) {
     if (!r) throw new Error('Заявка не найдена');
     const b = C.acceptIncoming(b0, key);
     saveBook(b);
-    pub(C.T.rq(key, m.key), { typ: 'acc', from: m.nick, to: r.nick, t: Date.now() }, true);
+    pub(C.T.rq(key, m.key), { typ: 'acc', from: m.nick, to: r.nick, toCode: key, t: Date.now() }, true);
     clearRetained(C.T.rq(m.key, key));
     sub([C.T.profile(key), C.T.status(key)]);
     note('accepted', r.nick + ' теперь твой друг', { nick: r.nick });
@@ -348,7 +479,7 @@ module.exports = function setupFriends(d) {
     if (!m || !r) return false;
     delete b.inc[key];
     saveBook(b);
-    pub(C.T.rq(key, m.key), { typ: 'dec', from: m.nick, to: r.nick, t: Date.now() }, true);
+    pub(C.T.rq(key, m.key), { typ: 'dec', from: m.nick, to: r.nick, toCode: key, t: Date.now() }, true);
     clearRetained(C.T.rq(m.key, key));
     return true;
   }
@@ -359,7 +490,7 @@ module.exports = function setupFriends(d) {
     if (!m || !o) return false;
     delete b.out[key];
     saveBook(b);
-    pub(C.T.rq(key, m.key), { typ: 'rm', from: m.nick, to: o.nick, t: Date.now() }, true);
+    pub(C.T.rq(key, m.key), { typ: 'rm', from: m.nick, to: o.nick, toCode: key, t: Date.now() }, true);
     return true;
   }
   function remove(key) {
@@ -371,7 +502,7 @@ module.exports = function setupFriends(d) {
     saveBook(b);
     unsub([C.T.status(key)]);
     delete statuses[key];
-    pub(C.T.rq(key, m.key), { typ: 'rm', from: m.nick, to: f.nick, t: Date.now() }, true);
+    pub(C.T.rq(key, m.key), { typ: 'rm', from: m.nick, to: f.nick, toCode: key, t: Date.now() }, true);
     return true;
   }
   function block(key, nick) {
@@ -383,25 +514,11 @@ module.exports = function setupFriends(d) {
     const b2 = book();
     b2.blocked[key] = n;
     saveBook(b2);
-    for (const [id, inv] of Object.entries(invites)) if (C.keyOf(inv.from) === key) delete invites[id];
+    for (const [id, inv] of Object.entries(invites)) if (inv.fromKey === key) delete invites[id];
     return true;
   }
-  function unblock(key) { const b = book(); delete b.blocked[key]; saveBook(b); return true; }
-  function trustKey(key) {
-    const b = book();
-    const f = b.friends[key];
-    if (!f) return false;
-    // новый ключ: из пришедшего статуса/заявки (newKey) или из профиля, подписанного другим ключом
-    const pr = profiles[key];
-    const nk = f.newKey || (pr && pr.pk && pr.pk !== f.pk && pr.doc && typeof pr.doc.xk === 'string' ? { pk: pr.pk, xk: pr.doc.xk } : null);
-    if (!nk) return false;
-    dl('доверяю новому ключу ' + key + ': ' + fp(f.pk) + ' → ' + fp(nk.pk));
-    f.pk = nk.pk; f.xk = nk.xk; delete f.newKey;
-    saveBook(b);
-    delete profiles[key]; delete statuses[key];
-    unsub([C.T.profile(key), C.T.status(key)]); sub([C.T.profile(key), C.T.status(key)]); // перечитать retained
-    return true;
-  }
+  function unblock(key) { const b = book(); if (String(key).startsWith('nick:')) delete b.blockedNick[String(key).slice(5)]; else delete b.blocked[key]; saveBook(b); return true; }
+  function trustKey() { return false; } // ключ теперь часть кода — сменить его под тем же кодом нельзя
 
   // ---------------- отряд ----------------
   // party: { id, key, st, hbs, invited, joining, enterNow, connectSent, tunnelRoom, starting, crashed, counted, notice }
@@ -479,11 +596,32 @@ module.exports = function setupFriends(d) {
     publishStatus(true);
     return true;
   }
+  // друг по коду или по нику (игра и окно присылают ник; если у двух друзей одинаковый ник — нужен код)
+  function friendKey(x) {
+    const b = book();
+    const s0 = String(x || '');
+    if (b.friends[s0]) return s0;
+    const c = C.parseCode(s0);
+    if (c && b.friends[c]) return c;
+    const hits = Object.entries(b.friends).filter(([, f]) => f.nick.toLowerCase() === s0.toLowerCase());
+    if (hits.length > 1) throw Object.assign(new Error('В друзьях несколько «' + s0 + '» — выбери друга в лаунчере'), { code: 'bad' });
+    return hits.length ? hits[0][0] : null;
+  }
+  // участник отряда по нику/коду
+  function memberKey(x) {
+    const st = party && party.st;
+    if (!st) return null;
+    const s0 = String(x || '');
+    const byKey = st.members.find((y) => y.key === s0 || y.key === C.parseCode(s0));
+    if (byKey) return byKey.key;
+    const y = st.members.find((z) => String(z.nick).toLowerCase() === s0.toLowerCase());
+    return y ? y.key : null;
+  }
   function invite(nick) {
     const m = me();
     if (!m) throw Object.assign(new Error('Сначала войди в аккаунт'), { code: 'offline' });
-    const key = C.keyOf(nick);
-    const f = book().friends[key];
+    const key = friendKey(nick);
+    const f = key ? book().friends[key] : null;
     if (!f) throw Object.assign(new Error(nick + ' не в друзьях'), { code: 'not_friend' });
     const s = stOf(key, Date.now());
     if (s.status === 'offline') throw Object.assign(new Error(f.nick + ' сейчас не в сети'), { code: 'offline' });
@@ -495,24 +633,25 @@ module.exports = function setupFriends(d) {
     party.invited[key] = { t: Date.now(), pk: f.pk, xk: f.xk, nick: f.nick, by: m.key };
     if (!isLeader()) partySend({ typ: 'vouch', key, nick: f.nick, pk: f.pk, xk: f.xk });
     const leaderNick = (party.st.members.find((x) => x.key === party.st.leader) || {}).nick || m.nick;
-    pub(C.T.inbox(key), { typ: 'inv', from: m.nick, to: f.nick, t: Date.now(), x: C.encryptFor(identity(), f.xk, { pkey: party.key, id: party.id, leader: leaderNick, size: party.st.members.length }) });
+    pub(C.T.inbox(key), { typ: 'inv', from: m.nick, to: f.nick, toCode: key, t: Date.now(), x: C.encryptFor(identity(), f.xk, { pkey: party.key, id: party.id, leader: leaderNick, size: party.st.members.length }) });
     changed();
     return true;
   }
   function onInbox(msg, now) {
     const m = me();
     const p = msg.p;
-    const fromKey = C.keyOf(p.from);
+    const fromKey = C.codeOf(msg.pk);
+    if (p.typ === 'elych' || p.typ === 'elyok') { onEly(fromKey, msg, now); return; } // проверка ника через Ely.by — можно и не друзьям
     const f = C.friendBy(book(), fromKey, msg.pk);
-    if (!f || book().blocked[fromKey] || now - (Number(p.t) || 0) > C.MSG_MAX_AGE || C.keyOf(p.to) !== m.key) {
-      dl('  личное отброшено: ' + (!f ? 'не друг или другой ключ' : book().blocked[fromKey] ? 'в чёрном списке' : C.keyOf(p.to) !== m.key ? 'не мне' : 'слишком старое (часы?)'));
+    if (!f || book().blocked[fromKey] || now - (Number(p.t) || 0) > C.MSG_MAX_AGE || p.toCode !== m.key) {
+      dl('  личное отброшено: ' + (!f ? 'не друг' : book().blocked[fromKey] ? 'в чёрном списке' : p.toCode !== m.key ? 'не мне' : 'слишком старое (часы?)'));
       return;
     }
     if (p.typ === 'inv') {
       const body = C.decryptFrom(identity(), f.xk, p.x);
       if (!body || !body.pkey || C.partyIdOf(body.pkey) !== body.id) return;
       if (party && party.id === body.id) return;
-      invites[body.id] = { from: f.nick, key: body.pkey, leader: String(body.leader || f.nick).slice(0, 16), size: Number(body.size) || 1, t: now };
+      invites[body.id] = { from: f.nick, fromKey, key: body.pkey, leader: String(body.leader || f.nick).slice(0, 16), size: Number(body.size) || 1, t: now };
       toGame({ t: 'invite', from: f.nick, partyId: body.id, size: invites[body.id].size, leader: invites[body.id].leader });
       note('invite', f.nick + ' зовёт тебя в отряд', { nick: f.nick, partyId: body.id });
       systemNote(f.nick + ' зовёт тебя в отряд — открой «Друзья», чтобы принять');
@@ -545,7 +684,7 @@ module.exports = function setupFriends(d) {
     const inv = invites[id];
     delete invites[id];
     const m = me();
-    if (inv && m && book().friends[C.keyOf(inv.from)]) pub(C.T.inbox(C.keyOf(inv.from)), { typ: 'invno', from: m.nick, to: inv.from, t: Date.now() });
+    if (inv && m && inv.fromKey && book().friends[inv.fromKey]) pub(C.T.inbox(inv.fromKey), { typ: 'invno', from: m.nick, to: inv.from, toCode: inv.fromKey, t: Date.now() });
     changed();
     return true;
   }
@@ -553,7 +692,7 @@ module.exports = function setupFriends(d) {
     const m = me();
     const body = C.partyOpen(party.key, msg.p.x);
     if (!body || typeof body.typ !== 'string') return;
-    const sKey = C.keyOf(msg.p.from);
+    const sKey = C.codeOf(msg.pk); // участник отряда = владелец кода
     if (now - (Number(msg.p.t) || 0) > C.MSG_MAX_AGE && body.typ !== 'state') return;
     const st = party.st;
     const member = st && st.members.find((x) => x.key === sKey);
@@ -1007,14 +1146,25 @@ module.exports = function setupFriends(d) {
       const pr = profiles[key];
       const v = memberView(key, f.nick, { status: s.status, doing: s.doing, inParty: inParty.has(key), invitable: s.status !== 'offline' && !inParty.has(key) && !full });
       v.equip = (pr && pr.doc && pr.doc.equipItems) ? C.cleanEquip(pr.doc.equipItems) : null;
-      v.key = key; v.newKey = !!f.newKey; v.since = f.since; v.verified = !!(pr && pr.pk === f.pk);
+      v.key = key; v.code = C.fmtCode(key); v.since = f.since; v.verified = true; v.elyOk = elyVerified(key, f.nick);
       return v;
     }).sort((a, b2) => ord[a.status] - ord[b2.status] || a.nick.localeCompare(b2.nick));
   }
   // полный профиль для страницы профиля (свой или друга/любого ника)
   function profileView(nickOrKey) {
     const m = me();
-    const key = C.keyOf(nickOrKey || (m && m.nick));
+    const s0 = String(nickOrKey || '');
+    // ключ профиля — код: передан код, ник друга/заявки, или свой ник/пусто
+    let key = null;
+    const b0 = book();
+    if (!s0 || (m && (s0 === m.key || s0.toLowerCase() === m.nick.toLowerCase()))) key = m ? m.key : null;
+    else if (C.CODE_RE.test(s0)) key = s0;
+    else {
+      const all = [...Object.entries(b0.friends), ...Object.entries(b0.inc), ...Object.entries(b0.out)];
+      const hit = all.find(([, x]) => String(x.nick).toLowerCase() === s0.toLowerCase());
+      key = hit ? hit[0] : C.parseCode(s0);
+    }
+    if (!key) return { key: null, code: '', nick: s0, me: false, friend: false, incoming: false, outgoing: false, blocked: false, loaded: false, verified: false, status: null, doing: '', level: 1, equip: {}, mastery: {}, rewards: [], recent: [], records: {}, playMs: 0, party: 0, friends: 0, about: '', showcase: [], since: null, t: null };
     const mine = m && key === m.key;
     if (!mine) wantProfile(key);
     const b = book();
@@ -1025,8 +1175,8 @@ module.exports = function setupFriends(d) {
     const nick = (doc && doc.from) || (f && f.nick) || (b.inc[key] && b.inc[key].nick) || (b.out[key] && b.out[key].nick) || nickOrKey;
     const base = memberView(key, nick, {});
     return {
-      key, nick, me: !!mine, friend: !!f, incoming: !!b.inc[key], outgoing: !!b.out[key], blocked: !!b.blocked[key], loaded: !!doc,
-      verified: mine || !!(f && pr && pr.pk === f.pk), status: f || mine ? s.status : null, doing: f || mine ? s.doing : '',
+      key, code: C.fmtCode(key), nick, me: !!mine, friend: !!f, incoming: !!b.inc[key], outgoing: !!b.out[key], blocked: !!b.blocked[key], loaded: !!doc,
+      verified: true, elyOk: mine ? !!m.ely : elyVerified(key, nick), status: f || mine ? s.status : null, doing: f || mine ? s.doing : '',
       skin: base.skin, slim: base.slim, cape: base.cape, character: base.character, level: base.level, badge: base.badge, frame: base.frame, title: base.title,
       equip: (doc && doc.equip) || {}, mastery: (doc && doc.mastery) || {}, rewards: (doc && doc.rewards) || [], recent: (doc && doc.recent) || [],
       records: (doc && doc.records) || {}, playMs: (doc && doc.playMs) || 0, party: (doc && doc.party) || 0, friends: (doc && doc.friends) || 0,
@@ -1038,10 +1188,10 @@ module.exports = function setupFriends(d) {
     const b = book();
     const now = Date.now();
     return {
-      me: m ? { nick: m.nick, key: m.key } : null, net, prefs: prefs(), friends: friendItems(),
-      incoming: Object.entries(b.inc).map(([key, r]) => ({ key, nick: r.nick, t: r.t, suspicious: r.suspicious, level: profiles[key] ? profiles[key].doc.level : null })),
-      outgoing: Object.entries(b.out).map(([key, o]) => ({ key, nick: o.nick, t: o.t })),
-      blocked: Object.entries(b.blocked).map(([key, nick]) => ({ key, nick })),
+      me: m ? { nick: m.nick, key: m.key, code: m.code, ely: !!m.ely } : null, net, prefs: prefs(), friends: friendItems(),
+      incoming: Object.entries(b.inc).map(([key, r]) => ({ key, code: C.fmtCode(key), nick: r.nick, t: r.t, elyOk: elyVerified(key, r.nick), level: profiles[key] ? profiles[key].doc.level : null })),
+      outgoing: Object.entries(b.out).map(([key, o]) => ({ key, code: C.fmtCode(key), nick: o.nick, t: o.t })),
+      blocked: [...Object.entries(b.blocked).map(([key, nick]) => ({ key, code: C.fmtCode(key), nick })), ...Object.entries(b.blockedNick).map(([k, nick]) => ({ key: 'nick:' + k, code: '', nick }))],
       notes: notes(), invites: Object.entries(invites).filter(([, i]) => now - i.t < C.INVITE_TTL).map(([id, i]) => ({ id, from: i.from, leader: i.leader, size: i.size, t: i.t })),
       party: partyView(), prompt, linked: link.authed().length > 0, leader: isLeader()
     };
@@ -1113,7 +1263,7 @@ module.exports = function setupFriends(d) {
       } catch (e) { log('changed ' + e.message); }
     }, 160);
   }
-  const gameFriends = () => friendItems().map(({ key, newKey, since, verified, decor, ...x }) => x);
+  const gameFriends = () => friendItems().map(({ key, code, elyOk, since, verified, decor, ...x }) => x);
   function toGame(obj) { if (link) link.broadcast(obj); }
 
   // ---------------- связь с игрой ----------------
@@ -1147,7 +1297,7 @@ module.exports = function setupFriends(d) {
         case 'leave': leave(); ok(); break;
         case 'kick': {
           leaderOnly();
-          const k = C.keyOf(msg.nick);
+          const k = memberKey(msg.nick);
           if (k === myKey()) throw Object.assign(new Error('Себя выгнать нельзя — выйди из отряда'), { code: 'bad' });
           if (!party.st.members.some((x) => x.key === k)) throw Object.assign(new Error('Такого игрока нет в отряде'), { code: 'bad' });
           bumpState((s) => { s.members = s.members.filter((x) => x.key !== k); });
@@ -1156,7 +1306,7 @@ module.exports = function setupFriends(d) {
         }
         case 'lead': {
           leaderOnly();
-          const k = C.keyOf(msg.nick);
+          const k = memberKey(msg.nick);
           if (!party.st.members.some((x) => x.key === k) || k === myKey()) throw Object.assign(new Error('Такого игрока нет в отряде'), { code: 'bad' });
           bumpState((s) => { s.leader = k; });
           ok(); break;
@@ -1231,6 +1381,7 @@ module.exports = function setupFriends(d) {
       bind();
       if (!me()) return;
       publishStatus();
+      if (Date.now() - nickAt > 30 * 60e3) publishNick();
       if (party) { sendHb(); leaderCheck(); }
     } catch (e) { log('tick ' + e.message); }
   }, d.tickMs || 8000));
@@ -1246,14 +1397,14 @@ module.exports = function setupFriends(d) {
     const b = book();
     const L = [];
     L.push('VillagersLauncher ' + (d.version || '') + ' · ' + new Date().toISOString());
-    L.push('Я: ' + (m ? m.nick + ' (' + m.key + ') ключ ' + fp(m.pk) : 'не вошёл'));
+    L.push('Я: ' + (m ? m.nick + ' · код ' + m.code + (m.ely ? ' · Ely.by' : '') : 'не вошёл'));
     const nowD = Date.now();
     L.push('Серверы: ' + (net.list ? net.list.map((x) => (x.ready ? '✓' : '✗') + x.host + (x.subs != null ? ' [подп ' + x.subs + ', подкл ' + (x.conn || 0) + ', пришло ' + (x.rx || 0) + ', ушло ' + (x.tx || 0) + (x.lastRx ? ', последнее ' + Math.round((nowD - x.lastRx) / 1000) + 'с назад' : '') + ']' : '')).join(' ') : net.online + '/' + net.total) + (net.fr != null ? ' · подписок у соединений ' + net.fr : ''));
     L.push('Мой статус отправлен ' + (statusAt ? Math.round((nowD - statusAt) / 1000) + ' с назад' : 'ни разу') + (lastStatus ? ': ' + lastStatus : ''));
-    for (const [k, e] of Object.entries(statuses)) L.push('Статус ' + k + ': получен ' + Math.round((nowD - (e.recv || 0)) / 1000) + ' с назад, отправлен ' + (e.t ? Math.round((nowD - e.t) / 1000) + ' с назад' : '?') + ' [' + fp(e.pk) + ']');
+    for (const [k, e] of Object.entries(statuses)) L.push('Статус ' + k + ': получен ' + Math.round((nowD - (e.recv || 0)) / 1000) + ' с назад, отправлен ' + (e.t ? Math.round((nowD - e.t) / 1000) + ' с назад' : '?') + ' [' + C.fmtCode(C.codeOf(e.pk)) + ']');
     L.push('Подписан на: ' + [...subs].map((t) => t.slice(C.NS.length)).join(' '));
-    L.push('Друзья: ' + (Object.entries(b.friends).map(([k, f]) => f.nick + '[' + fp(f.pk) + (f.newKey ? '→' + fp(f.newKey.pk) : '') + ']' + ' ' + stOf(k, Date.now()).status).join(', ') || '—'));
-    L.push('Мои заявки: ' + (Object.values(b.out).map((o) => o.nick).join(', ') || '—') + ' · Входящие: ' + (Object.values(b.inc).map((o) => o.nick + '[' + fp(o.pk) + ']').join(', ') || '—') + ' · Чёрный список: ' + (Object.values(b.blocked).join(', ') || '—'));
+    L.push('Друзья: ' + (Object.entries(b.friends).map(([k, f]) => f.nick + ' ' + C.fmtCode(k) + ' ' + stOf(k, Date.now()).status).join(', ') || '—'));
+    L.push('Мои заявки: ' + (Object.entries(b.out).map(([k, o]) => o.nick + ' ' + C.fmtCode(k)).join(', ') || '—') + ' · Входящие: ' + (Object.entries(b.inc).map(([k, o]) => o.nick + ' ' + C.fmtCode(k)).join(', ') || '—') + ' · Чёрный список: ' + ([...Object.values(b.blocked), ...Object.values(b.blockedNick)].join(', ') || '—'));
     L.push('Подписки: ' + subs.size);
     L.push('--- журнал ---');
     return L.concat(diag).join('\n');
@@ -1263,7 +1414,7 @@ module.exports = function setupFriends(d) {
   h('friends:decline', (key) => decline(key));
   h('friends:cancel', (key) => cancel(key));
   h('friends:remove', (key) => remove(key));
-  h('friends:block', ({ key, nick }) => block(key || C.keyOf(nick), nick));
+  h('friends:block', ({ key, nick }) => { const k = key || friendKey(nick); if (!k) throw new Error('Не нашёл игрока'); return block(k, nick); });
   h('friends:unblock', (key) => unblock(key));
   h('friends:trustKey', (key) => trustKey(key));
   h('friends:prefs', (patch) => {
@@ -1282,13 +1433,13 @@ module.exports = function setupFriends(d) {
   h('friends:acceptInvite', (id) => acceptInvite(id));
   h('friends:declineInvite', (id) => declineInvite(id));
   h('friends:leave', () => leave());
-  h('friends:kick', (nick) => { if (!isLeader()) throw new Error('Только лидер'); const k = C.keyOf(nick); bumpState((s) => { s.members = s.members.filter((x) => x.key !== k); }); return true; });
-  h('friends:lead', (nick) => { if (!isLeader()) throw new Error('Только лидер'); const k = C.keyOf(nick); if (!party.st.members.some((x) => x.key === k)) throw new Error('Нет в отряде'); bumpState((s) => { s.leader = k; }); return true; });
+  h('friends:kick', (nick) => { if (!isLeader()) throw new Error('Только лидер'); const k = memberKey(nick); bumpState((s) => { s.members = s.members.filter((x) => x.key !== k); }); return true; });
+  h('friends:lead', (nick) => { if (!isLeader()) throw new Error('Только лидер'); const k = memberKey(nick); if (!party.st.members.some((x) => x.key === k)) throw new Error('Нет в отряде'); bumpState((s) => { s.leader = k; }); return true; });
   h('friends:launch', () => launch());
   h('friends:maxPlayers', (n) => setMaxPlayers(n));
   h('friends:dismiss', () => { prompt = null; changed(); return true; });
-  h('friends:readNotes', () => { const m = me(); if (m) setPer('friendNotes', m.key, notes().map((n) => ({ ...n, read: true }))); changed(); return true; });
-  h('friends:clearNotes', () => { const m = me(); if (m) setPer('friendNotes', m.key, []); changed(); return true; });
+  h('friends:readNotes', () => { const m = me(); if (m) setPer('friendNotes', m.nickKey, notes().map((n) => ({ ...n, read: true }))); changed(); return true; });
+  h('friends:clearNotes', () => { const m = me(); if (m) setPer('friendNotes', m.nickKey, []); changed(); return true; });
   // музыка лобби: каких файлов треков не хватает (окно их синтезирует) и запись готового файла
   h('friends:musicNeed', () => {
     if (!musicDir()) return { need: [], version: MUSIC_V };

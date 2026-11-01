@@ -55,62 +55,85 @@ t('канал отряда: id из ключа, AES-GCM, порча — null', (
   assert.strictEqual(C.partyOpen(k, bad), null);
 });
 
-// ---------------- заявки ----------------
+// ---------------- коды и заявки (v2: всё по коду аккаунта) ----------------
 const msgOf = (id, p) => C.open(C.seal(id, p));
-t('заявка → принять: друг закреплён с его ключом', () => {
+const cA = C.codeOf(A.pk), cB = C.codeOf(B.pk), cM = C.codeOf(M.pk);
+t('код аккаунта: 8 знаков, из ключа, формат и разбор', () => {
+  assert.match(cA, C.CODE_RE);
+  assert.strictEqual(C.codeOf(A.pk), cA);
+  assert.notStrictEqual(cA, cB);
+  const shown = C.fmtCode(cA);
+  assert.match(shown, /^[0-9A-Z]{4}-[0-9A-Z]{4}$/);
+  assert.strictEqual(C.parseCode(shown), cA);
+  assert.strictEqual(C.parseCode('#' + cA.toUpperCase()), cA);
+  assert.strictEqual(C.parseCode(' ' + shown.toLowerCase() + ' '), cA);
+  assert.strictEqual(C.parseCode('kokkas'), null);
+  assert.ok(C.looksLikeCode('K7Q2-9M4X'));
+  assert.ok(!C.looksLikeCode('kokkas'));
+});
+t('заявка → принять: друг закреплён с его ключом, ключ книги — код', () => {
   let b = C.emptyBook();
-  const r = C.onRq(b, 'bob', 'alice', msgOf(A, { typ: 'req', from: 'Alice', to: 'Bob', t: 10 }), null);
+  const r = C.onRq(b, cB, cA, msgOf(A, { typ: 'req', from: 'Alice', toCode: cB, t: 10 }), null);
   assert.deepStrictEqual(r.events.map((e) => e.kind), ['request']);
   assert.strictEqual(r.clear, false);
-  b = C.acceptIncoming(r.book, 'alice');
-  assert.strictEqual(b.friends.alice.pk, A.pk);
-  assert.strictEqual(b.friends.alice.xk, A.xk);
-  assert.ok(!b.inc.alice);
+  b = C.acceptIncoming(r.book, cA);
+  assert.strictEqual(b.friends[cA].pk, A.pk);
+  assert.strictEqual(b.friends[cA].nick, 'Alice');
+  assert.ok(!b.inc[cA]);
 });
 t('ответ «принял» засчитывается, только если мы звали', () => {
-  const acc = msgOf(B, { typ: 'acc', from: 'Bob', to: 'Alice', t: 11 });
-  let r = C.onRq(C.emptyBook(), 'alice', 'bob', acc, null);
+  const acc = msgOf(B, { typ: 'acc', from: 'Bob', toCode: cA, t: 11 });
+  let r = C.onRq(C.emptyBook(), cA, cB, acc, null);
   assert.deepStrictEqual(r.events, []);
-  assert.ok(!r.book.friends.bob);
-  const b = C.emptyBook(); b.out.bob = { nick: 'Bob', t: 5 };
-  r = C.onRq(b, 'alice', 'bob', acc, null);
-  assert.strictEqual(r.book.friends.bob.pk, B.pk);
-  assert.ok(!r.book.out.bob);
+  const b = C.emptyBook(); b.out[cB] = { nick: 'Bob', t: 5 };
+  r = C.onRq(b, cA, cB, acc, null);
+  assert.strictEqual(r.book.friends[cB].pk, B.pk);
+  assert.ok(!r.book.out[cB]);
   assert.strictEqual(r.events[0].kind, 'accepted');
 });
-t('встречные заявки — сразу друзья и ответ acc', () => {
-  const b = C.emptyBook(); b.out.alice = { nick: 'Alice', t: 1 };
-  const r = C.onRq(b, 'bob', 'alice', msgOf(A, { typ: 'req', from: 'Alice', to: 'Bob', t: 2 }), null);
-  assert.ok(r.book.friends.alice);
+t('встречные заявки — сразу друзья и ответ acc; переспросил друг — acc снова', () => {
+  const b = C.emptyBook(); b.out[cA] = { nick: 'Alice', t: 1 };
+  const r = C.onRq(b, cB, cA, msgOf(A, { typ: 'req', from: 'Alice', toCode: cB, t: 2 }), null);
+  assert.ok(r.book.friends[cA]);
   assert.deepStrictEqual(r.reply, { typ: 'acc' });
+  const r2 = C.onRq(r.book, cB, cA, msgOf(A, { typ: 'req', from: 'Alice', toCode: cB, t: 3 }), null);
+  assert.deepStrictEqual(r2.reply, { typ: 'acc' });
 });
-t('подделка: «удалить» с чужим ключом не действует, с закреплённым — действует', () => {
-  const b = C.emptyBook(); b.friends.alice = { nick: 'Alice', pk: A.pk, xk: A.xk };
-  let r = C.onRq(b, 'bob', 'alice', msgOf(M, { typ: 'rm', from: 'Alice', to: 'Bob', t: 3 }), null);
-  assert.ok(r.book.friends.alice);
-  r = C.onRq(b, 'bob', 'alice', msgOf(A, { typ: 'rm', from: 'Alice', to: 'Bob', t: 3 }), null);
-  assert.ok(!r.book.friends.alice);
+t('подделка: чужой ключ в слоте кода — мусор (код = хеш ключа)', () => {
+  const b = C.emptyBook(); b.friends[cA] = { nick: 'Alice', pk: A.pk, xk: A.xk };
+  let r = C.onRq(b, cB, cA, msgOf(M, { typ: 'rm', from: 'Alice', toCode: cB, t: 3 }), null);
+  assert.ok(r.book.friends[cA]);
+  r = C.onRq(b, cB, cA, msgOf(A, { typ: 'rm', from: 'Alice', toCode: cB, t: 3 }), null);
+  assert.ok(!r.book.friends[cA]);
   assert.strictEqual(r.events[0].kind, 'removed');
-});
-t('новый ключ у друга — не принимается молча, событие keychanged', () => {
-  const b = C.emptyBook(); b.friends.alice = { nick: 'Alice', pk: A.pk, xk: A.xk };
-  const r = C.onRq(b, 'bob', 'alice', msgOf(M, { typ: 'req', from: 'Alice', to: 'Bob', t: 9 }), null);
-  assert.strictEqual(r.book.friends.alice.pk, A.pk);
-  assert.strictEqual(r.book.friends.alice.newKey.pk, M.pk);
-  assert.strictEqual(r.events[0].kind, 'keychanged');
-});
-t('заявка с ключом не как в профиле — «подозрительная»; не тот слот/ник — мусор', () => {
-  let r = C.onRq(C.emptyBook(), 'bob', 'alice', msgOf(M, { typ: 'req', from: 'Alice', to: 'Bob', t: 9 }), A.pk);
-  assert.strictEqual(r.book.inc.alice.suspicious, true);
-  r = C.onRq(C.emptyBook(), 'bob', 'carl', msgOf(A, { typ: 'req', from: 'Alice', to: 'Bob', t: 9 }), null);
-  assert.deepStrictEqual(r.events, []);
-  r = C.onRq(C.emptyBook(), 'bob', 'alice', msgOf(A, { typ: 'req', from: 'Alice', to: 'Carl', t: 9 }), null);
+  r = C.onRq(C.emptyBook(), cB, cA, msgOf(M, { typ: 'req', from: 'Alice', toCode: cB, t: 9 }), null);
   assert.deepStrictEqual(r.events, []);
 });
-t('заблокированный: заявки игнорируются', () => {
-  const b = C.emptyBook(); b.blocked.alice = 'Alice';
-  const r = C.onRq(b, 'bob', 'alice', msgOf(A, { typ: 'req', from: 'Alice', to: 'Bob', t: 9 }), null);
-  assert.ok(!r.book.inc.alice);
+t('не мне (другой код адресата) — мусор; друг сменил ник — ник обновился', () => {
+  let r = C.onRq(C.emptyBook(), cB, cA, msgOf(A, { typ: 'req', from: 'Alice', toCode: cM, t: 9 }), null);
+  assert.deepStrictEqual(r.events, []);
+  const b = C.emptyBook(); b.friends[cA] = { nick: 'Alice', pk: A.pk, xk: A.xk };
+  r = C.onRq(b, cB, cA, msgOf(A, { typ: 'req', from: 'Alisa', toCode: cB, t: 9 }), null);
+  assert.strictEqual(r.book.friends[cA].nick, 'Alisa');
+});
+t('заблокированный (по коду или по старому нику): заявки игнорируются', () => {
+  const b = C.emptyBook(); b.blocked[cA] = 'Alice';
+  let r = C.onRq(b, cB, cA, msgOf(A, { typ: 'req', from: 'Alice', toCode: cB, t: 9 }), null);
+  assert.ok(!r.book.inc[cA]);
+  const b2 = C.emptyBook(); b2.blockedNick.alice = 'Alice';
+  r = C.onRq(b2, cB, cA, msgOf(A, { typ: 'req', from: 'Alice', toCode: cB, t: 9 }), null);
+  assert.ok(!r.book.inc[cA]);
+});
+t('перенос книги v1 (по никам) → v2 (по кодам)', () => {
+  const old = { friends: { alice: { nick: 'Alice', pk: A.pk, xk: A.xk, since: 7 } }, inc: { bob: { nick: 'Bob', pk: B.pk, xk: B.xk, t: 5 } }, out: { carl: { nick: 'Carl', t: 1 } }, blocked: { mallo: 'Mallo' } };
+  const b = C.migrateBook(old);
+  assert.strictEqual(b.v, 2);
+  assert.strictEqual(b.friends[cA].nick, 'Alice');
+  assert.strictEqual(b.friends[cA].since, 7);
+  assert.strictEqual(b.inc[cB].nick, 'Bob');
+  assert.deepStrictEqual(b.out, {});
+  assert.strictEqual(b.blockedNick.mallo, 'Mallo');
+  assert.strictEqual(C.migrateBook(b).friends[cA].pk, A.pk);
 });
 t('статус: свежий / устаревший', () => {
   const now = 1e9;
